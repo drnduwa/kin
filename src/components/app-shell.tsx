@@ -36,7 +36,7 @@ import { doc, collection, query, orderBy, limit } from 'firebase/firestore';
 import { UserProfile, AppNavigationSettings, AppSubscriptionSettings, AppNotification, EventReport } from '@/lib/types';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { sendEmailVerification } from 'firebase/auth';
+import { sendEmailVerification, signOut } from 'firebase/auth';
 import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
 
@@ -103,6 +103,15 @@ function ProtectedContent({ children }: { children: React.ReactNode }) {
         }
     };
 
+    const handleSignOut = async () => {
+        try {
+            await signOut(auth);
+            router.push('/login');
+        } catch (e) {
+            toast({ title: "Erreur", description: "Impossible de se déconnecter.", variant: "destructive" });
+        }
+    };
+
     return (
         <div className="fixed inset-0 z-[9998] bg-background/90 backdrop-blur-xl flex items-center justify-center p-6 text-center">
             <div className="max-w-md space-y-8 bg-white p-10 rounded-[2.5rem] shadow-2xl border border-slate-100">
@@ -121,6 +130,9 @@ function ProtectedContent({ children }: { children: React.ReactNode }) {
                     </Button>
                     <Button variant="outline" onClick={handleResend} disabled={isResending} className="h-12 rounded-2xl font-bold">
                         {isResending ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : "Renvoyer l'email"}
+                    </Button>
+                    <Button variant="ghost" onClick={handleSignOut} className="text-slate-400 font-bold hover:text-primary transition-colors">
+                        Se déconnecter ou corriger l'email
                     </Button>
                 </div>
             </div>
