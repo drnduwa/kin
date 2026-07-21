@@ -1,3 +1,4 @@
+
 "use server";
 
 import { getTrafficTips } from "@/ai/flows/traffic-tips-flow";
@@ -38,24 +39,24 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
             );
             const reportsSnap = await getDocs(reportsQuery);
             const recentReports = reportsSnap.docs.map(d => d.data() as RoadConditionReport);
-            // Recherche de rapports dans un rayon de ~800m
+            // Recherche de rapports dans un rayon de ~1km
             localReport = recentReports.find(r => 
-                Math.abs(r.coords.lat - input.lat) < 0.008 && 
-                Math.abs(r.coords.lng - input.lng) < 0.008
+                Math.abs(r.coords.lat - input.lat) < 0.01 && 
+                Math.abs(r.coords.lng - input.lng) < 0.01
             );
         } catch (dbError) {
-            console.warn("[TrafficCheck] Firestore bypass (Index probable):", dbError);
+            console.warn("[TrafficCheck] Firestore bypass:", dbError);
         }
 
         // 2. Appel à Google Routes API v2
-        // On augmente la distance du sondage (+0.008 soit env. 900m) pour capturer plus de données de trafic
+        // On augmente la distance du sondage (+0.015 soit env. 1.6km) pour une meilleure précision contextuelle
         const url = "https://routes.googleapis.com/directions/v2:computeRoutes";
         const body = {
             origin: { location: { latLng: { latitude: input.lat, longitude: input.lng } } },
-            destination: { location: { latLng: { latitude: input.lat + 0.008, longitude: input.lng + 0.008 } } },
+            destination: { location: { latLng: { latitude: input.lat + 0.015, longitude: input.lng + 0.015 } } },
             travelMode: "DRIVE",
             routingPreference: "TRAFFIC_AWARE_OPTIMAL",
-            computeAlternativeRoutes: false,
+            computeAlternativeRoutes: true,
             languageCode: "fr-FR"
         };
 
@@ -64,7 +65,7 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
             headers: {
                 'Content-Type': 'application/json',
                 'X-Goog-Api-Key': GOOGLE_API_KEY,
-                'X-Goog-FieldMask': 'routes.duration,routes.staticDuration,routes.distanceMeters'
+                'X-Goog-FieldMask': 'routes.duration,routes.staticDuration,routes.distanceMeters,routes.description'
             },
             body: JSON.stringify(body)
         });
@@ -92,11 +93,10 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
             const ratio = dur / statDur;
             const delay = Math.round(Math.max(0, dur - statDur) / 60);
 
-            // Ajustement des seuils de sensibilité pour Kinshasa
-            // Sur de courts segments, un ratio de 1.4 est déjà un bouchon important
-            if (ratio > 2.0 || delay >= 8) result.status = "BLOQUÉ";
-            else if (ratio > 1.4 || delay >= 3) result.status = "EMBOUTEILLÉ";
-            else if (ratio > 1.15 || delay >= 1) result.status = "MODÉRÉ";
+            // Ajustement des seuils de sensibilité pour Kinshasa (Précision accrue)
+            if (ratio > 1.9 || delay >= 7) result.status = "BLOQUÉ";
+            else if (ratio > 1.35 || delay >= 2) result.status = "EMBOUTEILLÉ";
+            else if (ratio > 1.12 || delay >= 1) result.status = "MODÉRÉ";
             else result.status = "FLUIDE";
 
             if (localReport) {
@@ -104,19 +104,27 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
                 result.lingala = "Bato balobi nzela eza pasi, keba mingi.";
             } else {
                 if (result.status === "FLUIDE") {
-                    result.verdict = "Nzela eza fluide : Trafic normal sur cet axe.";
+                    result.verdict = "Axe fluide : Trafic normal constaté.";
                     result.lingala = "Nzela eza kitoko, kotambola eza pasi te.";
                 } else if (result.status === "MODÉRÉ") {
-                    result.verdict = `Trafic modéré : Prévoyez environ ${delay || 1} min de ralentissement.`;
+                    result.verdict = `Trafic modéré : Prévoyez un ralentissement de ${delay || 1} min.`;
                     result.lingala = "Nzela eza pasi moke, zela mwa moke.";
                 } else {
-                    result.verdict = `${input.address || 'Cet axe'} est actuellement ${result.status.toLowerCase()} avec un retard de ${delay} min.`;
+                    result.verdict = `${input.address || 'Cet axe'} est actuellement ${result.status.toLowerCase()} (Retard : ${delay} min).`;
                     result.lingala = "Nzela eza bloqué, luka nzela mosusu soki likoki eza.";
                 }
             }
 
             result.delay = delay;
             result.ratio = ratio;
+
+            // Ajout des alternatives si disponibles pour plus de précision
+            if (data.routes.length > 1) {
+                result.alternatives = data.routes.slice(1, 3).map((r: any) => ({
+                    description: r.description || "Itinéraire bis",
+                    duration: Math.round(parseInt((r.duration || "0s").replace('s', '')) / 60) + " min"
+                }));
+            }
         }
 
         trafficCache.set(cacheKey, { data: result, expires: now + 90000 });
@@ -298,6 +306,7 @@ export async function broadcastEmailAction(params: {
   
   try {
     const { firestore } = initializeFirebase();
+    // On récupère tous les e-mails des utilisateurs enregistrés
     const usersSnap = await getDocs(collection(firestore, 'users'));
     
     if (!usersSnap.empty) {
@@ -305,10 +314,11 @@ export async function broadcastEmailAction(params: {
           .map(doc => doc.data().email)
           .filter(email => email && email.includes('@') && email !== 'drnduwa@gmail.com');
         
+        // Fusion et suppression des doublons
         recipientList = Array.from(new Set([...recipientList, ...userEmails]));
     }
   } catch (e) {
-    console.warn("[Email Broadcast] Impossible de lister les utilisateurs (Permissions). Envoi limité à l'admin.", e);
+    console.warn("[Email Broadcast] Impossible de lister les utilisateurs (Permissions). Envoi limité aux administrateurs.", e);
   }
 
   const transporter = nodemailer.createTransport({
@@ -325,8 +335,8 @@ export async function broadcastEmailAction(params: {
 
   const mailOptions = {
     from: `"Kinshasa Flow" <${smtpUser}>`,
-    to: smtpUser, 
-    bcc: recipientList, 
+    to: "kinshasaflow@gmail.com", // Destinataire principal (identique à l'expéditeur pour éviter le spam)
+    bcc: recipientList, // Envoi masqué à tous les utilisateurs
     subject: `${subjectPrefix} : ${params.title}${locationStr}`,
     html: `
       <div style="font-family: sans-serif; padding: 20px; color: #1e293b; background-color: #f8fafc;">
