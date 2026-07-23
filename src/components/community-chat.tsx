@@ -3,7 +3,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useFirebase, useUser, useCollection, useMemoFirebase } from '@/firebase';
-import { collection, query, orderBy, limit, addDoc, serverTimestamp, setDoc, doc, where, Timestamp } from 'firebase/firestore';
+import { collection, query, orderBy, limit, addDoc, serverTimestamp, setDoc, doc, where, Timestamp, updateDoc, increment } from 'firebase/firestore';
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { CommunityMessage, WithId } from '@/lib/types';
 import { Card, CardContent } from '@/components/ui/card';
@@ -29,7 +29,10 @@ import {
   Siren,
   Construction,
   Users,
-  Car
+  Car,
+  Heart,
+  MessageCircle,
+  Reply
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
@@ -47,9 +50,11 @@ import {
 } from "@/components/ui/dialog";
 import { broadcastEmailAction } from '@/app/actions';
 
-const MessageBubble = ({ message, isOwn }: { message: WithId<CommunityMessage>, isOwn: boolean }) => {
+const MessageBubble = ({ message, isOwn, onReply }: { message: WithId<CommunityMessage>, isOwn: boolean, onReply: (name: string) => void }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const { firestore } = useFirebase();
+  const { toast } = useToast();
   
   const dateObj = message.timestamp?.toDate ? message.timestamp.toDate() : new Date();
   const dayStr = format(dateObj, 'EEEE dd MMMM', { locale: fr });
@@ -67,6 +72,15 @@ const MessageBubble = ({ message, isOwn }: { message: WithId<CommunityMessage>, 
       audioRef.current.play();
     }
     setIsPlaying(!isPlaying);
+  };
+
+  const handleLike = async () => {
+    try {
+      const msgRef = doc(firestore, 'community_chat', message.id);
+      await updateDoc(msgRef, { likes: increment(1) });
+    } catch (e) {
+      console.error("Like failed", e);
+    }
   };
 
   return (
@@ -154,6 +168,24 @@ const MessageBubble = ({ message, isOwn }: { message: WithId<CommunityMessage>, 
               </span>
             </div>
           )}
+        </div>
+
+        {/* Reaction Buttons */}
+        <div className={cn("flex items-center gap-4 mt-2 px-2", isOwn ? "flex-row-reverse" : "flex-row")}>
+            <button 
+                onClick={handleLike}
+                className="flex items-center gap-1 text-[10px] font-black uppercase text-slate-400 hover:text-red-500 transition-colors"
+            >
+                <Heart className={cn("h-3.5 w-3.5", message.likes && message.likes > 0 && "fill-red-500 text-red-500")} />
+                {message.likes || 0}
+            </button>
+            <button 
+                onClick={() => onReply(message.userName)}
+                className="flex items-center gap-1 text-[10px] font-black uppercase text-slate-400 hover:text-primary transition-colors"
+            >
+                <Reply className="h-3.5 w-3.5" />
+                Répondre
+            </button>
         </div>
       </div>
     </motion.div>
@@ -268,14 +300,15 @@ export default function CommunityChat() {
         locationName: params.locationName || "",
         coords: coords || null,
         alertType: params.alertType || null,
+        likes: 0,
         timestamp: serverTimestamp(),
       };
 
       await addDoc(collection(firestore, 'community_chat'), messageData);
 
-      // Notification BROADCAST par e-mail
+      // Notification BROADCAST par e-mail pour CHAQUE message
       broadcastEmailAction({
-          title: params.alertType ? `ALERTE : ${params.alertType.toUpperCase()}` : "Nouveau message Chat",
+          title: params.alertType ? `ALERTE : ${params.alertType.toUpperCase()}` : "K-Flow Chat : Nouveau message",
           message: params.text || `Média partagé (${params.mediaType})`,
           userName: messageData.userName,
           type: params.alertType ? 'alert' : 'chat',
@@ -318,6 +351,10 @@ export default function CommunityChat() {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
     }
+  };
+
+  const handleReply = (userName: string) => {
+    setInputText(`@${userName} `);
   };
 
   return (
@@ -368,7 +405,7 @@ export default function CommunityChat() {
         <div className="max-w-4xl mx-auto flex flex-col">
           <AnimatePresence>
             {messages && [...messages].reverse().map((msg) => (
-              <MessageBubble key={msg.id} message={msg} isOwn={msg.userId === user?.uid} />
+              <MessageBubble key={msg.id} message={msg} isOwn={msg.userId === user?.uid} onReply={handleReply} />
             ))}
           </AnimatePresence>
           <div ref={scrollRef} className="h-4" />

@@ -77,6 +77,7 @@ export interface CommunityMessage {
     lng: number;
   };
   alertType?: 'travaux' | 'police' | 'embouteillage';
+  likes?: number;
   timestamp: any;
 }
 
