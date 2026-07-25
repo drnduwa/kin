@@ -101,7 +101,7 @@ function ResetPasswordDialog() {
                     </div>
                     <DialogFooter>
                         <Button type="submit" className="w-full h-12 rounded-xl font-black text-lg shadow-lg shadow-primary/20" disabled={isLoading}>
-                            {isLoading ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : null}
+                            {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                             Envoyer le lien
                         </Button>
                     </DialogFooter>
@@ -120,6 +120,14 @@ export function LoginForm() {
     
     const { auth, firestore } = useFirebase();
     const { user, isUserLoading } = useUser();
+
+    const form = useForm<LoginValues>({
+        resolver: zodResolver(loginSchema),
+        defaultValues: {
+            email: '',
+            password: '',
+        },
+    });
 
     useEffect(() => {
         if (user) {
