@@ -1,4 +1,3 @@
-
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -15,11 +14,11 @@ import {
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Smartphone, Mail as MailIcon } from 'lucide-react';
+import { Loader2, Smartphone, Mail as MailIcon, Apple } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { LoginValues, loginSchema, STAR_COSTS, UserProfile } from '@/lib/types';
 import { useFirebase, useUser } from '@/firebase';
-import { GoogleAuthProvider, signInWithEmailAndPassword, signInWithPopup, sendPasswordResetEmail, User as FirebaseUser } from 'firebase/auth';
+import { GoogleAuthProvider, OAuthProvider, signInWithEmailAndPassword, signInWithPopup, sendPasswordResetEmail, User as FirebaseUser } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
 import { doc, setDoc, runTransaction, collection, serverTimestamp, getDoc } from 'firebase/firestore';
 import Link from 'next/link';
@@ -117,17 +116,10 @@ export function LoginForm() {
     const router = useRouter();
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
+    const [isAppleSubmitting, setIsAppleSubmitting] = useState(false);
     
     const { auth, firestore } = useFirebase();
     const { user, isUserLoading } = useUser();
-
-    const form = useForm<LoginValues>({
-        resolver: zodResolver(loginSchema),
-        defaultValues: {
-            email: '',
-            password: '',
-        },
-    });
 
     useEffect(() => {
         if (user) {
@@ -200,24 +192,28 @@ export function LoginForm() {
         try {
             const provider = new GoogleAuthProvider();
             const result = await signInWithPopup(auth, provider);
-            
             await initializeUserProfile(result.user);
-
-            toast({
-                title: 'Connexion réussie!',
-                description: "Vous êtes maintenant connecté avec Google.",
-                variant: 'default',
-            });
+            toast({ title: 'Connexion réussie!' });
             router.push('/');
         } catch (error) {
-             console.error("Error with Google sign in:", error);
-            toast({
-                title: 'Erreur de connexion',
-                description: "Impossible de se connecter avec Google. Veuillez réessayer.",
-                variant: 'destructive',
-            });
+            toast({ title: 'Erreur Google', variant: 'destructive' });
         } finally {
             setIsGoogleSubmitting(false);
+        }
+    }
+
+    async function onAppleSignIn() {
+        setIsAppleSubmitting(true);
+        try {
+            const provider = new OAuthProvider('apple.com');
+            const result = await signInWithPopup(auth, provider);
+            await initializeUserProfile(result.user);
+            toast({ title: 'Connexion réussie!' });
+            router.push('/');
+        } catch (error) {
+            toast({ title: 'Erreur Apple', variant: 'destructive' });
+        } finally {
+            setIsAppleSubmitting(false);
         }
     }
     
@@ -259,7 +255,7 @@ export function LoginForm() {
                                             <FormItem>
                                                 <FormLabel className="font-bold text-slate-700">Email</FormLabel>
                                                 <FormControl>
-                                                    <Input type="email" placeholder="nom@exemple.com" className="rounded-xl h-12 border-2" {...field} disabled={isSubmitting || isGoogleSubmitting} />
+                                                    <Input type="email" placeholder="nom@exemple.com" className="rounded-xl h-12 border-2" {...field} disabled={isSubmitting} />
                                                 </FormControl>
                                                 <FormMessage />
                                             </FormItem>
@@ -275,14 +271,14 @@ export function LoginForm() {
                                                     <ResetPasswordDialog />
                                                 </div>
                                                 <FormControl>
-                                                    <Input type="password" placeholder="********" className="rounded-xl h-12 border-2" {...field} disabled={isSubmitting || isGoogleSubmitting} />
+                                                    <Input type="password" placeholder="********" className="rounded-xl h-12 border-2" {...field} disabled={isSubmitting} />
                                                 </FormControl>
                                                 <FormMessage />
                                             </FormItem>
                                         )}
                                     />
                                 </div>
-                                <Button type="submit" className="w-full h-14 rounded-2xl text-lg font-black shadow-lg shadow-primary/20 transition-transform active:scale-95" disabled={isSubmitting || isGoogleSubmitting}>
+                                <Button type="submit" className="w-full h-14 rounded-2xl text-lg font-black shadow-lg shadow-primary/20 transition-transform active:scale-95" disabled={isSubmitting}>
                                     {isSubmitting ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : null}
                                     Se connecter
                                 </Button>
@@ -305,10 +301,17 @@ export function LoginForm() {
                         </span>
                     </div>
                 </div>
-                 <Button variant="outline" className="w-full h-12 rounded-2xl font-black border-2 transition-all hover:bg-slate-50 active:scale-95" onClick={onGoogleSignIn} disabled={isSubmitting || isGoogleSubmitting}>
-                    {isGoogleSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <GoogleIcon />}
-                    Google
-                </Button>
+                
+                <div className="grid grid-cols-1 gap-3">
+                  <Button variant="outline" className="w-full h-12 rounded-2xl font-black border-2 transition-all hover:bg-slate-50 active:scale-95" onClick={onGoogleSignIn} disabled={isGoogleSubmitting}>
+                      {isGoogleSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <GoogleIcon />}
+                      Google
+                  </Button>
+                  <Button variant="outline" className="w-full h-12 rounded-2xl font-black border-2 bg-black text-white hover:bg-black/90 active:scale-95" onClick={onAppleSignIn} disabled={isAppleSubmitting}>
+                      {isAppleSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Apple className="mr-2 h-5 w-5" />}
+                      Apple
+                  </Button>
+                </div>
             </CardContent>
             <CardFooter className="flex justify-center border-t bg-slate-50/50 p-6">
                 <p className="text-sm text-muted-foreground font-medium">

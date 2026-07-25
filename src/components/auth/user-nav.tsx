@@ -23,14 +23,25 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+    AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import { useUser, useFirebase } from "@/firebase";
 import { Skeleton } from "../ui/skeleton";
-import { LogOut, User, Loader2, Image as ImageIcon } from "lucide-react";
+import { LogOut, User, Loader2, Image as ImageIcon, Trash2, ShieldAlert } from "lucide-react";
 import Link from "next/link";
 import React, { useState, useRef } from "react";
 import { getStorage, ref as storageRef, uploadString, getDownloadURL } from "firebase/storage";
-import { updateProfile, signOut } from "firebase/auth";
-import { doc, setDoc } from 'firebase/firestore';
+import { updateProfile, signOut, deleteUser } from "firebase/auth";
+import { doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { useToast } from "@/hooks/use-toast";
 import Image from "next/image";
 import { Input } from "../ui/input";
@@ -44,12 +55,52 @@ export function UserNav() {
 
     const [dialogOpen, setDialogOpen] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
     const [imagePreview, setImagePreview] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleSignOut = async () => {
         await signOut(auth);
         router.push('/');
+    };
+
+    const handleDeleteAccount = async () => {
+        if (!auth.currentUser || !user) return;
+        
+        setIsDeleting(true);
+        try {
+            // 1. Supprimer les données Firestore
+            const userDocRef = doc(firestore, "users", user.uid);
+            await deleteDoc(userDocRef);
+
+            // 2. Supprimer l'utilisateur de Firebase Auth
+            await deleteUser(auth.currentUser);
+
+            toast({
+                title: "Compte supprimé",
+                description: "Toutes vos données ont été effacées de nos serveurs.",
+            });
+            router.push('/');
+        } catch (error: any) {
+            console.error("Error deleting account:", error);
+            if (error.code === 'auth/requires-recent-login') {
+                toast({
+                    title: "Action requise",
+                    description: "Veuillez vous reconnecter pour confirmer la suppression de votre compte.",
+                    variant: "destructive"
+                });
+                await signOut(auth);
+                router.push('/login');
+            } else {
+                toast({
+                    title: "Erreur",
+                    description: "Impossible de supprimer le compte. Contactez le support.",
+                    variant: "destructive"
+                });
+            }
+        } finally {
+            setIsDeleting(false);
+        }
     };
 
     const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -80,16 +131,16 @@ export function UserNav() {
             await setDoc(userDocRef, { photoURL: downloadURL }, { merge: true });
 
             toast({
-                title: "Profile Updated",
-                description: "Your profile picture has been successfully updated.",
+                title: "Profil mis à jour",
+                description: "Votre photo de profil a été modifiée avec succès.",
             });
             setDialogOpen(false);
             setImagePreview(null);
         } catch (error) {
             console.error("Error updating profile picture:", error);
             toast({
-                title: "Error",
-                description: "Failed to update profile picture. Please try again.",
+                title: "Erreur",
+                description: "Impossible de modifier la photo. Veuillez réessayer.",
                 variant: "destructive",
             });
         } finally {
@@ -116,41 +167,73 @@ export function UserNav() {
                             </Avatar>
                         </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent className="w-56" align="end" forceMount>
+                    <DropdownMenuContent className="w-64" align="end" forceMount>
                         <DropdownMenuLabel className="font-normal">
                             <div className="flex flex-col space-y-1">
-                                <p className="text-sm font-medium leading-none">{user.isAnonymous ? "Utilisateur Anonyme" : (user.displayName || "Utilisateur")}</p>
-                                {!user.isAnonymous && <p className="text-xs leading-none text-muted-foreground">
+                                <p className="text-sm font-bold leading-none">{user.displayName || "Utilisateur"}</p>
+                                <p className="text-[10px] leading-none text-muted-foreground truncate">
                                     {user.email}
-                                </p>}
+                                </p>
                             </div>
                         </DropdownMenuLabel>
                         <DropdownMenuSeparator />
                         <DropdownMenuGroup>
                            <DropdownMenuItem onSelect={() => setDialogOpen(true)}>
                                 <User className="mr-2 h-4 w-4" />
-                                <span>Mettre à jour le profil</span>
+                                <span>Ma Photo de Profil</span>
                             </DropdownMenuItem>
                         </DropdownMenuGroup>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={handleSignOut}>
+                        <DropdownMenuItem onClick={handleSignOut} className="text-slate-600">
                             <LogOut className="mr-2 h-4 w-4" />
                             <span>Se déconnecter</span>
                         </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <DropdownMenuItem onSelect={(e) => e.preventDefault()} className="text-destructive focus:bg-destructive/10">
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                <span>Supprimer mon compte</span>
+                            </DropdownMenuItem>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent className="rounded-3xl">
+                            <AlertDialogHeader>
+                              <AlertDialogTitle className="flex items-center gap-2">
+                                <ShieldAlert className="text-destructive h-5 w-5" />
+                                Action Irréversible
+                              </AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Êtes-vous sûr de vouloir supprimer votre compte Kinshasa Flow ? Toutes vos stars, signalements et préférences seront définitivement effacés conformément aux directives RGPD/RDC.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel className="rounded-xl">Annuler</AlertDialogCancel>
+                              <AlertDialogAction 
+                                onClick={handleDeleteAccount} 
+                                className="bg-destructive hover:bg-destructive/90 rounded-xl"
+                                disabled={isDeleting}
+                              >
+                                {isDeleting ? <Loader2 className="animate-spin mr-2" /> : null}
+                                Confirmer la suppression
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                     </DropdownMenuContent>
                 </DropdownMenu>
 
                 <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                    <DialogContent>
+                    <DialogContent className="rounded-3xl">
                         <DialogHeader>
-                            <DialogTitle>Mettre à jour la photo de profil</DialogTitle>
+                            <DialogTitle>Photo de profil</DialogTitle>
                              <DialogDescription>
-                                Téléchargez une nouvelle photo de profil.
+                                Choisissez une image claire pour être reconnu par la communauté.
                             </DialogDescription>
                         </DialogHeader>
                         
                         <div className="flex flex-col items-center gap-4 py-4">
-                            <Avatar className="h-32 w-32">
+                            <Avatar className="h-32 w-32 border-4 border-primary/10 shadow-xl">
                                 <AvatarImage src={imagePreview || user.photoURL || ""} />
                                 <AvatarFallback className="h-32 w-32">
                                     <div className="h-32 w-32 flex items-center justify-center bg-muted rounded-full">
@@ -158,22 +241,22 @@ export function UserNav() {
                                     </div>
                                 </AvatarFallback>
                             </Avatar>
-                            <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={isUploading}>
+                            <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="rounded-xl border-2">
                                 <ImageIcon className="mr-2 h-4 w-4" />
-                                {imagePreview ? "Changer l\'image" : "Sélectionner une image"}
+                                {imagePreview ? "Changer" : "Sélectionner une photo"}
                             </Button>
                             <Input 
                                 type="file"
                                 ref={fileInputRef}
                                 className="hidden"
-                                accept="image/png, image/jpeg, image/gif"
+                                accept="image/*"
                                 onChange={handleFileChange}
                             />
                         </div>
 
-                        <DialogFooter>
-                            <Button variant="ghost" onClick={() => setDialogOpen(false)} disabled={isUploading}>Annuler</Button>
-                            <Button onClick={handleUpdateProfilePicture} disabled={!imagePreview || isUploading}>
+                        <DialogFooter className="gap-2 sm:gap-0">
+                            <Button variant="ghost" onClick={() => setDialogOpen(false)} disabled={isUploading} className="rounded-xl font-bold">Annuler</Button>
+                            <Button onClick={handleUpdateProfilePicture} disabled={!imagePreview || isUploading} className="rounded-xl font-bold shadow-lg shadow-primary/20">
                                 {isUploading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                                 Enregistrer
                             </Button>
@@ -186,10 +269,10 @@ export function UserNav() {
 
     return (
         <div className="flex items-center gap-2">
-            <Button asChild variant="outline">
-                <Link href="/login">Se connecter</Link>
+            <Button asChild variant="outline" className="rounded-xl border-2 font-bold h-9">
+                <Link href="/login">Connexion</Link>
             </Button>
-            <Button asChild>
+            <Button asChild className="rounded-xl font-black h-9 shadow-lg shadow-primary/20 px-4">
                 <Link href="/signup">S'inscrire</Link>
             </Button>
         </div>

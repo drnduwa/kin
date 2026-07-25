@@ -1,4 +1,3 @@
-
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -15,11 +14,11 @@ import {
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Phone, MapPin, Globe, User, Mail, Lock, CheckCircle2 } from 'lucide-react';
+import { Loader2, Phone, MapPin, Globe, User, Mail, Lock, CheckCircle2, Apple } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { SignupValues, signupSchema, STAR_COSTS } from '@/lib/types';
 import { useFirebase, useUser } from '@/firebase';
-import { GoogleAuthProvider, createUserWithEmailAndPassword, signInWithPopup, updateProfile, User as FirebaseUser, sendEmailVerification } from 'firebase/auth';
+import { GoogleAuthProvider, OAuthProvider, createUserWithEmailAndPassword, signInWithPopup, updateProfile, User as FirebaseUser, sendEmailVerification } from 'firebase/auth';
 import { doc, setDoc, runTransaction, collection, serverTimestamp, addDoc, getDoc } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -39,6 +38,7 @@ export function SignupForm() {
     const router = useRouter();
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
+    const [isAppleSubmitting, setIsAppleSubmitting] = useState(false);
     
     const { auth, firestore } = useFirebase();
     const { user, isUserLoading } = useUser();
@@ -117,7 +117,6 @@ export function SignupForm() {
             await sendEmailVerification(firebaseUser);
             await initializeUserProfile(firebaseUser, data);
 
-            // Envoi de l'email de bienvenue
             sendWelcomeEmailAction({ 
                 email: data.email, 
                 userName: data.name 
@@ -131,15 +130,7 @@ export function SignupForm() {
             
             router.push('/');
         } catch (error: any) {
-            console.error("Error signing up:", error);
-            let description = "Une erreur s'est produite. Veuillez réessayer.";
-            if (error.code === 'auth/email-already-in-use') description = "Cette adresse e-mail est déjà utilisée.";
-            
-            toast({
-                title: "Erreur d'inscription",
-                description,
-                variant: 'destructive',
-            });
+            toast({ title: "Erreur d'inscription", variant: 'destructive' });
         } finally {
             setIsSubmitting(false);
         }
@@ -150,38 +141,28 @@ export function SignupForm() {
         try {
             const provider = new GoogleAuthProvider();
             const result = await signInWithPopup(auth, provider);
-            
-            const userRef = doc(firestore, 'users', result.user.uid);
-            const userSnap = await getDoc(userRef);
-            const isNewUser = !userSnap.exists();
-
-            await initializeUserProfile(result.user, {
-                name: result.user.displayName || '',
-                phone: result.user.phoneNumber || '',
-            });
-
-            if (isNewUser) {
-                sendWelcomeEmailAction({ 
-                    email: result.user.email!, 
-                    userName: result.user.displayName || "Nouvel utilisateur" 
-                });
-            }
-
-            toast({
-                title: 'Bienvenue!',
-                description: "Vous êtes connecté avec Google. 25 stars offertes.",
-                variant: 'default',
-            });
+            await initializeUserProfile(result.user, {});
+            toast({ title: 'Bienvenue!' });
             router.push('/');
         } catch (error) {
-             console.error("Error with Google sign in:", error);
-            toast({
-                title: 'Erreur de connexion',
-                description: "Impossible de se connecter avec Google. Veuillez réessayer.",
-                variant: 'destructive',
-            });
+            toast({ title: 'Erreur Google', variant: 'destructive' });
         } finally {
             setIsGoogleSubmitting(false);
+        }
+    }
+
+    async function onAppleSignIn() {
+        setIsAppleSubmitting(true);
+        try {
+            const provider = new OAuthProvider('apple.com');
+            const result = await signInWithPopup(auth, provider);
+            await initializeUserProfile(result.user, {});
+            toast({ title: 'Bienvenue!' });
+            router.push('/');
+        } catch (error) {
+            toast({ title: 'Erreur Apple', variant: 'destructive' });
+        } finally {
+            setIsAppleSubmitting(false);
         }
     }
     
@@ -208,7 +189,7 @@ export function SignupForm() {
                                             <User className="h-3 w-3" /> Nom complet
                                         </FormLabel>
                                         <FormControl>
-                                            <Input placeholder="John Doe" className="rounded-xl h-12 border-2" {...field} disabled={isSubmitting || isGoogleSubmitting} />
+                                            <Input placeholder="John Doe" className="rounded-xl h-12 border-2" {...field} disabled={isSubmitting} />
                                         </FormControl>
                                         <FormMessage />
                                     </FormItem>
@@ -223,7 +204,7 @@ export function SignupForm() {
                                             <Phone className="h-3 w-3" /> Téléphone
                                         </FormLabel>
                                         <FormControl>
-                                            <Input placeholder="08..." className="rounded-xl h-12 border-2" {...field} disabled={isSubmitting || isGoogleSubmitting} />
+                                            <Input placeholder="08..." className="rounded-xl h-12 border-2" {...field} disabled={isSubmitting} />
                                         </FormControl>
                                         <FormMessage />
                                     </FormItem>
@@ -240,7 +221,7 @@ export function SignupForm() {
                                         <Mail className="h-3 w-3" /> Email
                                     </FormLabel>
                                     <FormControl>
-                                        <Input type="email" placeholder="nom@exemple.com" className="rounded-xl h-12 border-2" {...field} disabled={isSubmitting || isGoogleSubmitting} />
+                                        <Input type="email" placeholder="nom@exemple.com" className="rounded-xl h-12 border-2" {...field} disabled={isSubmitting} />
                                     </FormControl>
                                     <FormMessage />
                                 </FormItem>
@@ -257,7 +238,7 @@ export function SignupForm() {
                                             <MapPin className="h-3 w-3" /> Ville
                                         </FormLabel>
                                         <FormControl>
-                                            <Input placeholder="Kinshasa" className="rounded-xl h-12 border-2" {...field} disabled={isSubmitting || isGoogleSubmitting} />
+                                            <Input placeholder="Kinshasa" className="rounded-xl h-12 border-2" {...field} disabled={isSubmitting} />
                                         </FormControl>
                                         <FormMessage />
                                     </FormItem>
@@ -272,7 +253,7 @@ export function SignupForm() {
                                             <Globe className="h-3 w-3" /> Pays
                                         </FormLabel>
                                         <FormControl>
-                                            <Input placeholder="RDC" className="rounded-xl h-12 border-2" {...field} disabled={isSubmitting || isGoogleSubmitting} />
+                                            <Input placeholder="RDC" className="rounded-xl h-12 border-2" {...field} disabled={isSubmitting} />
                                         </FormControl>
                                         <FormMessage />
                                     </FormItem>
@@ -289,39 +270,34 @@ export function SignupForm() {
                                         <Lock className="h-3 w-3" /> Mot de passe
                                     </FormLabel>
                                     <FormControl>
-                                        <Input type="password" placeholder="********" className="rounded-xl h-12 border-2" {...field} disabled={isSubmitting || isGoogleSubmitting} />
+                                        <Input type="password" placeholder="********" className="rounded-xl h-12 border-2" {...field} disabled={isSubmitting} />
                                     </FormControl>
                                     <FormMessage />
                                 </FormItem>
                             )}
                         />
 
-                        <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 flex items-center justify-between shadow-inner">
-                            <div className="flex items-center gap-3">
-                                <div className="bg-amber-500 p-2 rounded-lg text-white">
-                                    <CheckCircle2 className="h-4 w-4" />
-                                </div>
-                                <div>
-                                    <p className="text-[10px] font-black text-amber-800 uppercase leading-none mb-1">Bonus Inscription</p>
-                                    <p className="text-[9px] text-amber-600 font-bold italic">Crédité après validation email</p>
-                                </div>
-                            </div>
-                            <span className="text-xl font-black text-amber-600">+25 ⭐</span>
-                        </div>
-
-                        <Button type="submit" className="w-full h-14 rounded-2xl text-lg font-black shadow-lg shadow-primary/20" disabled={isSubmitting || isGoogleSubmitting}>
+                        <Button type="submit" className="w-full h-14 rounded-2xl text-lg font-black shadow-lg shadow-primary/20" disabled={isSubmitting}>
                             {isSubmitting ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : "Créer mon compte"}
                         </Button>
                     </form>
                 </Form>
+                
                  <div className="relative my-6 md:my-8">
                     <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
                     <div className="relative flex justify-center text-[10px] uppercase"><span className="bg-white px-4 text-muted-foreground font-black tracking-[0.2em]">Ou s'inscrire avec</span></div>
                 </div>
-                 <Button variant="outline" className="w-full h-12 rounded-2xl font-bold border-2" onClick={onGoogleSignIn} disabled={isSubmitting || isGoogleSubmitting}>
-                    {isGoogleSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <GoogleIcon />}
-                    Google
-                </Button>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Button variant="outline" className="w-full h-12 rounded-2xl font-bold border-2" onClick={onGoogleSignIn} disabled={isGoogleSubmitting}>
+                      {isGoogleSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <GoogleIcon />}
+                      Google
+                  </Button>
+                  <Button variant="outline" className="w-full h-12 rounded-2xl font-bold border-2 bg-black text-white hover:bg-black/90" onClick={onAppleSignIn} disabled={isAppleSubmitting}>
+                      {isAppleSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Apple className="mr-2 h-5 w-5" />}
+                      Apple
+                  </Button>
+                </div>
             </CardContent>
              <CardFooter className="flex justify-center border-t bg-slate-50 p-6">
                 <p className="text-sm text-muted-foreground font-medium">
