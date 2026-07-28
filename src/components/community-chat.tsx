@@ -265,17 +265,18 @@ export default function CommunityChat() {
           const extension = params.mediaType === 'audio' ? 'wav' : 
                             params.mediaType === 'video' ? 'mp4' : 'jpg';
           
-          const fileName = (params.mediaFile instanceof File && params.mediaFile.name) 
-                           ? params.mediaFile.name.replace(/[^a-zA-Z0-9.]/g, '_') 
-                           : `media_${Date.now()}.${extension}`;
-          
-          const safeName = `${Date.now()}_${fileName}`;
+          const safeName = `media_${Date.now()}_${user.uid.slice(0, 5)}.${extension}`;
           const fileRef = storageRef(storage, `chat/${user.uid}/${safeName}`);
+          
           const snapshot = await uploadBytes(fileRef, params.mediaFile);
           mediaUrl = await getDownloadURL(snapshot.ref);
-        } catch (uploadErr) {
-          console.error("Storage upload error:", uploadErr);
-          toast({ title: "Erreur de chargement média", variant: "destructive" });
+        } catch (uploadErr: any) {
+          console.error("CRITICAL UPLOAD ERROR:", uploadErr);
+          toast({ 
+            title: "Erreur chargement media", 
+            description: uploadErr.message || "Vérifiez votre connexion.",
+            variant: "destructive" 
+          });
           setIsUploading(false);
           return;
         }
@@ -309,7 +310,8 @@ export default function CommunityChat() {
       setInputText('');
       setAlertLocation('');
       setAlertDialog({ ...alertDialog, open: false });
-    } catch (e) {
+    } catch (e: any) {
+      console.error("CHAT SEND ERROR:", e);
       toast({ title: "Erreur d'envoi", variant: "destructive" });
     } finally {
       setIsUploading(false);
