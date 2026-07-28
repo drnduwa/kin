@@ -1,8 +1,9 @@
+
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { useFirebase, useUser, useCollection, useMemoFirebase } from '@/firebase';
-import { collection, query, orderBy, limit, addDoc, serverTimestamp, setDoc, doc, where, Timestamp, updateDoc, increment } from 'firebase/firestore';
+import { useFirebase, useUser, useCollection, useMemoFirebase, addDocumentNonBlocking } from '@/firebase';
+import { collection, query, orderBy, limit, serverTimestamp, setDoc, doc, where, Timestamp, updateDoc, increment } from 'firebase/firestore';
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { CommunityMessage, WithId } from '@/lib/types';
 import { Card, CardContent } from '@/components/ui/card';
@@ -244,7 +245,7 @@ export default function CommunityChat() {
 
   const handleSend = async (params: { 
     text?: string, 
-    mediaFile?: File, 
+    mediaFile?: File | Blob, 
     mediaType?: 'image' | 'video' | 'audio',
     alertType?: 'travaux' | 'police' | 'embouteillage',
     locationName?: string
@@ -259,11 +260,25 @@ export default function CommunityChat() {
     try {
       let mediaUrl = "";
       if (params.mediaFile) {
-        const storage = getStorage(firebaseApp);
-        const safeName = `${Date.now()}_${params.mediaFile.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
-        const fileRef = storageRef(storage, `chat/${user.uid}/${safeName}`);
-        const snapshot = await uploadBytes(fileRef, params.mediaFile);
-        mediaUrl = await getDownloadURL(snapshot.ref);
+        try {
+          const storage = getStorage(firebaseApp);
+          const extension = params.mediaType === 'audio' ? 'wav' : 
+                            params.mediaType === 'video' ? 'mp4' : 'jpg';
+          
+          const fileName = (params.mediaFile instanceof File && params.mediaFile.name) 
+                           ? params.mediaFile.name.replace(/[^a-zA-Z0-9.]/g, '_') 
+                           : `media_${Date.now()}.${extension}`;
+          
+          const safeName = `${Date.now()}_${fileName}`;
+          const fileRef = storageRef(storage, `chat/${user.uid}/${safeName}`);
+          const snapshot = await uploadBytes(fileRef, params.mediaFile);
+          mediaUrl = await getDownloadURL(snapshot.ref);
+        } catch (uploadErr) {
+          console.error("Storage upload error:", uploadErr);
+          toast({ title: "Erreur de chargement média", variant: "destructive" });
+          setIsUploading(false);
+          return;
+        }
       }
 
       const messageData = {
@@ -279,15 +294,17 @@ export default function CommunityChat() {
         timestamp: serverTimestamp(),
       };
 
-      await addDoc(collection(firestore, 'community_chat'), messageData);
+      const chatCollection = collection(firestore, 'community_chat');
+      addDocumentNonBlocking(chatCollection, messageData);
 
+      // Attempt broadcast without awaiting to keep UI snappy
       broadcastEmailAction({
           title: params.alertType ? `ALERTE : ${params.alertType.toUpperCase()}` : "K-Flow Chat : Nouveau message",
           message: params.text || `Média partagé (${params.mediaType})`,
           userName: messageData.userName,
           type: params.alertType ? 'alert' : 'chat',
           location: params.locationName
-      });
+      }).catch(err => console.warn("Email broadcast failed silently", err));
 
       setInputText('');
       setAlertLocation('');
@@ -308,8 +325,7 @@ export default function CommunityChat() {
       mediaRecorder.ondataavailable = (event) => audioChunksRef.current.push(event.data);
       mediaRecorder.onstop = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
-        const audioFile = new File([audioBlob], "voice.wav", { type: 'audio/wav' });
-        handleSend({ mediaFile: audioFile, mediaType: 'audio' });
+        handleSend({ mediaFile: audioBlob, mediaType: 'audio' });
         stream.getTracks().forEach(track => track.stop());
       };
       mediaRecorder.start();
@@ -372,7 +388,6 @@ export default function CommunityChat() {
       <div className="p-4 md:p-6 bg-white border-t">
         <div className="max-w-4xl mx-auto flex items-center gap-2 md:gap-3">
           <div className="flex items-center gap-1 shrink-0">
-            {/* Camera / Image Input corrigé pour éviter crash sur iPad */}
             <input 
               type="file" 
               id="chat-cam" 

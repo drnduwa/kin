@@ -113,6 +113,7 @@
           }
         },
         "alertType": { "type": "string", "enum": ["travaux", "police", "embouteillage"] },
+        "likes": { "type": "number" },
         "timestamp": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "userName", "timestamp"]
