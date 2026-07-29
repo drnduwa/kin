@@ -38,21 +38,21 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
             );
             const reportsSnap = await getDocs(reportsQuery);
             const recentReports = reportsSnap.docs.map(d => d.data() as RoadConditionReport);
-            // Recherche de rapports dans un rayon de ~1km
+            // Recherche de rapports dans un rayon de ~1.5km
             localReport = recentReports.find(r => 
-                Math.abs(r.coords.lat - input.lat) < 0.01 && 
-                Math.abs(r.coords.lng - input.lng) < 0.01
+                Math.abs(r.coords.lat - input.lat) < 0.015 && 
+                Math.abs(r.coords.lng - input.lng) < 0.015
             );
         } catch (dbError) {
             console.warn("[TrafficCheck] Firestore bypass:", dbError);
         }
 
         // 2. Appel à Google Routes API v2
-        // On augmente la distance du sondage (+0.02 soit env. 2.2km) pour une précision accrue
+        // On augmente la distance du sondage (+0.025 soit env. 2.7km) pour une précision accrue
         const url = "https://routes.googleapis.com/directions/v2:computeRoutes";
         const body = {
             origin: { location: { latLng: { latitude: input.lat, longitude: input.lng } } },
-            destination: { location: { latLng: { latitude: input.lat + 0.02, longitude: input.lng + 0.02 } } },
+            destination: { location: { latLng: { latitude: input.lat + 0.025, longitude: input.lng + 0.025 } } },
             travelMode: "DRIVE",
             routingPreference: "TRAFFIC_AWARE_OPTIMAL",
             computeAlternativeRoutes: true,
@@ -93,7 +93,7 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
             const delay = Math.round(Math.max(0, dur - statDur) / 60);
 
             // Ajustement des seuils de sensibilité pour Kinshasa (Précision accrue)
-            if (ratio > 1.7 || delay >= 6) result.status = "BLOQUÉ";
+            if (ratio > 1.6 || delay >= 5) result.status = "BLOQUÉ";
             else if (ratio > 1.25 || delay >= 2) result.status = "EMBOUTEILLÉ";
             else if (ratio > 1.1 || delay >= 1) result.status = "MODÉRÉ";
             else result.status = "FLUIDE";
@@ -174,8 +174,8 @@ export async function getGoogleTrafficStatusAction(axes: any[]) {
                 const speed = Math.round(distKm / (dur / 3600));
 
                 let status = "FLUIDE";
-                if (ratio > 1.8 || delay > 10) status = "EMBOUTEILLAGE";
-                else if (ratio > 1.3 || delay > 4) status = "DENSE";
+                if (ratio > 1.7 || delay > 8) status = "EMBOUTEILLAGE";
+                else if (ratio > 1.3 || delay > 3) status = "DENSE";
                 else if (ratio > 1.1 || delay > 1) status = "MODÉRÉ";
 
                 return { road: axis.name, status, speed, delay };

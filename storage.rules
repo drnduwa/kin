@@ -2,8 +2,8 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     
-    // Lecture publique pour tous les contenus partagés (Chat, Reports, Vidéos)
-    // Indispensable pour la fluidité de l'expérience communautaire
+    // --- LECTURE PUBLIQUE ---
+    // Indispensable pour que toute la communauté voie les médias du chat et des rapports
     match /{allPaths=**} {
       allow read: if true;
     }
@@ -35,7 +35,7 @@ service firebase.storage {
       allow write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // Dossier Adverts : Réservé à l'administrateur pour les publicités récompensées
+    // Dossier Adverts : Réservé à l'administrateur
     match /videos/{userId}/adverts/{allPaths=**} {
       allow write: if request.auth != null && request.auth.token.email == 'drnduwa@gmail.com';
     }

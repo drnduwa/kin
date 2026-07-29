@@ -54,7 +54,7 @@ service cloud.firestore {
 
     /** Événements signalés (Incidents du flux principal) */
     match /events/{id} {
-      allow read: if true;
+      allow read, list: if true;
       allow create: if isSignedIn();
       allow update: if isSignedIn();
       allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == resource.data.userId);
@@ -72,20 +72,20 @@ service cloud.firestore {
 
     /** Rapports de trafic quotidiens (Audit) */
     match /daily_traffic_reports/{id} {
-      allow read: if true;
+      allow read, list: if true;
       allow write: if isAdmin();
     }
 
     /** Notifications système */
     match /notifications/{id} {
-      allow read: if true;
+      allow read, list: if true;
       allow create: if isSignedIn();
       allow update, delete: if isAdmin();
     }
     
     /** Analyses Stratégiques IA */
     match /traffic_insights/{id} {
-      allow read: if isSignedIn();
+      allow read, list: if isSignedIn();
       allow create: if isSignedIn();
     }
 

@@ -4,7 +4,8 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useFirebase, useUser, useCollection, useMemoFirebase, addDocumentNonBlocking } from '@/firebase';
 import { collection, query, orderBy, limit, serverTimestamp, setDoc, doc, where, Timestamp, updateDoc, increment } from 'firebase/firestore';
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { CommunityMessage, WithId } from '@/lib/types';
+import { CommunityMessage, WithId, FirestorePermissionError } from '@/lib/types';
+import { errorEmitter } from '@/firebase/error-emitter';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -271,9 +272,18 @@ export default function CommunityChat() {
           mediaUrl = await getDownloadURL(snapshot.ref);
         } catch (uploadErr: any) {
           console.error("STORAGE ERROR:", uploadErr);
+          
+          // Emit a professional contextual error for storage
+          const permissionError = new FirestorePermissionError({
+              path: `storage:chat/${user.uid}/${Date.now()}`,
+              operation: 'write',
+              requestResourceData: { mediaType: params.mediaType }
+          });
+          errorEmitter.emit('permission-error', permissionError);
+
           toast({ 
             title: "Erreur média", 
-            description: `Détail: ${uploadErr.message || "Permissions Storage"}`,
+            description: "Permissions de stockage insuffisantes.",
             variant: "destructive" 
           });
           setIsUploading(false);
@@ -297,7 +307,7 @@ export default function CommunityChat() {
       const chatCollection = collection(firestore, 'community_chat');
       addDocumentNonBlocking(chatCollection, messageData);
 
-      // Notification BROADCAST par e-mail (optionnel)
+      // Notification BROADCAST par e-mail isolée
       broadcastEmailAction({
           title: params.alertType ? `ALERTE : ${params.alertType.toUpperCase()}` : "K-Flow Chat : Nouveau message",
           message: params.text || `Média partagé (${params.mediaType})`,
