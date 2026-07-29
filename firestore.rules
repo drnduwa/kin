@@ -1,4 +1,3 @@
-
 rules_version = '2';
 
 service cloud.firestore {
@@ -22,7 +21,6 @@ service cloud.firestore {
     }
 
     // --- COLLECTION GROUP RULES ---
-    // Autorise l'admin à lister ces collections partout dans la base (Dashboard Admin)
     
     match /{path=**}/transport_subscriptions/{id} {
       allow read: if isAdmin();
@@ -65,7 +63,6 @@ service cloud.firestore {
 
     /** Rules for user profiles and balances */
     match /users {
-      // Autorise l'admin à lister tous les utilisateurs
       allow list: if isAdmin();
     }
 
@@ -95,12 +92,18 @@ service cloud.firestore {
     }
     
     /** Community & Content */
-    match /notifications/{id} { allow read: if true; allow create: if isSignedIn(); allow update, delete: if isAdmin(); }
+    match /notifications/{id} { 
+      allow read: if true; 
+      allow create: if isSignedIn(); 
+      allow update, delete: if isAdmin(); 
+    }
+    
     match /events/{id} { 
       allow read, create: if isSignedIn(); 
       allow update, delete: if isAdmin() || (isSignedIn() && request.auth.uid == resource.data.userId); 
       match /comments/{commentId} { allow read, create: if isSignedIn(); }
     }
+    
     match /videos/{id} { 
       allow read: if true; 
       allow create: if isSignedIn(); 
@@ -108,12 +111,14 @@ service cloud.firestore {
       allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == resource.data.userId);
       match /comments/{commentId} { allow read, create: if isSignedIn(); }
     }
+    
     match /adverts/{id} { allow read: if true; allow write: if isAdmin(); }
     
     /** Community Chat */
     match /community_chat/{id} {
       allow read, create: if isSignedIn();
-      allow update, delete: if isAdmin() || (isSignedIn() && request.auth.uid == resource.data.userId);
+      allow update: if isSignedIn(); // Autorise les likes et mises à jour mineures
+      allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == resource.data.userId);
     }
 
     /** Presence Tracking */

@@ -3,23 +3,25 @@ service firebase.storage {
   match /b/{bucket}/o {
     
     // Règles pour les médias du chat communautaire
-    match /chat/{userId}/{allPaths=**} {
+    // Autorise la lecture à tous et l'écriture uniquement au propriétaire du dossier
+    match /chat/{userId}/{fileName} {
       allow read: if true;
       allow write: if request.auth != null && request.auth.uid == userId;
     }
 
     // Règles pour les signalements de trafic et dangers
-    match /reports/{userId}/{allPaths=**} {
+    match /reports/{userId}/{fileName} {
       allow read: if true;
       allow write: if request.auth != null && request.auth.uid == userId;
     }
-    match /hazards/{userId}/{allPaths=**} {
+    
+    match /hazards/{userId}/{fileName} {
       allow read: if true;
       allow write: if request.auth != null && request.auth.uid == userId;
     }
 
     // Règles pour les vidéos communautaires
-    match /videos/{userId}/{allPaths=**} {
+    match /videos/{userId}/{fileName} {
       allow read: if true;
       allow write: if request.auth != null && request.auth.uid == userId;
     }
@@ -30,7 +32,18 @@ service firebase.storage {
       allow write: if request.auth != null && request.auth.uid == userId;
     }
     
-    // Règle générique par défaut pour les autres contenus (logements, tourisme, etc.)
+    // Règle par défaut pour les dossiers de services (logements, tourisme)
+    match /logements/{logementId}/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.token.email == 'drnduwa@gmail.com';
+    }
+    
+    match /tourism/{eventId}/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null && (request.auth.token.email == 'drnduwa@gmail.com' || request.auth.token.email == 'contact.congonamotema@gmail.com');
+    }
+
+    // Règle générique de secours
     match /{allPaths=**} {
       allow read: if true;
       allow write: if request.auth != null;

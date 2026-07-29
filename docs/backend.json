@@ -1,4 +1,3 @@
-
 {
   "entities": {
     "User": {
@@ -149,61 +148,30 @@
       "password",
       "anonymous",
       "phone",
-      "google.com"
+      "google.com",
+      "apple.com"
     ]
   },
   "firestore": {
-    "structure": [
-      {
-        "path": "/users/{userId}",
-        "definition": {
-          "entityName": "User",
-          "schema": {
-            "$ref": "#/backend/entities/User"
-          },
-          "description": "Stores user profiles and their cumulative star statistics."
-        }
-      },
-      {
-        "path": "/road_condition_reports/{reportId}",
-        "definition": {
-          "entityName": "RoadConditionReport",
-          "schema": {
-            "$ref": "#/backend/entities/RoadConditionReport"
-          },
-          "description": "Community-powered reports on road conditions."
-        }
-      },
-      {
-        "path": "/community_chat/{messageId}",
-        "definition": {
-          "entityName": "CommunityMessage",
-          "schema": {
-            "$ref": "#/backend/entities/CommunityMessage"
-          },
-          "description": "Real-time messages from the community chat salon."
-        }
-      },
-      {
-        "path": "/presence/{userId}",
-        "definition": {
-          "entityName": "Presence",
-          "schema": {
-            "$ref": "#/backend/entities/Presence"
-          },
-          "description": "Tracks online users heartbeats."
-        }
-      },
-      {
-        "path": "/mail/{mailId}",
-        "definition": {
-          "entityName": "Mail",
-          "schema": {
-            "$ref": "#/backend/entities/Mail"
-          },
-          "description": "Queue for outgoing email notifications."
-        }
-      }
-    ]
+    "/users/{userId}": {
+      "schema": { "$ref": "#/backend/entities/User" },
+      "description": "Stores user profiles and their cumulative star statistics."
+    },
+    "/road_condition_reports/{reportId}": {
+      "schema": { "$ref": "#/backend/entities/RoadConditionReport" },
+      "description": "Community-powered reports on road conditions."
+    },
+    "/community_chat/{messageId}": {
+      "schema": { "$ref": "#/backend/entities/CommunityMessage" },
+      "description": "Real-time messages from the community chat salon."
+    },
+    "/presence/{userId}": {
+      "schema": { "$ref": "#/backend/entities/Presence" },
+      "description": "Tracks online users heartbeats."
+    },
+    "/mail/{mailId}": {
+      "schema": { "$ref": "#/backend/entities/Mail" },
+      "description": "Queue for outgoing email notifications."
+    }
   }
 }
