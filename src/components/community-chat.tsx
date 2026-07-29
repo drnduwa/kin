@@ -1,4 +1,3 @@
-
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
@@ -265,16 +264,16 @@ export default function CommunityChat() {
           const extension = params.mediaType === 'audio' ? 'wav' : 
                             params.mediaType === 'video' ? 'mp4' : 'jpg';
           
-          const safeName = `media_${Date.now()}_${user.uid.slice(0, 5)}.${extension}`;
+          const safeName = `${Date.now()}.${extension}`;
           const fileRef = storageRef(storage, `chat/${user.uid}/${safeName}`);
           
           const snapshot = await uploadBytes(fileRef, params.mediaFile);
           mediaUrl = await getDownloadURL(snapshot.ref);
         } catch (uploadErr: any) {
-          console.error("CRITICAL UPLOAD ERROR:", uploadErr);
+          console.error("STORAGE ERROR:", uploadErr);
           toast({ 
-            title: "Erreur chargement media", 
-            description: uploadErr.message || "Vérifiez votre connexion.",
+            title: "Erreur média", 
+            description: `Détail: ${uploadErr.message || "Permissions Storage"}`,
             variant: "destructive" 
           });
           setIsUploading(false);
@@ -298,7 +297,7 @@ export default function CommunityChat() {
       const chatCollection = collection(firestore, 'community_chat');
       addDocumentNonBlocking(chatCollection, messageData);
 
-      // Attempt broadcast without awaiting to keep UI snappy
+      // Notification BROADCAST par e-mail (optionnel)
       broadcastEmailAction({
           title: params.alertType ? `ALERTE : ${params.alertType.toUpperCase()}` : "K-Flow Chat : Nouveau message",
           message: params.text || `Média partagé (${params.mediaType})`,
