@@ -2,35 +2,54 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     
-    // Lecture publique pour tous les contenus communautaires
+    // Lecture publique pour tous les contenus partagés (Chat, Reports, Vidéos)
+    // Indispensable pour la fluidité de l'expérience communautaire
     match /{allPaths=**} {
       allow read: if true;
     }
 
-    // --- RÈGLES D'ÉCRITURE PROFESSIONNELLES ---
-    
-    // Autorisation universelle par dossier utilisateur
-    // folder peut être : chat, reports, hazards, videos, avatars
-    match /{folder}/{userId}/{allPaths=**} {
-      allow write: if request.auth != null && (request.auth.uid == userId || request.auth.token.email == 'drnduwa@gmail.com');
+    // --- RÈGLES D'ÉCRITURE SÉCURISÉES ---
+
+    // Dossier Chat : L'utilisateur écrit dans son propre dossier UID
+    match /chat/{userId}/{allPaths=**} {
+      allow write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // Services Administratifs (Logements, Tourisme, Adverts)
-    match /logements/{logementId}/{allPaths=**} {
-      allow write: if request.auth != null && request.auth.token.email == 'drnduwa@gmail.com';
-    }
-    
-    match /tourism/{eventId}/{allPaths=**} {
-      allow write: if request.auth != null && (request.auth.token.email == 'drnduwa@gmail.com' || request.auth.token.email == 'contact.congonamotema@gmail.com');
+    // Dossier Reports : Pour les signalements communautaires d'incidents
+    match /reports/{userId}/{allPaths=**} {
+      allow write: if request.auth != null && request.auth.uid == userId;
     }
 
+    // Dossier Hazards : Pour les dangers signalés sur la carte (potholes, etc.)
+    match /hazards/{userId}/{allPaths=**} {
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Dossier Avatars : Mise à jour de la photo de profil
+    match /avatars/{userId}/{allPaths=**} {
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Dossier Vidéos : Flux communautaire vidéo
+    match /videos/{userId}/{allPaths=**} {
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Dossier Adverts : Réservé à l'administrateur pour les publicités récompensées
     match /videos/{userId}/adverts/{allPaths=**} {
       allow write: if request.auth != null && request.auth.token.email == 'drnduwa@gmail.com';
     }
 
-    // Règle de secours globale pour les utilisateurs identifiés
-    match /{allPaths=**} {
-      allow write: if request.auth != null;
+    // Services Business : Logements et Tourisme (Accès Admin)
+    match /logements/{allPaths=**} {
+      allow write: if request.auth != null && request.auth.token.email == 'drnduwa@gmail.com';
+    }
+    
+    match /tourism/{allPaths=**} {
+      allow write: if request.auth != null && (
+        request.auth.token.email == 'drnduwa@gmail.com' || 
+        request.auth.token.email == 'contact.congonamotema@gmail.com'
+      );
     }
   }
 }

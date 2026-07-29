@@ -60,6 +60,22 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "type", "coords", "createdAt"]
+    },
+    "EventReport": {
+      "title": "EventReport",
+      "type": "object",
+      "description": "Incident de trafic signalé par la communauté.",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "user": { "type": "string" },
+        "location": { "type": "string" },
+        "description": { "type": "string" },
+        "severity": { "type": "string", "enum": ["low", "medium", "high"] },
+        "picture": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "location", "severity", "createdAt"]
     }
   },
   "auth": {
@@ -68,6 +84,7 @@
   "firestore": {
     "/users/{userId}": { "schema": { "$ref": "#/backend/entities/User" }, "description": "Profils utilisateurs." },
     "/community_chat/{messageId}": { "schema": { "$ref": "#/backend/entities/CommunityMessage" }, "description": "Messages Radio Trottoir." },
-    "/road_condition_reports/{reportId}": { "schema": { "$ref": "#/backend/entities/RoadConditionReport" }, "description": "Signalements de dangers." }
+    "/road_condition_reports/{reportId}": { "schema": { "$ref": "#/backend/entities/RoadConditionReport" }, "description": "Signalements de dangers." },
+    "/events/{eventId}": { "schema": { "$ref": "#/backend/entities/EventReport" }, "description": "Incidents de trafic communautaires." }
   }
 }

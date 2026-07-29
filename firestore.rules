@@ -25,7 +25,7 @@ service cloud.firestore {
     /** Profils utilisateurs */
     match /users/{userId} {
       allow get: if isSignedIn();
-      allow list: if isSignedIn(); // Requis pour la diffusion d'e-mails communautaires
+      allow list: if isSignedIn(); // Autorise la lecture pour la diffusion e-mail
       allow create: if isOwner(userId);
       allow update: if isOwner(userId) || isAdmin();
       allow delete: if isAdmin();
@@ -40,11 +40,11 @@ service cloud.firestore {
     match /community_chat/{id} {
       allow read: if true;
       allow create: if isSignedIn();
-      allow update: if isSignedIn(); 
+      allow update: if isSignedIn(); // Permet les "likes" par tout membre connecté
       allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == resource.data.userId);
     }
 
-    /** Rapports de route et dangers */
+    /** Rapports de route et dangers (Hazard Map) */
     match /road_condition_reports/{id} {
       allow read: if true;
       allow create: if isSignedIn();
@@ -52,7 +52,7 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    /** Événements signalés (Incidents) */
+    /** Événements signalés (Incidents du flux principal) */
     match /events/{id} {
       allow read: if true;
       allow create: if isSignedIn();
