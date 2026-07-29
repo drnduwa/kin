@@ -3,25 +3,25 @@ service firebase.storage {
   match /b/{bucket}/o {
     
     // Règles pour les médias du chat communautaire
-    // Autorise la lecture à tous et l'écriture uniquement au propriétaire du dossier
-    match /chat/{userId}/{fileName} {
+    // Utilisation de segments récursifs pour une meilleure correspondance
+    match /chat/{userId}/{allPaths=**} {
       allow read: if true;
       allow write: if request.auth != null && request.auth.uid == userId;
     }
 
     // Règles pour les signalements de trafic et dangers
-    match /reports/{userId}/{fileName} {
+    match /reports/{userId}/{allPaths=**} {
       allow read: if true;
       allow write: if request.auth != null && request.auth.uid == userId;
     }
     
-    match /hazards/{userId}/{fileName} {
+    match /hazards/{userId}/{allPaths=**} {
       allow read: if true;
       allow write: if request.auth != null && request.auth.uid == userId;
     }
 
     // Règles pour les vidéos communautaires
-    match /videos/{userId}/{fileName} {
+    match /videos/{userId}/{allPaths=**} {
       allow read: if true;
       allow write: if request.auth != null && request.auth.uid == userId;
     }
@@ -32,18 +32,18 @@ service firebase.storage {
       allow write: if request.auth != null && request.auth.uid == userId;
     }
     
-    // Règle par défaut pour les dossiers de services (logements, tourisme)
-    match /logements/{logementId}/{fileName} {
+    // Dossiers de services (logements, tourisme) - Droits admin
+    match /logements/{logementId}/{allPaths=**} {
       allow read: if true;
       allow write: if request.auth != null && request.auth.token.email == 'drnduwa@gmail.com';
     }
     
-    match /tourism/{eventId}/{fileName} {
+    match /tourism/{eventId}/{allPaths=**} {
       allow read: if true;
       allow write: if request.auth != null && (request.auth.token.email == 'drnduwa@gmail.com' || request.auth.token.email == 'contact.congonamotema@gmail.com');
     }
 
-    // Règle générique de secours
+    // Règle de secours pour les autres fichiers (si authentifié)
     match /{allPaths=**} {
       allow read: if true;
       allow write: if request.auth != null;

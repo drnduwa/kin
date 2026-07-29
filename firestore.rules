@@ -40,7 +40,7 @@ service cloud.firestore {
     match /road_condition_reports/{reportId} {
       allow read: if true;
       allow create: if isSignedIn();
-      allow update: if isSignedIn(); // allow votes
+      allow update: if isSignedIn(); 
       allow delete: if isAdmin();
     }
 
@@ -117,7 +117,7 @@ service cloud.firestore {
     /** Community Chat */
     match /community_chat/{id} {
       allow read, create: if isSignedIn();
-      allow update: if isSignedIn(); // Autorise les likes et mises à jour mineures
+      allow update: if isSignedIn(); 
       allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == resource.data.userId);
     }
 
