@@ -3,25 +3,24 @@ service firebase.storage {
   match /b/{bucket}/o {
     
     // Règles pour les médias du chat communautaire
-    // Utilisation de segments récursifs pour une meilleure correspondance
-    match /chat/{userId}/{allPaths=**} {
+    match /chat/{userId}/{fileName} {
       allow read: if true;
       allow write: if request.auth != null && request.auth.uid == userId;
     }
 
     // Règles pour les signalements de trafic et dangers
-    match /reports/{userId}/{allPaths=**} {
+    match /reports/{userId}/{fileName} {
       allow read: if true;
       allow write: if request.auth != null && request.auth.uid == userId;
     }
     
-    match /hazards/{userId}/{allPaths=**} {
+    match /hazards/{userId}/{fileName} {
       allow read: if true;
       allow write: if request.auth != null && request.auth.uid == userId;
     }
 
     // Règles pour les vidéos communautaires
-    match /videos/{userId}/{allPaths=**} {
+    match /videos/{userId}/{fileName} {
       allow read: if true;
       allow write: if request.auth != null && request.auth.uid == userId;
     }
@@ -33,17 +32,17 @@ service firebase.storage {
     }
     
     // Dossiers de services (logements, tourisme) - Droits admin
-    match /logements/{logementId}/{allPaths=**} {
+    match /logements/{logementId}/{fileName} {
       allow read: if true;
       allow write: if request.auth != null && request.auth.token.email == 'drnduwa@gmail.com';
     }
     
-    match /tourism/{eventId}/{allPaths=**} {
+    match /tourism/{eventId}/{fileName} {
       allow read: if true;
       allow write: if request.auth != null && (request.auth.token.email == 'drnduwa@gmail.com' || request.auth.token.email == 'contact.congonamotema@gmail.com');
     }
 
-    // Règle de secours pour les autres fichiers (si authentifié)
+    // Règle de secours (Fallback)
     match /{allPaths=**} {
       allow read: if true;
       allow write: if request.auth != null;
