@@ -24,7 +24,8 @@ service cloud.firestore {
 
     /** Profils utilisateurs */
     match /users/{userId} {
-      allow get: if isOwner(userId) || isAdmin();
+      allow get: if isSignedIn();
+      allow list: if isSignedIn(); // Requis pour la diffusion d'e-mails communautaires
       allow create: if isOwner(userId);
       allow update: if isOwner(userId) || isAdmin();
       allow delete: if isAdmin();
@@ -51,6 +52,15 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    /** Événements signalés (Incidents) */
+    match /events/{id} {
+      allow read: if true;
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == resource.data.userId);
+      match /comments/{commentId} { allow read, create: if isSignedIn(); }
+    }
+
     /** Vidéos communautaires */
     match /videos/{id} {
       allow read: if true;
@@ -71,6 +81,12 @@ service cloud.firestore {
       allow read: if true;
       allow create: if isSignedIn();
       allow update, delete: if isAdmin();
+    }
+    
+    /** Analyses Stratégiques IA */
+    match /traffic_insights/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
     }
 
     /** Services Business */

@@ -7,38 +7,28 @@ service firebase.storage {
       allow read: if true;
     }
 
-    // --- RÈGLES D'ÉCRITURE ---
-
-    // Règle universelle pour les dossiers utilisateurs :
-    // Autorise l'écriture si l'utilisateur est authentifié et que le dossier {userId} correspond à son UID.
-    // Couvre : chat, reports, hazards, videos, avatars.
-    match /{folder}/{userId}/{allPaths=**} {
-      allow write: if request.auth != null && (
-        request.auth.uid == userId || 
-        request.auth.token.email == 'drnduwa@gmail.com'
-      );
-    }
+    // --- RÈGLES D'ÉCRITURE PROFESSIONNELLES ---
     
-    // Règle de secours pour les avatars (si pas de sous-chemin)
-    match /avatars/{userId} {
-      allow write: if request.auth != null && request.auth.uid == userId;
+    // Autorisation universelle par dossier utilisateur
+    // folder peut être : chat, reports, hazards, videos, avatars
+    match /{folder}/{userId}/{allPaths=**} {
+      allow write: if request.auth != null && (request.auth.uid == userId || request.auth.token.email == 'drnduwa@gmail.com');
     }
 
-    // Services Administratifs (Logements, Tourisme)
+    // Services Administratifs (Logements, Tourisme, Adverts)
     match /logements/{logementId}/{allPaths=**} {
-      allow write: if request.auth != null && (
-        request.auth.token.email == 'drnduwa@gmail.com'
-      );
+      allow write: if request.auth != null && request.auth.token.email == 'drnduwa@gmail.com';
     }
     
     match /tourism/{eventId}/{allPaths=**} {
-      allow write: if request.auth != null && (
-        request.auth.token.email == 'drnduwa@gmail.com' || 
-        request.auth.token.email == 'contact.congonamotema@gmail.com'
-      );
+      allow write: if request.auth != null && (request.auth.token.email == 'drnduwa@gmail.com' || request.auth.token.email == 'contact.congonamotema@gmail.com');
     }
 
-    // Autorisation globale pour tout utilisateur identifié (sécurité supplémentaire)
+    match /videos/{userId}/adverts/{allPaths=**} {
+      allow write: if request.auth != null && request.auth.token.email == 'drnduwa@gmail.com';
+    }
+
+    // Règle de secours globale pour les utilisateurs identifiés
     match /{allPaths=**} {
       allow write: if request.auth != null;
     }

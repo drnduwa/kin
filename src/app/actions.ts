@@ -1,4 +1,3 @@
-
 "use server";
 
 import { getTrafficTips } from "@/ai/flows/traffic-tips-flow";
@@ -49,11 +48,11 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
         }
 
         // 2. Appel à Google Routes API v2
-        // On augmente la distance du sondage (+0.015 soit env. 1.6km) pour une meilleure précision contextuelle
+        // On augmente la distance du sondage (+0.02 soit env. 2.2km) pour une précision accrue
         const url = "https://routes.googleapis.com/directions/v2:computeRoutes";
         const body = {
             origin: { location: { latLng: { latitude: input.lat, longitude: input.lng } } },
-            destination: { location: { latLng: { latitude: input.lat + 0.015, longitude: input.lng + 0.015 } } },
+            destination: { location: { latLng: { latitude: input.lat + 0.02, longitude: input.lng + 0.02 } } },
             travelMode: "DRIVE",
             routingPreference: "TRAFFIC_AWARE_OPTIMAL",
             computeAlternativeRoutes: true,
@@ -94,9 +93,9 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
             const delay = Math.round(Math.max(0, dur - statDur) / 60);
 
             // Ajustement des seuils de sensibilité pour Kinshasa (Précision accrue)
-            if (ratio > 1.9 || delay >= 7) result.status = "BLOQUÉ";
-            else if (ratio > 1.35 || delay >= 2) result.status = "EMBOUTEILLÉ";
-            else if (ratio > 1.12 || delay >= 1) result.status = "MODÉRÉ";
+            if (ratio > 1.7 || delay >= 6) result.status = "BLOQUÉ";
+            else if (ratio > 1.25 || delay >= 2) result.status = "EMBOUTEILLÉ";
+            else if (ratio > 1.1 || delay >= 1) result.status = "MODÉRÉ";
             else result.status = "FLUIDE";
 
             if (localReport) {
@@ -104,13 +103,13 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
                 result.lingala = "Bato balobi nzela eza pasi, keba mingi.";
             } else {
                 if (result.status === "FLUIDE") {
-                    result.verdict = "Axe fluide : Trafic normal constaté.";
+                    result.verdict = "Axe fluide : Circulation libre constatée.";
                     result.lingala = "Nzela eza kitoko, kotambola eza pasi te.";
                 } else if (result.status === "MODÉRÉ") {
                     result.verdict = `Trafic modéré : Prévoyez un ralentissement de ${delay || 1} min.`;
                     result.lingala = "Nzela eza pasi moke, zela mwa moke.";
                 } else {
-                    result.verdict = `${input.address || 'Cet axe'} est actuellement ${result.status.toLowerCase()} (Retard : ${delay} min).`;
+                    result.verdict = `${input.address || 'Cet axe'} est actuellement ${result.status.toLowerCase()} (Retard estimé : ${delay} min).`;
                     result.lingala = "Nzela eza bloqué, luka nzela mosusu soki likoki eza.";
                 }
             }
@@ -118,7 +117,6 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
             result.delay = delay;
             result.ratio = ratio;
 
-            // Ajout des alternatives si disponibles pour plus de précision
             if (data.routes.length > 1) {
                 result.alternatives = data.routes.slice(1, 3).map((r: any) => ({
                     description: r.description || "Itinéraire bis",
@@ -253,9 +251,6 @@ export async function sendTestPushNotificationAction(subscription: PushSubscript
   }
 }
 
-/**
- * Envoie un e-mail de test au compte administrateur pour vérifier le tunnel SMTP.
- */
 export async function sendTestEmailAction() {
   const smtpUser = "kinshasaflow@gmail.com";
   const smtpPass = "mqlt yrzr xnjv tkvb"; 
@@ -289,9 +284,6 @@ export async function sendTestEmailAction() {
   }
 }
 
-/**
- * Diffuse une notification par e-mail à tous les utilisateurs.
- */
 export async function broadcastEmailAction(params: { 
   title: string, 
   message: string, 
@@ -306,7 +298,6 @@ export async function broadcastEmailAction(params: {
   
   try {
     const { firestore } = initializeFirebase();
-    // On récupère tous les e-mails des utilisateurs enregistrés
     const usersSnap = await getDocs(collection(firestore, 'users'));
     
     if (!usersSnap.empty) {
@@ -314,7 +305,6 @@ export async function broadcastEmailAction(params: {
           .map(doc => doc.data().email)
           .filter(email => email && email.includes('@') && email !== 'drnduwa@gmail.com');
         
-        // Fusion et suppression des doublons
         recipientList = Array.from(new Set([...recipientList, ...userEmails]));
     }
   } catch (e) {
@@ -335,8 +325,8 @@ export async function broadcastEmailAction(params: {
 
   const mailOptions = {
     from: `"Kinshasa Flow" <${smtpUser}>`,
-    to: "kinshasaflow@gmail.com", // Destinataire principal (identique à l'expéditeur pour éviter le spam)
-    bcc: recipientList, // Envoi masqué à tous les utilisateurs
+    to: "kinshasaflow@gmail.com", 
+    bcc: recipientList, 
     subject: `${subjectPrefix} : ${params.title}${locationStr}`,
     html: `
       <div style="font-family: sans-serif; padding: 20px; color: #1e293b; background-color: #f8fafc;">
@@ -376,9 +366,6 @@ export async function broadcastEmailAction(params: {
   }
 }
 
-/**
- * Envoie un e-mail de bienvenue aux nouveaux utilisateurs.
- */
 export async function sendWelcomeEmailAction(params: { email: string, userName: string }) {
   const smtpUser = "kinshasaflow@gmail.com";
   const smtpPass = "mqlt yrzr xnjv tkvb"; 
@@ -410,9 +397,6 @@ export async function sendWelcomeEmailAction(params: { email: string, userName: 
                 <p style="margin: 0; font-weight: bold; color: #248eeb;">Cadeau de bienvenue : +25 Stars ⭐</p>
                 <p style="margin: 5px 0 0; font-size: 12px; color: #64748b;">Utilisez-les pour consulter le trafic premium ou poser des questions à l'IA.</p>
             </div>
-            <p style="color: #64748b; font-size: 14px; margin-bottom: 30px;">
-                Installez l'application sur votre écran d'accueil pour recevoir nos alertes "Pop-up" en temps réel !
-            </p>
             <a href="https://kinshasaflow.online" style="background-color: #248eeb; color: #ffffff; padding: 18px 30px; text-decoration: none; border-radius: 14px; font-weight: 900; font-size: 16px; display: inline-block; box-shadow: 0 4px 12px rgba(36, 142, 235, 0.3);">DÉCOUVRIR L'APPLICATION</a>
           </div>
           <div style="padding: 20px; text-align: center; font-size: 11px; color: #94a3b8; border-top: 1px solid #f1f5f9; background-color: #fafafa;">
