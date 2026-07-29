@@ -37,8 +37,9 @@ service cloud.firestore {
 
     /** Chat Communautaire (Radio Trottoir) */
     match /community_chat/{id} {
-      allow read, create: if isSignedIn();
-      allow update: if isSignedIn(); // Autorise les 'likes' et mises à jour par tout utilisateur
+      allow read: if true;
+      allow create: if isSignedIn();
+      allow update: if isSignedIn(); 
       allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == resource.data.userId);
     }
 
