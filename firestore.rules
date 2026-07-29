@@ -3,7 +3,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // --- GLOBAL HELPER FUNCTIONS ---
+    // --- FONCTIONS DE SÉCURITÉ ---
 
     function isSignedIn() {
       return request.auth != null;
@@ -20,120 +20,59 @@ service cloud.firestore {
       );
     }
 
-    // --- COLLECTION GROUP RULES ---
-    
-    match /{path=**}/transport_subscriptions/{id} {
-      allow read: if isAdmin();
-    }
-    
-    match /{path=**}/pushSubscriptions/{id} {
-      allow read: if isAdmin();
-    }
+    // --- RÈGLES DES COLLECTIONS ---
 
-    match /{path=**}/fcmTokens/{id} {
-      allow read: if isAdmin();
-    }
-
-    // --- COLLECTION RULES ---
-
-    /** Rules for road condition reports */
-    match /road_condition_reports/{reportId} {
-      allow read: if true;
-      allow create: if isSignedIn();
-      allow update: if isSignedIn(); 
-      allow delete: if isAdmin();
-    }
-
-    /** Daily Traffic Audit & Insights */
-    match /daily_traffic_reports/{reportId} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-
-    match /traffic_insights/{id} {
-      allow read: if true;
-      allow write: if isSignedIn();
-    }
-
-    /** Application Settings */
-    match /app_settings/{document} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-
-    /** Rules for user profiles and balances */
-    match /users {
-      allow list: if isAdmin();
-    }
-
+    /** Profils utilisateurs */
     match /users/{userId} {
       allow get: if isOwner(userId) || isAdmin();
       allow create: if isOwner(userId);
       allow update: if isOwner(userId) || isAdmin();
       allow delete: if isAdmin();
 
-      match /star_transactions/{transactionId} {
-        allow get, list: if isOwner(userId) || isAdmin();
-        allow create: if isOwner(userId) || isAdmin();
-        allow update, delete: if false;
-      }
-
-      match /transport_subscriptions/{id} {
-        allow read, write: if isOwner(userId) || isAdmin();
-      }
-
-      match /pushSubscriptions/{id} {
-        allow read, write: if isOwner(userId) || isAdmin();
-      }
-
-      match /fcmTokens/{id} {
-        allow read, write: if isOwner(userId) || isAdmin();
-      }
+      match /star_transactions/{id} { allow read, create: if isOwner(userId) || isAdmin(); }
+      match /transport_subscriptions/{id} { allow read, write: if isOwner(userId) || isAdmin(); }
+      match /pushSubscriptions/{id} { allow read, write: if isOwner(userId) || isAdmin(); }
+      match /fcmTokens/{id} { allow read, write: if isOwner(userId) || isAdmin(); }
     }
-    
-    /** Community & Content */
-    match /notifications/{id} { 
-      allow read: if true; 
-      allow create: if isSignedIn(); 
-      allow update, delete: if isAdmin(); 
+
+    /** Chat Communautaire (Radio Trottoir) */
+    match /community_chat/{id} {
+      allow read, create: if isSignedIn();
+      allow update: if isSignedIn(); // Autorise les 'likes' et mises à jour par tout utilisateur
+      allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == resource.data.userId);
     }
-    
-    match /events/{id} { 
-      allow read, create: if isSignedIn(); 
-      allow update, delete: if isAdmin() || (isSignedIn() && request.auth.uid == resource.data.userId); 
-      match /comments/{commentId} { allow read, create: if isSignedIn(); }
+
+    /** Rapports de route et dangers */
+    match /road_condition_reports/{id} {
+      allow read: if true;
+      allow create: if isSignedIn();
+      allow update: if isSignedIn(); 
+      allow delete: if isAdmin();
     }
-    
-    match /videos/{id} { 
-      allow read: if true; 
-      allow create: if isSignedIn(); 
+
+    /** Vidéos communautaires */
+    match /videos/{id} {
+      allow read: if true;
+      allow create: if isSignedIn();
       allow update: if isSignedIn();
       allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == resource.data.userId);
       match /comments/{commentId} { allow read, create: if isSignedIn(); }
     }
-    
-    match /adverts/{id} { allow read: if true; allow write: if isAdmin(); }
-    
-    /** Community Chat */
-    match /community_chat/{id} {
-      allow read, create: if isSignedIn();
-      allow update: if isSignedIn(); 
-      allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == resource.data.userId);
+
+    /** Rapports de trafic quotidiens (Audit) */
+    match /daily_traffic_reports/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
-    /** Presence Tracking */
-    match /presence/{userId} {
-      allow get, list: if isSignedIn();
-      allow write: if isOwner(userId);
-    }
-
-    /** Email Trigger Collection */
-    match /mail/{mailId} {
+    /** Notifications système */
+    match /notifications/{id} {
+      allow read: if true;
       allow create: if isSignedIn();
-      allow read, update, delete: if isAdmin();
+      allow update, delete: if isAdmin();
     }
 
-    /** Business Services */
+    /** Services Business */
     match /logements/{id} { allow read: if true; allow write: if isAdmin(); }
     match /logement_applications/{id} { allow read: if isAdmin(); allow create: if isSignedIn(); }
     match /tourism_events/{id} { allow read: if true; allow write: if isAdmin(); }
@@ -141,5 +80,8 @@ service cloud.firestore {
     match /car_bookings/{id} { allow read: if isAdmin(); allow create: if isSignedIn(); }
     match /inquiries/{id} { allow read: if isAdmin(); allow create: if isSignedIn(); }
     match /police_reports/{id} { allow read: if true; allow create: if isSignedIn(); allow delete: if isAdmin(); }
+    match /presence/{userId} { allow get, list: if isSignedIn(); allow write: if isOwner(userId); }
+    match /mail/{mailId} { allow create: if isSignedIn(); allow read, update, delete: if isAdmin(); }
+    match /app_settings/{document} { allow read: if true; allow write: if isAdmin(); }
   }
 }

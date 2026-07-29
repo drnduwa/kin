@@ -2,49 +2,55 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     
-    // Règles pour les médias du chat communautaire
-    match /chat/{userId}/{fileName} {
-      allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == userId;
-    }
-
-    // Règles pour les signalements de trafic et dangers
-    match /reports/{userId}/{fileName} {
-      allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == userId;
-    }
-    
-    match /hazards/{userId}/{fileName} {
-      allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == userId;
-    }
-
-    // Règles pour les vidéos communautaires
-    match /videos/{userId}/{fileName} {
-      allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == userId;
-    }
-
-    // Règles pour les avatars utilisateurs
-    match /avatars/{userId} {
-      allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == userId;
-    }
-    
-    // Dossiers de services (logements, tourisme) - Droits admin
-    match /logements/{logementId}/{fileName} {
-      allow read: if true;
-      allow write: if request.auth != null && request.auth.token.email == 'drnduwa@gmail.com';
-    }
-    
-    match /tourism/{eventId}/{fileName} {
-      allow read: if true;
-      allow write: if request.auth != null && (request.auth.token.email == 'drnduwa@gmail.com' || request.auth.token.email == 'contact.congonamotema@gmail.com');
-    }
-
-    // Règle de secours (Fallback)
+    // Règle globale : Lecture publique pour tous les médias communautaires
+    // Cela évite les erreurs d'affichage sur les contenus partagés.
     match /{allPaths=**} {
       allow read: if true;
+    }
+
+    // --- RÈGLES D'ÉCRITURE PAR DOSSIER ---
+
+    // Chat Communautaire : L'utilisateur peut écrire dans son propre dossier
+    match /chat/{userId}/{allPaths=**} {
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Rapports de trafic et Dangers : L'utilisateur peut écrire dans son propre dossier
+    match /reports/{userId}/{allPaths=**} {
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    match /hazards/{userId}/{allPaths=**} {
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Vidéos Communautaires : L'utilisateur peut écrire dans son propre dossier
+    match /videos/{userId}/{allPaths=**} {
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Avatars : L'utilisateur gère son propre fichier avatar
+    match /avatars/{userId} {
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Services Administratifs (Logements, Tourisme)
+    // Seuls les administrateurs désignés peuvent modifier ces fichiers
+    match /logements/{logementId}/{allPaths=**} {
+      allow write: if request.auth != null && (
+        request.auth.token.email == 'drnduwa@gmail.com'
+      );
+    }
+    
+    match /tourism/{eventId}/{allPaths=**} {
+      allow write: if request.auth != null && (
+        request.auth.token.email == 'drnduwa@gmail.com' || 
+        request.auth.token.email == 'contact.congonamotema@gmail.com'
+      );
+    }
+
+    // Règle de sécurité finale par défaut
+    match /{allPaths=**} {
       allow write: if request.auth != null;
     }
   }

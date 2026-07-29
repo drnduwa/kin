@@ -1,83 +1,53 @@
 {
   "entities": {
     "User": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "User",
       "type": "object",
-      "description": "Represents a user of the IDGenius application, including their personal information and Star balance for the monetization system.",
+      "description": "Profil utilisateur et balance de Stars.",
       "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the User entity."
-        },
-        "email": {
-          "type": "string",
-          "description": "The user's email address, used for login and notifications.",
-          "format": "email"
-        },
-        "currentStarsBalance": {
-          "type": "number",
-          "description": "The current number of Stars available for the user to spend."
-        },
-        "totalStarsEarned": {
-          "type": "number",
-          "description": "The cumulative total of Stars the user has earned through free actions."
-        },
-        "totalStarsPurchased": {
-          "type": "number",
-          "description": "The cumulative total of Stars the user has acquired through purchases."
-        },
-        "totalStarsUsed": {
-          "type": "number",
-          "description": "The cumulative total of Stars the user has spent on premium features."
-        },
-        "lastLoginTimestamp": {
-          "type": "string",
-          "description": "The timestamp of the user's last successful login, used for calculating login streaks.",
-          "format": "date-time"
-        },
-        "consecutiveLoginDays": {
-          "type": "number",
-          "description": "The number of consecutive days the user has logged in, used for awarding streak bonuses."
-        },
-        "referralCode": {
-          "type": "string",
-          "description": "A unique code assigned to the user, which can be shared to refer new users."
-        },
-        "referredByUserId": {
-          "type": "string",
-          "description": "Reference to the User who referred this user to the application. (Relationship: User 1:N User)"
-        },
-        "isProfileComplete": {
-          "type": "boolean",
-          "description": "Indicates whether the user has completed all required profile information, a condition for earning Stars."
-        }
+        "id": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "name": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "currentStarsBalance": { "type": "number" },
+        "totalStarsEarned": { "type": "number" },
+        "totalStarsPurchased": { "type": "number" },
+        "totalStarsUsed": { "type": "number" },
+        "isBlocked": { "type": "boolean" },
+        "isCashSubscribed": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": [
-        "id",
-        "email",
-        "currentStarsBalance",
-        "totalStarsEarned",
-        "totalStarsPurchased",
-        "totalStarsUsed",
-        "lastLoginTimestamp",
-        "consecutiveLoginDays",
-        "referralCode",
-        "isProfileComplete"
-      ]
+      "required": ["id", "email", "currentStarsBalance"]
     },
-    "RoadConditionReport": {
-      "title": "RoadConditionReport",
+    "CommunityMessage": {
+      "title": "CommunityMessage",
       "type": "object",
-      "description": "A report submitted by a user about road conditions in Kinshasa.",
+      "description": "Message partagé dans le salon communautaire.",
       "properties": {
         "id": { "type": "string" },
         "userId": { "type": "string" },
         "userName": { "type": "string" },
+        "userAvatar": { "type": "string" },
+        "text": { "type": "string" },
+        "mediaUrl": { "type": "string" },
+        "mediaType": { "type": "string", "enum": ["image", "video", "audio"] },
+        "locationName": { "type": "string" },
+        "alertType": { "type": "string", "enum": ["travaux", "police", "embouteillage"] },
+        "likes": { "type": "number" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "userName", "timestamp"]
+    },
+    "RoadConditionReport": {
+      "title": "RoadConditionReport",
+      "type": "object",
+      "description": "Signalement d'incident ou de danger sur la route.",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
         "type": { "type": "string", "enum": ["pothole", "blockage", "police", "damaged_road"] },
         "description": { "type": "string" },
         "imageUrl": { "type": "string" },
-        "locationName": { "type": "string" },
         "coords": {
           "type": "object",
           "properties": {
@@ -90,88 +60,14 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "type", "coords", "createdAt"]
-    },
-    "CommunityMessage": {
-      "title": "CommunityMessage",
-      "type": "object",
-      "description": "A message shared in the community chat salon.",
-      "properties": {
-        "id": { "type": "string" },
-        "userId": { "type": "string" },
-        "userName": { "type": "string" },
-        "userAvatar": { "type": "string" },
-        "text": { "type": "string" },
-        "mediaUrl": { "type": "string" },
-        "mediaType": { "type": "string", "enum": ["image", "video", "audio"] },
-        "locationName": { "type": "string" },
-        "coords": {
-          "type": "object",
-          "properties": {
-            "lat": { "type": "number" },
-            "lng": { "type": "number" }
-          }
-        },
-        "alertType": { "type": "string", "enum": ["travaux", "police", "embouteillage"] },
-        "likes": { "type": "number" },
-        "timestamp": { "type": "string", "format": "date-time" }
-      },
-      "required": ["userId", "userName", "timestamp"]
-    },
-    "Presence": {
-      "title": "Presence",
-      "type": "object",
-      "description": "Tracks online users heartbeats.",
-      "properties": {
-        "lastSeen": { "type": "string", "format": "date-time" }
-      },
-      "required": ["lastSeen"]
-    },
-    "Mail": {
-      "title": "Mail",
-      "type": "object",
-      "description": "A document to trigger the Firebase Trigger Email extension.",
-      "properties": {
-        "to": { "type": "array", "items": { "type": "string" } },
-        "message": {
-          "type": "object",
-          "properties": {
-            "subject": { "type": "string" },
-            "html": { "type": "string" },
-            "text": { "type": "string" }
-          }
-        }
-      }
     }
   },
   "auth": {
-    "providers": [
-      "password",
-      "anonymous",
-      "phone",
-      "google.com",
-      "apple.com"
-    ]
+    "providers": ["password", "anonymous", "google.com", "apple.com"]
   },
   "firestore": {
-    "/users/{userId}": {
-      "schema": { "$ref": "#/backend/entities/User" },
-      "description": "Stores user profiles and their cumulative star statistics."
-    },
-    "/road_condition_reports/{reportId}": {
-      "schema": { "$ref": "#/backend/entities/RoadConditionReport" },
-      "description": "Community-powered reports on road conditions."
-    },
-    "/community_chat/{messageId}": {
-      "schema": { "$ref": "#/backend/entities/CommunityMessage" },
-      "description": "Real-time messages from the community chat salon."
-    },
-    "/presence/{userId}": {
-      "schema": { "$ref": "#/backend/entities/Presence" },
-      "description": "Tracks online users heartbeats."
-    },
-    "/mail/{mailId}": {
-      "schema": { "$ref": "#/backend/entities/Mail" },
-      "description": "Queue for outgoing email notifications."
-    }
+    "/users/{userId}": { "schema": { "$ref": "#/backend/entities/User" }, "description": "Profils utilisateurs." },
+    "/community_chat/{messageId}": { "schema": { "$ref": "#/backend/entities/CommunityMessage" }, "description": "Messages Radio Trottoir." },
+    "/road_condition_reports/{reportId}": { "schema": { "$ref": "#/backend/entities/RoadConditionReport" }, "description": "Signalements de dangers." }
   }
 }
