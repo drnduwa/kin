@@ -1,3 +1,4 @@
+
 "use server";
 
 import { getTrafficTips } from "@/ai/flows/traffic-tips-flow";
@@ -38,7 +39,7 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
             );
             const reportsSnap = await getDocs(reportsQuery);
             const recentReports = reportsSnap.docs.map(d => d.data() as RoadConditionReport);
-            // Recherche de rapports dans un rayon de ~1.5km
+            // Recherche de rapports dans un rayon de ~1.5km (Précision accrue)
             localReport = recentReports.find(r => 
                 Math.abs(r.coords.lat - input.lat) < 0.015 && 
                 Math.abs(r.coords.lng - input.lng) < 0.015
@@ -48,11 +49,11 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
         }
 
         // 2. Appel à Google Routes API v2
-        // On augmente la distance du sondage (+0.025 soit env. 2.7km) pour une précision accrue
+        // Sondage de ~1.5km pour une portion de route significative
         const url = "https://routes.googleapis.com/directions/v2:computeRoutes";
         const body = {
             origin: { location: { latLng: { latitude: input.lat, longitude: input.lng } } },
-            destination: { location: { latLng: { latitude: input.lat + 0.025, longitude: input.lng + 0.025 } } },
+            destination: { location: { latLng: { latitude: input.lat + 0.015, longitude: input.lng + 0.015 } } },
             travelMode: "DRIVE",
             routingPreference: "TRAFFIC_AWARE_OPTIMAL",
             computeAlternativeRoutes: true,
@@ -93,6 +94,7 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
             const delay = Math.round(Math.max(0, dur - statDur) / 60);
 
             // Ajustement des seuils de sensibilité pour Kinshasa (Précision accrue)
+            // Un ratio > 1.6 ou un retard de 5 min sur une courte distance indique souvent un blocage
             if (ratio > 1.6 || delay >= 5) result.status = "BLOQUÉ";
             else if (ratio > 1.25 || delay >= 2) result.status = "EMBOUTEILLÉ";
             else if (ratio > 1.1 || delay >= 1) result.status = "MODÉRÉ";
@@ -294,6 +296,7 @@ export async function broadcastEmailAction(params: {
   const smtpUser = "kinshasaflow@gmail.com";
   const smtpPass = "mqlt yrzr xnjv tkvb"; 
 
+  // Initialisation dynamique des destinataires
   let recipientList: string[] = ['drnduwa@gmail.com']; 
   
   try {
@@ -305,10 +308,11 @@ export async function broadcastEmailAction(params: {
           .map(doc => doc.data().email)
           .filter(email => email && email.includes('@') && email !== 'drnduwa@gmail.com');
         
+        // On fusionne et on dédoublonne
         recipientList = Array.from(new Set([...recipientList, ...userEmails]));
     }
   } catch (e) {
-    console.warn("[Email Broadcast] Impossible de lister les utilisateurs (Permissions). Envoi limité aux administrateurs.", e);
+    console.warn("[Email Broadcast] Impossible de lister les utilisateurs pour la diffusion globale.", e);
   }
 
   const transporter = nodemailer.createTransport({
@@ -316,7 +320,7 @@ export async function broadcastEmailAction(params: {
     port: 465,
     secure: true,
     auth: { user: smtpUser, pass: smtpPass },
-    pool: true,
+    pool: true, // Utilisation d'un pool pour les envois multiples
   });
 
   const isAlert = ['alert', 'hazard', 'report'].includes(params.type);
@@ -325,8 +329,8 @@ export async function broadcastEmailAction(params: {
 
   const mailOptions = {
     from: `"Kinshasa Flow" <${smtpUser}>`,
-    to: "kinshasaflow@gmail.com", 
-    bcc: recipientList, 
+    to: "kinshasaflow@gmail.com", // Destinataire principal générique
+    bcc: recipientList, // Copie cachée à TOUS les utilisateurs
     subject: `${subjectPrefix} : ${params.title}${locationStr}`,
     html: `
       <div style="font-family: sans-serif; padding: 20px; color: #1e293b; background-color: #f8fafc;">

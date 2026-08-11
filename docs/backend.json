@@ -1,3 +1,4 @@
+
 {
   "entities": {
     "User": {
@@ -34,9 +35,24 @@
         "locationName": { "type": "string" },
         "alertType": { "type": "string", "enum": ["travaux", "police", "embouteillage"] },
         "likes": { "type": "number" },
+        "commentCount": { "type": "number" },
         "timestamp": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "userName", "timestamp"]
+    },
+    "ChatComment": {
+      "title": "ChatComment",
+      "type": "object",
+      "description": "Commentaire sous un message du chat.",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userAvatar": { "type": "string" },
+        "text": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "text", "timestamp"]
     },
     "RoadConditionReport": {
       "title": "RoadConditionReport",
@@ -84,6 +100,7 @@
   "firestore": {
     "/users/{userId}": { "schema": { "$ref": "#/backend/entities/User" }, "description": "Profils utilisateurs." },
     "/community_chat/{messageId}": { "schema": { "$ref": "#/backend/entities/CommunityMessage" }, "description": "Messages Radio Trottoir." },
+    "/community_chat/{messageId}/comments/{commentId}": { "schema": { "$ref": "#/backend/entities/ChatComment" }, "description": "Commentaires du chat." },
     "/road_condition_reports/{reportId}": { "schema": { "$ref": "#/backend/entities/RoadConditionReport" }, "description": "Signalements de dangers." },
     "/events/{eventId}": { "schema": { "$ref": "#/backend/entities/EventReport" }, "description": "Incidents de trafic communautaires." }
   }

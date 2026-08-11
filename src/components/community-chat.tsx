@@ -1,10 +1,11 @@
+
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useFirebase, useUser, useCollection, useMemoFirebase, addDocumentNonBlocking } from '@/firebase';
 import { collection, query, orderBy, limit, serverTimestamp, setDoc, doc, where, Timestamp, updateDoc, increment } from 'firebase/firestore';
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { CommunityMessage, WithId, FirestorePermissionError } from '@/lib/types';
+import { CommunityMessage, ChatComment, WithId, FirestorePermissionError } from '@/lib/types';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -33,7 +34,8 @@ import {
   Heart,
   MessageCircle,
   Reply,
-  Camera
+  Camera,
+  X
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
@@ -51,10 +53,98 @@ import {
 } from "@/components/ui/dialog";
 import { broadcastEmailAction } from '@/app/actions';
 
+const CommentDialog = ({ message }: { message: WithId<CommunityMessage> }) => {
+    const [open, setOpen] = useState(false);
+    const [newComment, setNewComment] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const { firestore, user } = useFirebase();
+    const { toast } = useToast();
+
+    const commentsRef = useMemoFirebase(() => collection(firestore, 'community_chat', message.id, 'comments'), [firestore, message.id]);
+    const commentsQuery = useMemoFirebase(() => query(commentsRef, orderBy('timestamp', 'asc')), [commentsRef]);
+    const { data: comments, isLoading } = useCollection<ChatComment>(commentsQuery);
+
+    const handleAddComment = async () => {
+        if (!user || !newComment.trim()) return;
+        setIsSubmitting(true);
+        try {
+            const commentData = {
+                userId: user.uid,
+                userName: user.displayName || "Kinois Anonyme",
+                userAvatar: user.photoURL || "",
+                text: newComment.trim(),
+                timestamp: serverTimestamp(),
+            };
+            await addDocumentNonBlocking(commentsRef, commentData);
+            await updateDoc(doc(firestore, 'community_chat', message.id), {
+                commentCount: increment(1)
+            });
+            setNewComment('');
+        } catch (e) {
+            toast({ title: "Erreur", description: "Impossible d'ajouter le commentaire.", variant: "destructive" });
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <button 
+                onClick={() => setOpen(true)}
+                className="flex items-center gap-1 text-[10px] font-black uppercase text-slate-400 hover:text-primary transition-colors"
+            >
+                <MessageCircle className="h-3.5 w-3.5" />
+                {message.commentCount || 0} Commentaires
+            </button>
+            <DialogContent className="sm:max-w-md rounded-[2rem] p-0 overflow-hidden border-none shadow-2xl">
+                <div className="bg-slate-900 p-6 text-white">
+                    <DialogTitle className="text-xl font-black uppercase">Commentaires</DialogTitle>
+                    <DialogDescription className="text-slate-400 text-xs">Discussion sur l'alerte à {message.locationName || 'Kinshasa'}</DialogDescription>
+                </div>
+                <div className="p-4 flex flex-col h-[400px]">
+                    <ScrollArea className="flex-1 pr-4">
+                        <div className="space-y-4">
+                            {isLoading ? <div className="py-10 text-center"><Loader2 className="animate-spin mx-auto h-5 w-5 text-primary" /></div> : 
+                             comments && comments.length > 0 ? comments.map(c => (
+                                <div key={c.id} className="flex gap-3">
+                                    <Avatar className="h-6 w-6 shrink-0 border">
+                                        <AvatarImage src={c.userAvatar} />
+                                        <AvatarFallback><User size={12} /></AvatarFallback>
+                                    </Avatar>
+                                    <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 flex-1">
+                                        <div className="flex justify-between items-center mb-1">
+                                            <span className="text-[10px] font-black uppercase text-slate-600">{c.userName}</span>
+                                            <span className="text-[8px] text-slate-400 font-bold">{c.timestamp?.toDate ? format(c.timestamp.toDate(), 'HH:mm', { locale: fr }) : '...'}</span>
+                                        </div>
+                                        <p className="text-sm font-medium text-slate-700 leading-tight">{c.text}</p>
+                                    </div>
+                                </div>
+                             )) : <p className="text-center py-10 text-slate-400 italic text-xs font-bold uppercase">Aucun commentaire. Soyez le premier !</p>}
+                        </div>
+                    </ScrollArea>
+                    <div className="mt-4 pt-4 border-t flex gap-2">
+                        <Input 
+                            value={newComment} 
+                            onChange={e => setNewComment(e.target.value)} 
+                            placeholder="Votre avis..." 
+                            className="h-11 rounded-xl font-bold"
+                            onKeyDown={e => e.key === 'Enter' && handleAddComment()}
+                        />
+                        <Button size="icon" onClick={handleAddComment} disabled={isSubmitting || !newComment.trim()} className="h-11 w-11 rounded-xl shadow-lg">
+                            {isSubmitting ? <Loader2 className="animate-spin h-4 w-4" /> : <Send className="h-4 w-4" />}
+                        </Button>
+                    </div>
+                </div>
+            </DialogContent>
+        </Dialog>
+    );
+};
+
 const MessageBubble = ({ message, isOwn, onReply }: { message: WithId<CommunityMessage>, isOwn: boolean, onReply: (name: string) => void }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const { firestore } = useFirebase();
+  const { firestore, user } = useFirebase();
+  const { toast } = useToast();
   
   const dateObj = message.timestamp?.toDate ? message.timestamp.toDate() : new Date();
   const dayStr = format(dateObj, 'EEEE dd MMMM', { locale: fr });
@@ -75,6 +165,10 @@ const MessageBubble = ({ message, isOwn, onReply }: { message: WithId<CommunityM
   };
 
   const handleLike = async () => {
+    if (!user) {
+        toast({ title: "Connexion requise", variant: "destructive" });
+        return;
+    }
     try {
       const msgRef = doc(firestore, 'community_chat', message.id);
       await updateDoc(msgRef, { likes: increment(1) });
@@ -177,6 +271,7 @@ const MessageBubble = ({ message, isOwn, onReply }: { message: WithId<CommunityM
                 <Heart className={cn("h-3.5 w-3.5", message.likes && message.likes > 0 && "fill-red-500 text-red-500")} />
                 {message.likes || 0}
             </button>
+            <CommentDialog message={message} />
             <button 
                 onClick={() => onReply(message.userName)}
                 className="flex items-center gap-1 text-[10px] font-black uppercase text-slate-400 hover:text-primary transition-colors"
@@ -273,7 +368,6 @@ export default function CommunityChat() {
         } catch (uploadErr: any) {
           console.error("STORAGE ERROR:", uploadErr);
           
-          // Emit a professional contextual error for storage
           const permissionError = new FirestorePermissionError({
               path: `storage:chat/${user.uid}/${Date.now()}`,
               operation: 'write',
@@ -301,20 +395,21 @@ export default function CommunityChat() {
         locationName: params.locationName || "",
         alertType: params.alertType || null,
         likes: 0,
+        commentCount: 0,
         timestamp: serverTimestamp(),
       };
 
       const chatCollection = collection(firestore, 'community_chat');
-      addDocumentNonBlocking(chatCollection, messageData);
+      await addDocumentNonBlocking(chatCollection, messageData);
 
-      // Notification BROADCAST par e-mail isolée
+      // Notification BROADCAST AUTOMATIQUE par e-mail pour chaque post
       broadcastEmailAction({
-          title: params.alertType ? `ALERTE : ${params.alertType.toUpperCase()}` : "K-Flow Chat : Nouveau message",
+          title: params.alertType ? `🚨 ALERTE : ${params.alertType.toUpperCase()}` : "💬 Nouveau message sur Radio Trottoir",
           message: params.text || `Média partagé (${params.mediaType})`,
           userName: messageData.userName,
           type: params.alertType ? 'alert' : 'chat',
           location: params.locationName
-      }).catch(err => console.warn("Email broadcast failed silently", err));
+      }).catch(err => console.warn("[Auto-Email] Échec silencieux", err));
 
       setInputText('');
       setAlertLocation('');

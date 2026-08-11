@@ -1,3 +1,4 @@
+
 rules_version = '2';
 
 service cloud.firestore {
@@ -25,7 +26,7 @@ service cloud.firestore {
     /** Profils utilisateurs */
     match /users/{userId} {
       allow get: if isSignedIn();
-      allow list: if isSignedIn(); // Autorise la lecture pour la diffusion e-mail
+      allow list: if isSignedIn(); // Autorise la lecture pour la diffusion e-mail communautaire
       allow create: if isOwner(userId);
       allow update: if isOwner(userId) || isAdmin();
       allow delete: if isAdmin();
@@ -40,13 +41,19 @@ service cloud.firestore {
     match /community_chat/{id} {
       allow read: if true;
       allow create: if isSignedIn();
-      allow update: if isSignedIn(); // Permet les "likes" par tout membre connecté
+      allow update: if isSignedIn(); // Permet les "likes" et l'incrémentation des compteurs
       allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == resource.data.userId);
+      
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if isSignedIn();
+        allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == resource.data.userId);
+      }
     }
 
     /** Rapports de route et dangers (Hazard Map) */
     match /road_condition_reports/{id} {
-      allow read: if true;
+      allow read, list: if true;
       allow create: if isSignedIn();
       allow update: if isSignedIn(); 
       allow delete: if isAdmin();
@@ -63,7 +70,7 @@ service cloud.firestore {
 
     /** Vidéos communautaires */
     match /videos/{id} {
-      allow read: if true;
+      allow read, list: if true;
       allow create: if isSignedIn();
       allow update: if isSignedIn();
       allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == resource.data.userId);

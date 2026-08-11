@@ -78,6 +78,16 @@ export interface CommunityMessage {
   };
   alertType?: 'travaux' | 'police' | 'embouteillage';
   likes?: number;
+  commentCount?: number;
+  timestamp: any;
+}
+
+export interface ChatComment {
+  id: string;
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  text: string;
   timestamp: any;
 }
 
