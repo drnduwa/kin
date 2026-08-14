@@ -1,4 +1,5 @@
 {
+  "id": "app.kinshasaflow.online",
   "name": "Kinshasa Flow",
   "short_name": "K-Flow",
   "description": "Trafic en temps réel et mobilité intelligente à Kinshasa.",
@@ -6,16 +7,42 @@
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#248eeb",
+  "orientation": "portrait",
+  "scope": "/",
   "icons": [
     {
-      "src": "/icon-192.png",
+      "src": "https://picsum.photos/seed/kflow-icon-192/192/192",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
-      "src": "/icon-512.png",
+      "src": "https://picsum.photos/seed/kflow-icon-512/512/512",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://picsum.photos/seed/kflow-maskable/512/512",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "https://picsum.photos/seed/kflow-mobile/1080/1920",
+      "sizes": "1080x1920",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Interface Mobile de K-Flow"
+    },
+    {
+      "src": "https://picsum.photos/seed/kflow-desktop/1920/1080",
+      "sizes": "1920x1080",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Tableau de bord K-Flow sur Ordinateur"
     }
   ]
 }

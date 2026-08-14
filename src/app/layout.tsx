@@ -62,7 +62,7 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: '/icon.svg',
-    apple: '/apple-touch-icon.png',
+    apple: 'https://picsum.photos/seed/kflow-apple/180/180',
   },
   manifest: '/manifest.json',
 };
