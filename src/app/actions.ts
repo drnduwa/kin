@@ -255,7 +255,7 @@ export async function sendTestPushNotificationAction(subscription: PushSubscript
 
 export async function sendTestEmailAction() {
   const smtpUser = "kinshasaflow@gmail.com";
-  const smtpPass = "mqlt yrzr xnjv tkvb"; 
+  const smtpPass = "dazr vpou tslb tsok"; 
 
   const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
@@ -294,7 +294,7 @@ export async function broadcastEmailAction(params: {
   location?: string
 }) {
   const smtpUser = "kinshasaflow@gmail.com";
-  const smtpPass = "mqlt yrzr xnjv tkvb"; 
+  const smtpPass = "dazr vpou tslb tsok"; 
 
   // Initialisation dynamique des destinataires
   let recipientList: string[] = ['drnduwa@gmail.com']; 
@@ -372,7 +372,7 @@ export async function broadcastEmailAction(params: {
 
 export async function sendWelcomeEmailAction(params: { email: string, userName: string }) {
   const smtpUser = "kinshasaflow@gmail.com";
-  const smtpPass = "mqlt yrzr xnjv tkvb"; 
+  const smtpPass = "dazr vpou tslb tsok"; 
 
   const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
