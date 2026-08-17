@@ -61,8 +61,12 @@ export const metadata: Metadata = {
     images: ['/og-image.png'],
   },
   icons: {
-    icon: '/icon.svg',
-    apple: 'https://picsum.photos/seed/kflow-apple/180/180',
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: 'https://picsum.photos/seed/kflow-icon/192/192', sizes: '192x192', type: 'image/png' },
+      { url: 'https://picsum.photos/seed/kflow-icon/512/512', sizes: '512x512', type: 'image/png' }
+    ],
+    apple: 'https://picsum.photos/seed/kflow-icon/180/180',
   },
   manifest: '/manifest.json',
 };

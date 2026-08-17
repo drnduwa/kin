@@ -1,48 +1,55 @@
 {
-  "id": "app.kinshasaflow.online",
   "name": "Kinshasa Flow",
   "short_name": "K-Flow",
-  "description": "Trafic en temps réel et mobilité intelligente à Kinshasa.",
+  "description": "Trafic en temps réel et mobilité intelligente à Kinshasa, RDC.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#248eeb",
   "orientation": "portrait",
-  "scope": "/",
+  "categories": ["navigation", "travel", "productivity"],
   "icons": [
     {
       "src": "https://picsum.photos/seed/kflow-icon-192/192/192",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any"
+      "purpose": "any maskable"
     },
     {
       "src": "https://picsum.photos/seed/kflow-icon-512/512/512",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "https://picsum.photos/seed/kflow-maskable/512/512",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "maskable"
+      "purpose": "any maskable"
     }
   ],
   "screenshots": [
     {
-      "src": "https://picsum.photos/seed/kflow-mobile/1080/1920",
+      "src": "https://picsum.photos/seed/kflow-ss-mobile/1080/1920",
       "sizes": "1080x1920",
       "type": "image/png",
       "form_factor": "narrow",
-      "label": "Interface Mobile de K-Flow"
+      "label": "Interface Mobile K-Flow Chat"
     },
     {
-      "src": "https://picsum.photos/seed/kflow-desktop/1920/1080",
+      "src": "https://picsum.photos/seed/kflow-ss-desktop/1920/1080",
       "sizes": "1920x1080",
       "type": "image/png",
       "form_factor": "wide",
-      "label": "Tableau de bord K-Flow sur Ordinateur"
+      "label": "Tableau de bord stratégique K-Flow Insights"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Radio Trottoir",
+      "url": "/community-chat",
+      "description": "Voir les alertes en direct",
+      "icons": [{ "src": "https://picsum.photos/seed/shortcut-chat/192/192", "sizes": "192x192" }]
+    },
+    {
+      "name": "Vérifier Trafic",
+      "url": "/verifier-trafic",
+      "description": "Scanner une avenue",
+      "icons": [{ "src": "https://picsum.photos/seed/shortcut-scan/192/192", "sizes": "192x192" }]
     }
   ]
 }
