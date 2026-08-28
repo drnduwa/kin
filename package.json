@@ -19,6 +19,7 @@
     "node": "20"
   },
   "dependencies": {
+    "@capacitor/android": "^6.2.1",
     "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "^6.0.0",
     "@capacitor/core": "^6.0.0",

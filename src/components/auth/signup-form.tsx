@@ -13,8 +13,10 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Phone, MapPin, Globe, User, Mail, Lock, CheckCircle2, Apple } from 'lucide-react';
+import { Loader2, Phone, MapPin, Globe, User, Mail, Lock, CheckCircle2, Apple, MailIcon, Smartphone } from 'lucide-react';
+import { PhoneLogin } from './phone-login';
 import { useState, useEffect } from 'react';
 import { SignupValues, signupSchema, STAR_COSTS } from '@/lib/types';
 import { useFirebase, useUser } from '@/firebase';
@@ -177,8 +179,21 @@ export function SignupForm() {
                 <CardDescription className="text-primary-foreground/80 font-medium">Créez votre compte et recevez 25 stars gratuites.</CardDescription>
             </CardHeader>
             <CardContent className="p-6 md:p-8">
-                <Form {...form}>
-                    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 md:space-y-5">
+                <Tabs defaultValue="email" className="w-full">
+                    <TabsList className="grid w-full grid-cols-2 mb-6 md:mb-8 h-12 bg-slate-100 rounded-xl p-1">
+                        <TabsTrigger value="email" className="rounded-lg font-bold data-[state=active]:bg-white data-[state=active]:shadow-sm">
+                            <MailIcon className="h-4 w-4 mr-2" />
+                            Email
+                        </TabsTrigger>
+                        <TabsTrigger value="phone" className="rounded-lg font-bold data-[state=active]:bg-white data-[state=active]:shadow-sm">
+                            <Smartphone className="h-4 w-4 mr-2" />
+                            SMS
+                        </TabsTrigger>
+                    </TabsList>
+                    
+                    <TabsContent value="email">
+                        <Form {...form}>
+                            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 md:space-y-5">
                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <FormField
                                 control={form.control}
@@ -282,6 +297,11 @@ export function SignupForm() {
                         </Button>
                     </form>
                 </Form>
+                </TabsContent>
+                <TabsContent value="phone">
+                    <PhoneLogin />
+                </TabsContent>
+                </Tabs>
                 
                  <div className="relative my-6 md:my-8">
                     <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
