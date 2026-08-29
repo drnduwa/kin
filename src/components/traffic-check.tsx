@@ -95,7 +95,7 @@ export default function TrafficCheck() {
     <div className="w-full h-full flex flex-col bg-slate-50 overflow-hidden">
         {/* Header Bar */}
         <div className="bg-white border-b p-4 md:p-6 shadow-sm z-30">
-          <div className="max-w-4xl mx-auto space-y-4">
+          <div className="max-w-4xl mx-auto space-y-4 w-full min-w-0">
             <div className="flex items-center gap-3">
               <div className="bg-primary p-2.5 rounded-2xl shadow-xl shadow-primary/20">
                 <TrafficCone className="text-white h-5 w-5" />
@@ -106,7 +106,7 @@ export default function TrafficCheck() {
               </div>
             </div>
 
-            <div className="flex flex-col md:flex-row gap-2">
+            <div className="flex flex-col md:flex-row gap-2 w-full min-w-0">
               <AutocompleteInput 
                 value={search} 
                 onChange={setSearch} 
@@ -128,8 +128,8 @@ export default function TrafficCheck() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 md:p-8">
-          <div className="max-w-xl mx-auto w-full">
+        <div className="flex-1 overflow-y-auto p-4 md:p-8 w-full min-w-0">
+          <div className="max-w-xl mx-auto w-full min-w-0">
           {/* Result Panel */}
           <AnimatePresence>
             {result && (
@@ -171,11 +171,11 @@ export default function TrafficCheck() {
                   )}
 
                   {forecast && forecast.hourlyForecast && (
-                    <div className="space-y-3">
+                    <div className="space-y-3 w-full min-w-0">
                       <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
                         <Zap className="h-3 w-3 text-primary" /> Prévisions Prochaines Heures
                       </h3>
-                      <div className="flex gap-2 overflow-x-auto scrollbar-none pb-2">
+                      <div className="flex gap-2 overflow-x-auto scrollbar-none pb-2 w-full">
                         {forecast.hourlyForecast.map((hr: any, i: number) => (
                           <div key={i} className="flex flex-col items-center p-3 rounded-xl border border-slate-100 bg-white min-w-[70px] shrink-0 shadow-sm">
                             <span className="text-[10px] font-black text-slate-400">{hr.time}</span>
@@ -259,7 +259,7 @@ function AutocompleteInput({ value, onChange, onSelect }: { value: string, onCha
   }, [places, onSelect]);
 
   return (
-    <div className="relative flex-1">
+    <div className="relative flex-1 w-full min-w-0">
       <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
       <Input 
         ref={inputRef}
