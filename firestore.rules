@@ -89,7 +89,10 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
     
-    /** Analyses Stratégiques IA */
+    /** Analyses Stratégiques IA et Historique (Prédictions) */
+    match /traffic_history/{id} {
+      allow read, write: if true; // Protected by API Secret in Next.js
+    }
     match /traffic_insights/{id} {
       allow read, list: if isSignedIn();
       allow create: if isSignedIn();

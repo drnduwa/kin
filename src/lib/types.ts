@@ -523,3 +523,34 @@ export interface PushSubscription {
         auth: string;
     };
 }
+
+
+export interface TrafficHistorySnapshot {
+  id?: string;
+  road: string;
+  status: string;
+  speed: number;
+  delay: number;
+  timestamp: any;
+  dayOfWeek: number;
+  hourOfDay: number;
+}
+
+export interface HourlyForecast {
+  time: string;
+  status: "EMBOUTEILLAGE" | "DENSE" | "MODÉRÉ" | "FLUIDE" | "INCONNU";
+  delay: number;
+}
+
+export interface TrafficForecast {
+  road: string;
+  currentStatus: "EMBOUTEILLAGE" | "DENSE" | "MODÉRÉ" | "FLUIDE" | "INCONNU";
+  currentDelay: number;
+  hourlyForecast: HourlyForecast[];
+  alternatives: {
+    road: string;
+    delay: number;
+    status: string;
+  }[];
+}
+

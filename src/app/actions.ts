@@ -480,3 +480,67 @@ export async function checkMbiyoTransactionStatusAction(transactionId: string) {
         return { success: false, error: "Erreur r√©seau." };
     }
 }
+
+import { TrafficForecast, HourlyForecast } from '@/lib/types';
+import { MAJOR_AXES } from '@/lib/constants';
+
+export async function getTrafficForecastAction(routeName: string): Promise<TrafficForecast> {
+  const currentHour = new Date().getHours();
+  
+  // 1. Current State (Fetch Live Data)
+  const axis = MAJOR_AXES.find(a => a.name === routeName);
+  let currentStatus: any = 'INCONNU';
+  let currentDelay = 0;
+  
+  if (axis) {
+    const liveData = await getGoogleTrafficStatusAction([axis]);
+    if (liveData.length > 0) {
+      currentStatus = liveData[0].status;
+      currentDelay = liveData[0].delay;
+    }
+  }
+
+  // 2. Hourly Forecast (Statistical Heuristic for Kinshasa Traffic)
+  const generateStatus = (hour: number) => {
+    if (hour >= 7 && hour <= 9) return { status: 'EMBOUTEILLAGE', delay: Math.floor(Math.random() * 20) + 15 };
+    if (hour >= 16 && hour <= 19) return { status: 'EMBOUTEILLAGE', delay: Math.floor(Math.random() * 25) + 20 };
+    if (hour >= 10 && hour <= 15) return { status: 'MOD…R…', delay: Math.floor(Math.random() * 10) + 5 };
+    if (hour >= 20 || hour <= 6) return { status: 'FLUIDE', delay: 0 };
+    return { status: 'DENSE', delay: 12 };
+  };
+
+  const hourlyForecast: HourlyForecast[] = [];
+  for (let i = 1; i <= 6; i++) {
+    const nextHour = (currentHour + i) % 24;
+    const timeStr = `${nextHour.toString().padStart(2, '0')}:00`;
+    const pred = generateStatus(nextHour);
+    hourlyForecast.push({
+      time: timeStr,
+      status: pred.status as any,
+      delay: pred.delay
+    });
+  }
+
+  // 3. Alternatives (Mocked smartly based on axis)
+  const alternativesMap: Record<string, string[]> = {
+    'Boulevard Lumumba': ['Avenue des Poids Lourds', 'Route Mokali'],
+    'Boulevard du 30 Juin': ['Avenue de la Justice', 'Avenue Colonel Mondjiba'],
+    'Route de Matadi': ['Avenue By Pass', 'Route de Kimwenza'],
+    'Avenue Kasa-Vubu': ["Avenue de l'Enseignement", 'Avenue Gambela']
+  };
+
+  const alts = alternativesMap[routeName] || ['Avenue parallËle la plus proche'];
+  const alternatives = alts.map(alt => ({
+    road: alt,
+    delay: Math.max(0, currentDelay - Math.floor(Math.random() * 10) - 2),
+    status: (currentDelay - 5) > 10 ? 'MOD…R…' : 'FLUIDE'
+  }));
+
+  return {
+    road: routeName,
+    currentStatus,
+    currentDelay,
+    hourlyForecast,
+    alternatives
+  };
+}
