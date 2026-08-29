@@ -71,6 +71,9 @@ export function SignupForm() {
             const userSnap = await transaction.get(userRef);
             
             if (!userSnap.exists()) {
+                const freeTrialExpiry = new Date();
+                freeTrialExpiry.setMonth(freeTrialExpiry.getMonth() + 1);
+
                 const userData = {
                     id: user.uid,
                     email: user.email,
@@ -81,7 +84,14 @@ export function SignupForm() {
                     country: extraInfo.country || 'RDC',
                     currentStarsBalance: STAR_COSTS.SIGNUP_BONUS,
                     totalStarsEarned: STAR_COSTS.SIGNUP_BONUS,
+                    totalStarsPurchased: 0,
+                    totalStarsUsed: 0,
+                    consecutiveLoginDays: 0,
                     isProfileComplete: true,
+                    isBlocked: false,
+                    isCashSubscribed: true,
+                    hasUsedFreeTrial: true,
+                    cashSubscriptionExpiry: freeTrialExpiry,
                     createdAt: serverTimestamp(),
                 };
 

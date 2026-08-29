@@ -46,6 +46,9 @@ export function PhoneLogin() {
     
     if (isNewUser) {
       await runTransaction(firestore, async (transaction) => {
+        const freeTrialExpiry = new Date();
+        freeTrialExpiry.setMonth(freeTrialExpiry.getMonth() + 1);
+
         const userData: UserProfile = {
           id: user.uid,
           email: user.email || `${user.phoneNumber}@kinshasaflow.online`,
@@ -59,8 +62,9 @@ export function PhoneLogin() {
           consecutiveLoginDays: 0,
           isProfileComplete: true,
           isBlocked: false,
-          isCashSubscribed: false,
-          hasUsedFreeTrial: false,
+          isCashSubscribed: true,
+          hasUsedFreeTrial: true,
+          cashSubscriptionExpiry: freeTrialExpiry,
           createdAt: serverTimestamp() as any,
         };
 
