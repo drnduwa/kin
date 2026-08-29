@@ -1,6 +1,6 @@
 @tailwind base;
 @tailwind components;
-@tailwind utilities;
+@tailwind utilities;\n\nhtml, body {\n  overflow-x: hidden;\n  width: 100vw;\n}
 
 @layer base {
   :root {

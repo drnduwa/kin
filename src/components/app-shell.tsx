@@ -250,7 +250,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isProtectedPage = !['/', '/login', '/signup', '/privacy'].includes(pathname);
 
   return (
-    <div className="flex h-screen bg-background">
+    <div className="flex h-screen w-full overflow-hidden bg-background">
       <SidebarProvider>
         <Sidebar className="border-r-0 shadow-2xl">
           <SidebarContent>
