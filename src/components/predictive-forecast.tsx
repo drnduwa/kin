@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -70,7 +70,10 @@ export function PredictiveForecast() {
             <div className={cn("p-8", getStatusColor(forecast.currentStatus))}>
               <div className="flex justify-between items-start">
                 <div>
-                  <p className="text-white/80 font-bold uppercase tracking-widest text-xs mb-1">Trafic Actuel</p>
+                  <p className="text-white/90 font-black uppercase tracking-widest text-[10px] mb-2 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                    État Actuel de la Route (Live)
+                  </p>
                   <h2 className="text-3xl font-black">{forecast.currentStatus}</h2>
                 </div>
                 {forecast.currentStatus === 'FLUIDE' ? <CheckCircle className="h-12 w-12 opacity-80" /> : <AlertTriangle className="h-12 w-12 opacity-80" />}

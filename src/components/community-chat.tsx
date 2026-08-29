@@ -7,7 +7,6 @@ import { collection, query, orderBy, limit, serverTimestamp, setDoc, doc, where,
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { CommunityMessage, ChatComment, WithId, FirestorePermissionError } from '@/lib/types';
 import { errorEmitter } from '@/firebase/error-emitter';
-import { PredictiveForecast } from '@/components/predictive-forecast';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -495,14 +494,6 @@ export default function CommunityChat() {
 
       <ScrollArea className="flex-1 p-4 md:p-8">
         <div className="max-w-4xl mx-auto flex flex-col">
-          <div className="mb-8 p-4 md:p-6 bg-slate-50/50 rounded-3xl border border-slate-100 shadow-sm">
-            <div className="flex items-center gap-2 mb-4">
-              <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-              <h3 className="font-black text-slate-800 uppercase tracking-widest text-xs">Prévisions du Trafic (Live)</h3>
-            </div>
-            <PredictiveForecast />
-          </div>
-          
           <AnimatePresence>
             {messages && [...messages].reverse().map((msg) => (
               <MessageBubble key={msg.id} message={msg} isOwn={msg.userId === user?.uid} onReply={(name) => setInputText(`@${name} `)} />
