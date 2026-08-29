@@ -402,14 +402,26 @@ export default function CommunityChat() {
       const chatCollection = collection(firestore, 'community_chat');
       await addDocumentNonBlocking(chatCollection, messageData);
 
+      let recipientEmails: string[] = [];
+      try {
+          const { getDocs } = await import('firebase/firestore');
+          const usersSnap = await getDocs(collection(firestore, 'users'));
+          recipientEmails = usersSnap.docs
+              .map(doc => doc.data().email)
+              .filter(email => email && email.includes('@') && !email.endsWith('@kinshasaflow.online'));
+      } catch (e) {
+          console.warn("Could not fetch users for broadcast", e);
+      }
+
       // Notification BROADCAST AUTOMATIQUE par e-mail pour chaque post
       broadcastEmailAction({
           title: params.alertType ? `🚨 ALERTE : ${params.alertType.toUpperCase()}` : "💬 Nouveau message sur Radio Trottoir",
           message: params.text || `Média partagé (${params.mediaType})`,
           userName: messageData.userName,
           type: params.alertType ? 'alert' : 'chat',
-          location: params.locationName
-      }).catch(err => console.warn("[Auto-Email] Échec silencieux", err));
+          location: params.locationName,
+          recipientEmails
+      }).catch(err => console.warn("[Auto-Email] Echec silencieux", err));
 
       setInputText('');
       setAlertLocation('');

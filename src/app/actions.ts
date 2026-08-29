@@ -291,7 +291,8 @@ export async function broadcastEmailAction(params: {
   message: string, 
   userName: string,
   type: 'chat' | 'alert' | 'hazard' | 'report',
-  location?: string
+  location?: string,
+  recipientEmails?: string[]
 }) {
   const smtpUser = "kinshasaflow@gmail.com";
   const smtpPass = "dazr vpou tslb tsok"; 
@@ -299,20 +300,24 @@ export async function broadcastEmailAction(params: {
   // Initialisation dynamique des destinataires
   let recipientList: string[] = ['drnduwa@gmail.com']; 
   
-  try {
-    const { firestore } = initializeFirebase();
-    const usersSnap = await getDocs(collection(firestore, 'users'));
-    
-    if (!usersSnap.empty) {
-        const userEmails = usersSnap.docs
-          .map(doc => doc.data().email)
-          .filter(email => email && email.includes('@') && email !== 'drnduwa@gmail.com');
+  if (params.recipientEmails && params.recipientEmails.length > 0) {
+      recipientList = Array.from(new Set([...recipientList, ...params.recipientEmails]));
+  } else {
+      try {
+        const { firestore } = initializeFirebase();
+        const usersSnap = await getDocs(collection(firestore, 'users'));
         
-        // On fusionne et on dédoublonne
-        recipientList = Array.from(new Set([...recipientList, ...userEmails]));
-    }
-  } catch (e) {
-    console.warn("[Email Broadcast] Impossible de lister les utilisateurs pour la diffusion globale.", e);
+        if (!usersSnap.empty) {
+            const userEmails = usersSnap.docs
+              .map(doc => doc.data().email)
+              .filter(email => email && email.includes('@') && !email.endsWith('@kinshasaflow.online') && email !== 'drnduwa@gmail.com');
+            
+            // On fusionne et on dédoublonne
+            recipientList = Array.from(new Set([...recipientList, ...userEmails]));
+        }
+      } catch (e) {
+        console.warn("[Email Broadcast] Impossible de lister les utilisateurs pour la diffusion globale sur le serveur.", e);
+      }
   }
 
   const transporter = nodemailer.createTransport({
