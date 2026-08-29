@@ -19,7 +19,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { checkTrafficAction } from '@/app/actions';
+import { checkTrafficAction, getTrafficForecastAction } from '@/app/actions';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -39,6 +39,7 @@ export default function TrafficCheck() {
   const [search, setSearch] = useState('');
   const [location, setLocation] = useState<{lat: number, lng: number} | null>(null);
   const [result, setResult] = useState<any>(null);
+  const [forecast, setForecast] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
   const { toast } = useToast();
@@ -46,10 +47,13 @@ export default function TrafficCheck() {
 
   const handleCheck = useCallback(async (coords: {lat: number, lng: number}, address?: string) => {
     setResult(null); 
+    setForecast(null);
     setIsLoading(true);
     try {
       const data = await checkTrafficAction({ ...coords, address });
       setResult(data);
+      const fData = await getTrafficForecastAction(address || data.road || "Kinshasa");
+      setForecast(fData);
       if (mapRef.current) {
         mapRef.current.panTo(coords);
         mapRef.current.setZoom(16);
@@ -191,6 +195,23 @@ export default function TrafficCheck() {
                             </p>
                         </div>
                       </div>
+                  )}
+
+                  {forecast && forecast.hourlyForecast && (
+                    <div className="space-y-3">
+                      <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
+                        <Zap className="h-3 w-3 text-primary" /> Prévisions Prochaines Heures
+                      </h3>
+                      <div className="flex gap-2 overflow-x-auto scrollbar-none pb-2">
+                        {forecast.hourlyForecast.map((hr: any, i: number) => (
+                          <div key={i} className="flex flex-col items-center p-3 rounded-xl border border-slate-100 bg-white min-w-[70px] shrink-0 shadow-sm">
+                            <span className="text-[10px] font-black text-slate-400">{hr.time}</span>
+                            <div className={cn("w-3 h-3 rounded-full mt-2 mb-1", hr.status === 'FLUIDE' ? 'bg-emerald-500' : hr.status === 'EMBOUTEILLAGE' ? 'bg-red-500' : 'bg-amber-500')} />
+                            <span className="text-[9px] font-bold text-slate-600">{hr.delay > 0 ? `+${hr.delay}m` : 'OK'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   )}
 
                   {result.alternatives && result.alternatives.length > 0 && (

@@ -300,14 +300,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </SidebarMenuButton>
               </SidebarMenuItem>
 
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={pathname === '/previsions'} className={cn(pathname === '/previsions' && "bg-white/10")}>
-                  <Link href="/previsions" className="font-bold flex items-center gap-3 h-11 px-4 rounded-xl">
-                    <Clock className={cn("h-5 w-5", pathname === '/previsions' ? "text-accent" : "text-primary")} />
-                    <span>Prévisions Trafic</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
 
               {isEnabled('reports') && (
                 <SidebarMenuItem>

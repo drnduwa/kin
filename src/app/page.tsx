@@ -25,7 +25,7 @@ export default function Home() {
     if (isMounted && !isUserLoading && user) {
       // Utilisation d'un timeout léger pour éviter les conflits d'hydratation au démarrage
       const timer = setTimeout(() => {
-        router.push('/previsions');
+        router.push('/verifier-trafic');
       }, 100);
       return () => clearTimeout(timer);
     }
