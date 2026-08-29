@@ -25,7 +25,7 @@ export default function Home() {
     if (isMounted && !isUserLoading && user) {
       // Utilisation d'un timeout léger pour éviter les conflits d'hydratation au démarrage
       const timer = setTimeout(() => {
-        router.push('/community-chat');
+        router.push('/routes');
       }, 100);
       return () => clearTimeout(timer);
     }
@@ -57,7 +57,7 @@ export default function Home() {
       <div className="flex flex-col items-center justify-center min-h-screen p-4 w-full bg-background">
         <div className="h-12 w-12 rounded-full animate-spin border-4 border-primary border-t-transparent shadow-xl shadow-primary/20" />
         <p className="mt-6 font-black text-[10px] uppercase tracking-[0.2em] text-slate-400 animate-pulse">
-            Ouverture de Radio Trottoir...
+            Chargement des prévisions...
         </p>
       </div>
     );
