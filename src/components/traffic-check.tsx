@@ -128,43 +128,16 @@ export default function TrafficCheck() {
           </div>
         </div>
 
-        <div className="flex-1 relative flex flex-col md:flex-row overflow-hidden">
-          {/* Main Map */}
-          <div className="flex-1 relative">
-            <Map
-              defaultCenter={CONFIG.KINSHASA_CENTER}
-              center={location}
-              defaultZoom={13}
-              gestureHandling={'greedy'}
-              disableDefaultUI={true}
-              className="w-full h-full"
-              onCameraChanged={(e) => { mapRef.current = e.map; }}
-            >
-              <TrafficLayerComponent />
-              {location && (
-                <Marker 
-                  position={location}
-                  icon={{
-                    path: google.maps.SymbolPath.CIRCLE,
-                    fillColor: '#248eeb',
-                    fillOpacity: 1,
-                    strokeColor: 'white',
-                    strokeWeight: 2,
-                    scale: 8
-                  }}
-                />
-              )}
-            </Map>
-          </div>
-
+        <div className="flex-1 overflow-y-auto p-4 md:p-8">
+          <div className="max-w-xl mx-auto w-full">
           {/* Result Panel */}
           <AnimatePresence>
             {result && (
               <motion.div 
-                initial={{ x: 400, opacity: 0 }}
-                animate={{ x: 0, opacity: 1 }}
-                exit={{ x: 400, opacity: 0 }}
-                className="w-full md:w-96 bg-white border-l shadow-2xl z-20 flex flex-col overflow-y-auto"
+                initial={{ y: 20, opacity: 0, scale: 0.95 }}
+                animate={{ y: 0, opacity: 1, scale: 1 }}
+                exit={{ y: 20, opacity: 0, scale: 0.95 }}
+                className="w-full bg-white rounded-3xl shadow-xl border border-slate-100 flex flex-col overflow-hidden"
               >
                 <div className={cn("p-8 text-white relative", STATUS_CONFIG[result.status as keyof typeof STATUS_CONFIG]?.color)}>
                   <button onClick={() => setResult(null)} className="absolute top-4 right-4 text-white/50 hover:text-white"><X /></button>
@@ -258,6 +231,7 @@ export default function TrafficCheck() {
               </motion.div>
             )}
           </AnimatePresence>
+          </div>
         </div>
     </div>
   );
