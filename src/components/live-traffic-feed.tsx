@@ -281,8 +281,8 @@ export default function LiveTrafficFeed() {
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-50/50 overflow-hidden">
-        <div className="p-4 md:p-6 bg-white border-b shadow-sm z-30">
+    <div className="flex-1 min-h-0 flex flex-col h-full bg-slate-50/50 overflow-hidden rounded-2xl md:rounded-3xl border border-slate-100/80">
+        <div className="p-3.5 sm:p-4 md:p-6 bg-white border-b shadow-sm z-30 shrink-0">
             <div className="max-w-4xl mx-auto flex flex-col md:flex-row gap-4 items-center">
                 <div className="flex-1 w-full flex items-end gap-2">
                     <div className="flex-1">
@@ -311,7 +311,7 @@ export default function LiveTrafficFeed() {
                         variant="outline" 
                         onClick={handleRefresh} 
                         disabled={isRefreshing}
-                        className="h-14 w-14 rounded-2xl border-2 border-slate-100 bg-white hover:bg-slate-50 shadow-sm"
+                        className="h-14 w-14 rounded-2xl border-2 border-slate-100 bg-white hover:bg-slate-50 shadow-sm shrink-0"
                     >
                         <RefreshCw className={cn("h-6 w-6 text-primary", isRefreshing && "animate-spin")} />
                     </Button>
@@ -327,8 +327,8 @@ export default function LiveTrafficFeed() {
             </div>
         </div>
 
-        <div className="flex-1 grid lg:grid-cols-2 gap-6 p-4 md:p-6 overflow-hidden">
-            <div className="flex flex-col gap-6 overflow-y-auto pr-2">
+        <div className="flex-1 min-h-0 grid lg:grid-cols-2 gap-6 p-3 sm:p-4 md:p-6 overflow-hidden">
+            <div className="flex flex-col gap-6 min-h-0 overflow-y-auto overscroll-contain pr-1 sm:pr-2 pb-24 md:pb-6">
                 <motion.div
                     key={`${selectedAxisId}-${refreshKey}`}
                     initial={{ opacity: 0, x: -20 }}

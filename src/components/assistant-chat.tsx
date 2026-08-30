@@ -147,8 +147,8 @@ export default function AssistantChat() {
   };
 
   return (
-    <div className="w-full h-full flex justify-center items-center p-2 md:p-4">
-      <Card className="w-full max-w-3xl h-[95%] flex flex-col shadow-2xl border-none rounded-[2rem] overflow-hidden bg-white">
+    <div className="w-full h-full min-h-0 flex justify-center items-center p-1 sm:p-2 md:p-4">
+      <Card className="w-full max-w-3xl h-full min-h-0 flex flex-col shadow-2xl border-none rounded-2xl md:rounded-[2rem] overflow-hidden bg-white">
         <CardHeader className="border-b bg-slate-50/80 backdrop-blur-sm p-4 md:p-6">
           <CardTitle className="flex items-center justify-between">
             <div className="flex items-center gap-3">

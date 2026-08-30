@@ -39,3 +39,6 @@ next-env.d.ts
 # capacitor (généré localement)
 /ios
 /android
+*.aab
+/Zola Podcast
+append.js

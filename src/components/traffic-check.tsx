@@ -92,21 +92,21 @@ export default function TrafficCheck() {
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-slate-50 overflow-hidden">
+    <div className="w-full h-full min-h-0 flex flex-col bg-slate-50 overflow-hidden rounded-2xl md:rounded-3xl border border-slate-100/80">
         {/* Header Bar */}
-        <div className="bg-white border-b p-4 md:p-6 shadow-sm z-30">
-          <div className="max-w-4xl mx-auto space-y-4 w-full min-w-0">
-            <div className="flex items-center gap-3">
-              <div className="bg-primary p-2.5 rounded-2xl shadow-xl shadow-primary/20">
-                <TrafficCone className="text-white h-5 w-5" />
+        <div className="bg-white border-b p-3.5 sm:p-4 md:p-6 shadow-sm z-30 shrink-0">
+          <div className="max-w-4xl mx-auto space-y-3 md:space-y-4 w-full min-w-0">
+            <div className="flex items-center gap-2.5 md:gap-3">
+              <div className="bg-primary p-2 md:p-2.5 rounded-2xl shadow-xl shadow-primary/20 shrink-0">
+                <TrafficCone className="text-white h-4 w-4 md:h-5 md:w-5" />
               </div>
               <div>
-                <h1 className="text-xl font-black text-slate-900 tracking-tight">Vérifier le Trafic</h1>
-                <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Analyse en temps réel par segment</p>
+                <h1 className="text-lg md:text-xl font-black text-slate-900 tracking-tight">Vérifier le Trafic</h1>
+                <p className="text-[9px] md:text-[10px] font-black uppercase text-slate-400 tracking-widest">Analyse en temps réel par segment</p>
               </div>
             </div>
 
-            <div className="flex flex-col md:flex-row gap-2 w-full min-w-0">
+            <div className="flex flex-col sm:flex-row gap-2 w-full min-w-0">
               <AutocompleteInput 
                 value={search} 
                 onChange={setSearch} 
@@ -119,7 +119,7 @@ export default function TrafficCheck() {
                 variant="outline" 
                 onClick={useMyLocation} 
                 disabled={isLocating || isLoading}
-                className="h-12 rounded-xl border-2 font-bold gap-2 bg-white hover:bg-slate-50"
+                className="h-11 sm:h-12 rounded-xl border-2 font-bold gap-2 bg-white hover:bg-slate-50 shrink-0 text-xs sm:text-sm"
               >
                 {isLocating ? <Loader2 className="animate-spin h-4 w-4" /> : <LocateFixed className="h-4 w-4 text-primary" />}
                 Autour de moi
@@ -128,8 +128,8 @@ export default function TrafficCheck() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 md:p-8 w-full min-w-0">
-          <div className="max-w-xl mx-auto w-full min-w-0">
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 md:p-8 w-full min-w-0 overscroll-contain">
+          <div className="max-w-xl mx-auto w-full min-w-0 pb-24 md:pb-12">
           {/* Result Panel */}
           <AnimatePresence>
             {result && (
@@ -137,25 +137,25 @@ export default function TrafficCheck() {
                 initial={{ y: 20, opacity: 0, scale: 0.95 }}
                 animate={{ y: 0, opacity: 1, scale: 1 }}
                 exit={{ y: 20, opacity: 0, scale: 0.95 }}
-                className="w-full bg-white rounded-3xl shadow-xl border border-slate-100 flex flex-col overflow-hidden"
+                className="w-full bg-white rounded-3xl shadow-xl border border-slate-100 flex flex-col overflow-hidden mb-6"
               >
-                <div className={cn("p-8 text-white relative", STATUS_CONFIG[result.status as keyof typeof STATUS_CONFIG]?.color)}>
-                  <button onClick={() => setResult(null)} className="absolute top-4 right-4 text-white/50 hover:text-white"><X /></button>
-                  <div className="space-y-4 relative z-10">
-                    <Badge className="bg-white/20 border-white/30 text-white font-bold mb-2">VERDICT K-FLOW</Badge>
-                    <div className="flex items-center gap-3">
-                      <span className="text-4xl">{STATUS_CONFIG[result.status as keyof typeof STATUS_CONFIG]?.icon}</span>
-                      <h2 className="text-3xl font-black uppercase tracking-tighter leading-none">
+                <div className={cn("p-5 sm:p-6 md:p-8 text-white relative", STATUS_CONFIG[result.status as keyof typeof STATUS_CONFIG]?.color)}>
+                  <button onClick={() => setResult(null)} className="absolute top-4 right-4 text-white/70 hover:text-white p-1.5 rounded-full bg-black/10 hover:bg-black/20 transition-colors"><X className="h-5 w-5" /></button>
+                  <div className="space-y-2 md:space-y-4 relative z-10 pr-8">
+                    <Badge className="bg-white/20 border-white/30 text-white font-bold mb-1 md:mb-2 text-[10px] md:text-xs">VERDICT K-FLOW</Badge>
+                    <div className="flex items-center gap-2.5 md:gap-3">
+                      <span className="text-3xl md:text-4xl">{STATUS_CONFIG[result.status as keyof typeof STATUS_CONFIG]?.icon}</span>
+                      <h2 className="text-2xl md:text-3xl font-black uppercase tracking-tighter leading-none">
                         {STATUS_CONFIG[result.status as keyof typeof STATUS_CONFIG]?.label}
                       </h2>
                     </div>
                   </div>
                 </div>
 
-                <div className="p-6 space-y-6 flex-1">
-                  <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100 space-y-3">
-                    <p className="text-sm font-bold text-slate-800 leading-relaxed italic">"{result.verdict}"</p>
-                    <p className="text-xs font-black text-primary uppercase tracking-widest">{result.lingala}</p>
+                <div className="p-4 sm:p-5 md:p-6 space-y-4 md:space-y-6 flex-1">
+                  <div className="p-4 md:p-5 bg-slate-50 rounded-2xl border border-slate-100 space-y-2 md:space-y-3">
+                    <p className="text-xs sm:text-sm font-bold text-slate-800 leading-relaxed italic">"{result.verdict}"</p>
+                    <p className="text-[10px] sm:text-xs font-black text-primary uppercase tracking-widest">{result.lingala}</p>
                   </div>
 
                   {result.status === "ERREUR" && (
@@ -171,15 +171,15 @@ export default function TrafficCheck() {
                   )}
 
                   {forecast && forecast.hourlyForecast && (
-                    <div className="space-y-3 w-full min-w-0">
+                    <div className="space-y-2 md:space-y-3 w-full min-w-0">
                       <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
                         <Zap className="h-3 w-3 text-primary" /> Prévisions Prochaines Heures
                       </h3>
                       <div className="flex gap-2 overflow-x-auto scrollbar-none pb-2 w-full">
                         {forecast.hourlyForecast.map((hr: any, i: number) => (
-                          <div key={i} className="flex flex-col items-center p-3 rounded-xl border border-slate-100 bg-white min-w-[70px] shrink-0 shadow-sm">
+                          <div key={i} className="flex flex-col items-center p-2.5 sm:p-3 rounded-xl border border-slate-100 bg-white min-w-[64px] sm:min-w-[70px] shrink-0 shadow-sm">
                             <span className="text-[10px] font-black text-slate-400">{hr.time}</span>
-                            <div className={cn("w-3 h-3 rounded-full mt-2 mb-1", hr.status === 'FLUIDE' ? 'bg-emerald-500' : hr.status === 'EMBOUTEILLAGE' ? 'bg-red-500' : 'bg-amber-500')} />
+                            <div className={cn("w-3 h-3 rounded-full mt-1.5 mb-1", hr.status === 'FLUIDE' ? 'bg-emerald-500' : hr.status === 'EMBOUTEILLAGE' ? 'bg-red-500' : 'bg-amber-500')} />
                             <span className="text-[9px] font-bold text-slate-600">{hr.delay > 0 ? `+${hr.delay}m` : 'OK'}</span>
                           </div>
                         ))}
@@ -188,17 +188,17 @@ export default function TrafficCheck() {
                   )}
 
                   {result.alternatives && result.alternatives.length > 0 && (
-                    <div className="space-y-4">
+                    <div className="space-y-3 md:space-y-4">
                       <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
                         <Zap className="h-3 w-3 text-amber-500" /> Itinéraires plus fluides
                       </h3>
                       {result.alternatives.map((alt: any, i: number) => (
-                        <div key={i} className="p-4 rounded-2xl border-2 border-emerald-100 bg-emerald-50/50 flex justify-between items-center group hover:bg-emerald-50 transition-all">
-                          <div className="min-w-0">
+                        <div key={i} className="p-3.5 sm:p-4 rounded-2xl border-2 border-emerald-100 bg-emerald-50/50 flex justify-between items-center group hover:bg-emerald-50 transition-all">
+                          <div className="min-w-0 pr-2">
                             <p className="font-bold text-slate-800 text-xs truncate">{alt.description}</p>
                             <p className="text-[10px] font-black text-emerald-600 uppercase">{alt.duration} en tout</p>
                           </div>
-                          <Button asChild size="icon" variant="ghost" className="rounded-full text-emerald-600 hover:bg-emerald-100">
+                          <Button asChild size="icon" variant="ghost" className="rounded-full text-emerald-600 hover:bg-emerald-100 shrink-0">
                             <Link href="/k-flow-nav"><Navigation className="h-4 w-4" /></Link>
                           </Button>
                         </div>
@@ -206,7 +206,7 @@ export default function TrafficCheck() {
                     </div>
                   )}
 
-                  <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 flex items-start gap-3">
+                  <div className="p-3.5 sm:p-4 bg-blue-50 rounded-2xl border border-blue-100 flex items-start gap-2.5 sm:gap-3">
                     <Info className="h-4 w-4 text-primary shrink-0 mt-0.5" />
                     <p className="text-[10px] text-blue-800 font-bold leading-relaxed">
                       L'analyse est basée sur le ratio de congestion actuel par rapport à la circulation fluide théorique.
@@ -214,14 +214,14 @@ export default function TrafficCheck() {
                   </div>
                 </div>
 
-                <div className="p-6 bg-slate-50 border-t flex flex-col gap-3">
-                  <Button asChild variant="outline" className="h-14 rounded-2xl border-2 font-black text-xs uppercase tracking-widest gap-2">
+                <div className="p-4 sm:p-5 md:p-6 bg-slate-50 border-t flex flex-col gap-2.5 sm:gap-3">
+                  <Button asChild variant="outline" className="h-12 sm:h-14 rounded-2xl border-2 font-black text-xs uppercase tracking-widest gap-2">
                     <Link href="/signaler-embouteillage">
                       <RefreshCw className="h-4 w-4" />
                       Signaler un changement
                     </Link>
                   </Button>
-                  <Button asChild className="h-14 rounded-2xl font-black text-xs uppercase tracking-widest gap-2 shadow-xl shadow-primary/20">
+                  <Button asChild className="h-12 sm:h-14 rounded-2xl font-black text-xs uppercase tracking-widest gap-2 shadow-xl shadow-primary/20">
                     <Link href="/k-flow-nav">
                       <Navigation className="h-4 w-4" />
                       Lancer le guidage

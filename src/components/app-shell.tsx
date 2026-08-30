@@ -250,8 +250,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isProtectedPage = !['/', '/login', '/signup', '/privacy'].includes(pathname);
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background">
-      <SidebarProvider>
+    <div className="flex h-[100dvh] h-dvh w-full overflow-hidden bg-background">
+      <SidebarProvider className="h-full min-h-0 w-full overflow-hidden">
         <Sidebar className="border-r-0 shadow-2xl">
           <SidebarContent>
             <SidebarHeader className="border-b border-sidebar-border/50">
@@ -537,18 +537,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </SidebarMenu>
           </SidebarContent>
         </Sidebar>
-        <SidebarInset>
-            <div className="flex flex-col h-full relative">
-                <header className="bg-card border-b p-4 flex items-center justify-between gap-4 shadow-sm z-20">
-                    <div className="flex items-center gap-4">
+        <SidebarInset className="h-full min-h-0 w-full overflow-hidden flex flex-col">
+            <div className="flex flex-col h-full min-h-0 w-full relative overflow-hidden">
+                <header className="bg-card border-b px-3.5 py-3 md:p-4 flex items-center justify-between gap-4 shadow-sm z-20 shrink-0">
+                    <div className="flex items-center gap-3 md:gap-4">
                       <SidebarTrigger className="md:hidden" />
-                      <h1 className="text-2xl font-black text-foreground tracking-tight">{getPageTitle()}</h1>
+                      <h1 className="text-xl md:text-2xl font-black text-foreground tracking-tight">{getPageTitle()}</h1>
                     </div>
                     <UserNav />
                 </header>
-                <main className="flex-1 p-4 flex flex-col gap-4 overflow-hidden bg-background">
+                <main className="flex-1 min-h-0 p-2 sm:p-3 md:p-4 flex flex-col gap-2 md:gap-4 overflow-hidden bg-background">
                     <NotificationPermission />
-                    <div className="flex-1 h-full w-full flex">
+                    <div className="flex-1 min-h-0 h-full w-full flex flex-col overflow-hidden">
                         {isProtectedPage ? <ProtectedContent>{children}</ProtectedContent> : children}
                     </div>
                 </main>
