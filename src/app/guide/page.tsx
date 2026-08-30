@@ -8,6 +8,7 @@ import {
   Navigation, 
   MessagesSquare, 
   Camera, 
+  Radar,
   Star, 
   CheckCircle2, 
   Sparkles, 
@@ -15,7 +16,8 @@ import {
   ShieldCheck,
   Compass,
   Lightbulb,
-  PhoneCall
+  PhoneCall,
+  Volume2
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -39,6 +41,59 @@ export default function GuidePage() {
               </p>
             </div>
           </div>
+
+          {/* Special Feature Highlight : Radar Sentinelle 1 km */}
+          <Card className="rounded-3xl border-2 border-amber-500/50 bg-gradient-to-br from-slate-950 to-slate-900 text-white p-6 sm:p-8 shadow-xl space-y-4 relative overflow-hidden">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 relative z-10">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-red-500 text-white flex items-center justify-center font-black shadow-lg shadow-red-500/30 shrink-0">
+                  <Radar className="h-6 w-6 animate-spin" style={{ animationDuration: '8s' }} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Badge className="bg-amber-500 text-slate-950 font-black text-[9px] uppercase px-2 py-0 border-none">
+                      NOUVEAU • EXCLUSIVITÉ
+                    </Badge>
+                    <span className="text-xs text-amber-300 font-bold">Copilote Proactif</span>
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white">
+                    Radar Sentinelle : Alerte 1 km avant le Bouchon
+                  </h2>
+                </div>
+              </div>
+
+              <Button asChild className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl h-10 px-5 text-xs shadow-lg shadow-amber-500/20 shrink-0">
+                <Link href="/insights">Voir les Raccourcis IA</Link>
+              </Button>
+            </div>
+
+            <p className="text-xs sm:text-sm text-slate-300 font-medium leading-relaxed">
+              Gardez simplement Kinshasa Flow ouvert sur votre tableau de bord. Dès que vous approchez à <strong>environ 1 km</strong> de l'un des 12 grands goulots d'étranglement de la ville (Échangeur de Limete, Kintambo Magasin, UPN, Rond-point Ngaba...) ou d'un incident récent, l'application déclenche <strong>un double bip sonore et une vibration</strong> pour vous suggérer un itinéraire bis avant d'être bloqué.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+              <div className="bg-white/10 rounded-2xl p-3 border border-white/10 text-xs space-y-1">
+                <span className="text-amber-400 font-black text-xs flex items-center gap-1.5">
+                  <Radar className="h-4 w-4" /> 1. Détection GPS
+                </span>
+                <p className="text-[11px] text-slate-300 font-medium">Surveille votre progression en temps réel.</p>
+              </div>
+
+              <div className="bg-white/10 rounded-2xl p-3 border border-white/10 text-xs space-y-1">
+                <span className="text-amber-400 font-black text-xs flex items-center gap-1.5">
+                  <Volume2 className="h-4 w-4" /> 2. Signal Sonore & Haptique
+                </span>
+                <p className="text-[11px] text-slate-300 font-medium">Double bip audio instantané 1 km avant.</p>
+              </div>
+
+              <div className="bg-white/10 rounded-2xl p-3 border border-white/10 text-xs space-y-1">
+                <span className="text-amber-400 font-black text-xs flex items-center gap-1.5">
+                  <Compass className="h-4 w-4" /> 3. Raccourci 1-Clic
+                </span>
+                <p className="text-[11px] text-slate-300 font-medium">Prenez la déviation sans perdre de temps.</p>
+              </div>
+            </div>
+          </Card>
 
           {/* 4 Pillars Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

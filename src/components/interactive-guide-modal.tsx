@@ -19,6 +19,7 @@ import {
   Camera, 
   Star, 
   TrafficCone, 
+  Radar,
   Bot, 
   CheckCircle2, 
   Sparkles, 
@@ -26,7 +27,8 @@ import {
   ShieldCheck,
   Play,
   Lightbulb,
-  PhoneCall
+  PhoneCall,
+  Radio
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import Link from 'next/link';
@@ -34,27 +36,37 @@ import Link from 'next/link';
 const GUIDE_STEPS = [
   {
     step: 1,
-    title: '1. Vérifier le Trafic avant de partir',
+    title: '1. Radar Sentinelle 1 km (Alerte Proactive)',
+    icon: Radar,
+    color: 'bg-red-500 text-white',
+    desc: 'Laissez l\'application ouverte ou en arrière-plan pendant que vous roulez. Dès que vous approchez à 1 km d\'un bouchon ou d\'un incident majeur, un bip sonore et une notification vous alertent immédiatement avec le raccourci conseillé.',
+    badge: 'Alerte Proactive',
+    actionText: 'Voir Déviations',
+    actionLink: '/insights'
+  },
+  {
+    step: 2,
+    title: '2. Vérifier le Trafic avant de partir',
     icon: TrafficCone,
     color: 'bg-amber-500 text-white',
-    desc: 'Avant de quitter la maison ou le bureau, ouvrez "Vérifier Trafic" ou le "Baromètre". L\'application détecte automatiquement si votre itinéraire habituel est saturé.',
+    desc: 'Avant de quitter la maison ou le bureau, ouvrez "Vérifier Trafic" ou le "Baromètre". L\'application détecte automatiquement si votre axe habituel est saturé.',
     badge: 'Gain de 30 min',
     actionText: 'Tester Vérifier Trafic',
     actionLink: '/verifier-trafic'
   },
   {
-    step: 2,
-    title: '2. Lancer le GPS & Déviations Intelligentes',
+    step: 3,
+    title: '3. K-Flow Nav & Déviations Intelligentes',
     icon: Navigation,
     color: 'bg-primary text-white',
-    desc: 'Entrez votre destination dans K-Flow Nav. Si un goulot d\'étranglement (Échangeur, Magasin, UPN) est bouché, notre algorithme vous propose des raccourcis testés par les chauffeurs kinois.',
+    desc: 'Entrez votre destination dans K-Flow Nav. Si un goulot d\'étranglement (Échangeur, Magasin, UPN) est saturé, notre algorithme vous guide par les itinéraires bis testés par les chauffeurs kinois.',
     badge: 'Guidage Vocal',
     actionText: 'Ouvrir K-Flow Nav GPS',
     actionLink: '/k-flow-nav'
   },
   {
-    step: 3,
-    title: '3. Poser vos questions dans le Chat Live',
+    step: 4,
+    title: '4. Poser vos questions dans le Chat Live',
     icon: MessagesSquare,
     color: 'bg-blue-600 text-white',
     desc: 'Besoin d\'une confirmation en temps réel ? Écrivez dans le Chat Direct (ex: "Trafic eza ndenge nini na Mandela ?"). Les conducteurs sur place vous répondent en quelques secondes.',
@@ -63,8 +75,8 @@ const GUIDE_STEPS = [
     actionLink: '/community-chat'
   },
   {
-    step: 4,
-    title: '4. Signaler les Incidents & Gagner des Stars',
+    step: 5,
+    title: '5. Signaler les Incidents & Gagner des Stars',
     icon: Camera,
     color: 'bg-emerald-500 text-white',
     desc: 'Vous voyez un accident, un nid-de-poule ou un bouchon ? En 1 seul clic, prenez une photo et partagez-la. Vous recevez immédiatement +10 Stars pour vous remercier.',
@@ -76,8 +88,12 @@ const GUIDE_STEPS = [
 
 const FAQS = [
   {
+    q: 'Comment fonctionne l\'alerte automatique à 1 km (Radar Sentinelle) ?',
+    a: 'Grâce au GPS de votre smartphone, Kinshasa Flow mesure en continu la distance entre votre position et les 12 grands goulots d\'étranglement de Kinshasa ainsi que les signalements récents. Dès que vous vous trouvez à environ 1 km d\'un bouchon, vous recevez un double bip sonore et une bannière d\'évitement avec le temps de retard estimé.'
+  },
+  {
     q: 'Est-ce que Kinshasa Flow est gratuit ?',
-    a: 'Oui ! La consultation du trafic, le baromètre, le chat et le signalement des incidents sont entièrement gratuits pour tous les résidents de Kinshasa.'
+    a: 'Oui ! La consultation du trafic, le baromètre, le radar sentinelle, le chat et le signalement des incidents sont entièrement gratuits pour tous les résidents de Kinshasa.'
   },
   {
     q: 'Comment fonctionne le GPS si ma connexion est faible ?',
@@ -96,7 +112,6 @@ const FAQS = [
 export function InteractiveGuideModal() {
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'piliers' | 'faq'>('piliers');
-  const [currentStepIndex, setCurrentStepIndex] = useState(0);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -127,7 +142,7 @@ export function InteractiveGuideModal() {
             Maîtrisez Kinshasa Flow en 2 Minutes
           </DialogTitle>
           <DialogDescription className="text-slate-300 text-xs mt-1">
-            Découvrez comment éviter les embouteillages monstres et gagner du temps chaque jour.
+            Découvrez comment le Radar Sentinelle 1 km et le GPS vous évitent les bouchons monstres de la capitale.
           </DialogDescription>
 
           {/* Tab selector */}
@@ -141,7 +156,7 @@ export function InteractiveGuideModal() {
                   : "bg-white/10 text-white/80 hover:bg-white/20"
               )}
             >
-              4 Étapes Clés
+              5 Fonctionnalités Clés
             </button>
             <button
               onClick={() => setActiveTab('faq')}
