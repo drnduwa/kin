@@ -552,6 +552,91 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                         {isProtectedPage ? <ProtectedContent>{children}</ProtectedContent> : children}
                     </div>
                 </main>
+
+                {/* ── Native Mobile App Bottom Navigation Bar ── */}
+                <nav className="md:hidden shrink-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-t border-slate-200/80 dark:border-slate-800 px-2 py-1 shadow-[0_-4px_25px_rgba(0,0,0,0.07)] z-40 flex items-center justify-around">
+                  {/* 1. Chat Live */}
+                  <Link 
+                    href="/community-chat" 
+                    className={cn(
+                      "flex flex-col items-center justify-center flex-1 py-1 px-0.5 rounded-2xl transition-all",
+                      pathname === '/community-chat' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
+                    )}
+                  >
+                    <div className={cn("p-1 rounded-xl transition-all", pathname === '/community-chat' && "bg-primary/10")}>
+                      <MessagesSquare className={cn("h-5 w-5", pathname === '/community-chat' ? "text-primary" : "text-slate-400")} />
+                    </div>
+                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Chat Live</span>
+                  </Link>
+
+                  {/* 2. Vérifier Trafic */}
+                  <Link 
+                    href="/verifier-trafic" 
+                    className={cn(
+                      "flex flex-col items-center justify-center flex-1 py-1 px-0.5 rounded-2xl transition-all",
+                      pathname === '/verifier-trafic' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
+                    )}
+                  >
+                    <div className={cn("p-1 rounded-xl transition-all", pathname === '/verifier-trafic' && "bg-primary/10")}>
+                      <TrafficCone className={cn("h-5 w-5", pathname === '/verifier-trafic' ? "text-primary" : "text-slate-400")} />
+                    </div>
+                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Vérifier</span>
+                  </Link>
+
+                  {/* 3. Center Highlight: K-Flow Nav GPS */}
+                  <Link 
+                    href="/k-flow-nav" 
+                    className="flex flex-col items-center justify-center -mt-4 relative z-10 group px-1"
+                  >
+                    <div className={cn(
+                      "w-12 h-12 rounded-full flex items-center justify-center shadow-xl transition-all border-2 border-white dark:border-slate-900",
+                      pathname === '/k-flow-nav' 
+                        ? "bg-gradient-to-tr from-primary to-blue-600 text-white ring-4 ring-primary/20 scale-110 shadow-primary/40" 
+                        : "bg-primary hover:bg-primary/90 text-white shadow-primary/30"
+                    )}>
+                      <Navigation className="h-5 w-5 fill-current animate-pulse" />
+                    </div>
+                    <span className={cn(
+                      "text-[9px] font-black uppercase tracking-wider mt-0.5",
+                      pathname === '/k-flow-nav' ? "text-primary" : "text-slate-500"
+                    )}>
+                      GPS Nav
+                    </span>
+                  </Link>
+
+                  {/* 4. Rapports 100 Axes */}
+                  <Link 
+                    href="/reports" 
+                    className={cn(
+                      "flex flex-col items-center justify-center flex-1 py-1 px-0.5 rounded-2xl transition-all relative",
+                      pathname === '/reports' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
+                    )}
+                  >
+                    <div className={cn("p-1 rounded-xl transition-all relative", pathname === '/reports' && "bg-primary/10")}>
+                      <Activity className={cn("h-5 w-5", pathname === '/reports' ? "text-primary" : "text-slate-400")} />
+                      {unreadReports > 0 && (
+                        <span className="absolute -top-1 -right-1 flex h-3.5 min-w-[14px] px-0.5 items-center justify-center rounded-full bg-destructive text-[8px] font-black text-white">
+                          {unreadReports}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[9px] font-bold tracking-tight mt-0.5">100 Axes</span>
+                  </Link>
+
+                  {/* 5. Assistant IA */}
+                  <Link 
+                    href="/assistant" 
+                    className={cn(
+                      "flex flex-col items-center justify-center flex-1 py-1 px-0.5 rounded-2xl transition-all",
+                      pathname === '/assistant' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
+                    )}
+                  >
+                    <div className={cn("p-1 rounded-xl transition-all", pathname === '/assistant' && "bg-primary/10")}>
+                      <Bot className={cn("h-5 w-5", pathname === '/assistant' ? "text-primary" : "text-slate-400")} />
+                    </div>
+                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Assistant</span>
+                  </Link>
+                </nav>
             </div>
         </SidebarInset>
       </SidebarProvider>
