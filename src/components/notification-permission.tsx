@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
-import { Bell, Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
+import { Bell, Loader2, Sparkles, CheckCircle2, X } from 'lucide-react';
 import { saveSubscription, saveFCMToken } from '@/lib/push';
 import { useFirebase } from '@/firebase';
 import { getToken, onMessage } from 'firebase/messaging';
@@ -15,12 +15,17 @@ export function NotificationPermission() {
   const { toast } = useToast();
   const [permission, setPermission] = useState<NotificationPermission | 'unsupported' | 'loading'>('loading');
   const [isSubscribing, setIsSubscribing] = useState(false);
+  const [isDismissed, setIsDismissed] = useState(true);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && 'Notification' in window && 'serviceWorker' in navigator) {
-      setPermission(Notification.permission);
-    } else {
-      setPermission('unsupported');
+    if (typeof window !== 'undefined') {
+      const dismissed = localStorage.getItem('dismissed_notification_prompt');
+      setIsDismissed(dismissed === 'true');
+      if ('Notification' in window && 'serviceWorker' in navigator) {
+        setPermission(Notification.permission);
+      } else {
+        setPermission('unsupported');
+      }
     }
   }, []);
 
@@ -96,40 +101,58 @@ export function NotificationPermission() {
     }
   };
 
-  if (!user || permission === 'loading' || permission === 'granted' || permission === 'unsupported') {
+  const handleDismiss = () => {
+    setIsDismissed(true);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('dismissed_notification_prompt', 'true');
+    }
+  };
+
+  if (!user || isDismissed || permission === 'loading' || permission === 'granted' || permission === 'unsupported') {
     return null;
   }
 
   return (
     <motion.div 
-      initial={{ opacity: 0, y: -20 }}
+      initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-white/80 backdrop-blur-xl border-b-2 border-primary/10 p-6 flex flex-col sm:flex-row items-center justify-between gap-6 shadow-2xl relative z-40 mb-4 rounded-[2rem] mx-2 border"
+      exit={{ opacity: 0, y: -10 }}
+      className="bg-white/95 backdrop-blur-md border border-primary/20 p-3 sm:p-4 flex items-center justify-between gap-3 shadow-md relative z-30 mb-2 rounded-2xl shrink-0"
     >
-      <div className="flex items-center gap-5">
-        <div className="bg-primary/10 p-4 rounded-[1.25rem] ring-4 ring-primary/5">
-          <Bell className="text-primary h-7 w-7 animate-swing" />
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="bg-primary/10 p-2 sm:p-2.5 rounded-xl shrink-0">
+          <Bell className="text-primary h-5 w-5 animate-pulse" />
         </div>
-        <div>
-          <p className="font-black text-slate-900 text-lg tracking-tight">Vivez Kinshasa en temps réel</p>
-          <p className="text-slate-500 font-medium text-sm">Recevez des alertes pop-up sur le trafic, même en arrière-plan.</p>
+        <div className="min-w-0">
+          <p className="font-black text-slate-900 text-xs sm:text-sm tracking-tight truncate">Alertes Trafic Kinshasa</p>
+          <p className="text-slate-500 font-medium text-[10px] sm:text-xs truncate">Recevez des alertes pop-up sur les bouchons en direct.</p>
         </div>
       </div>
       
-      <Button 
-        onClick={subscribeUser} 
-        disabled={isSubscribing} 
-        className="h-14 px-8 rounded-2xl font-black shadow-xl shadow-primary/20 gap-3 text-lg transition-all hover:scale-105 active:scale-95 w-full sm:w-auto"
-      >
-        {isSubscribing ? (
-          <Loader2 className="h-6 w-6 animate-spin" />
-        ) : (
-          <>
-            <Sparkles className="h-5 w-5 fill-white" />
-            Activer les Alertes
-          </>
-        )}
-      </Button>
+      <div className="flex items-center gap-2 shrink-0">
+        <Button 
+          onClick={subscribeUser} 
+          disabled={isSubscribing} 
+          size="sm"
+          className="h-9 px-3.5 rounded-xl font-black shadow-md shadow-primary/20 gap-1.5 text-xs"
+        >
+          {isSubscribing ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <>
+              <Sparkles className="h-3.5 w-3.5 fill-white" />
+              <span>Activer</span>
+            </>
+          )}
+        </Button>
+        <button 
+          onClick={handleDismiss} 
+          className="text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-colors"
+          title="Fermer"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
     </motion.div>
   );
 }
