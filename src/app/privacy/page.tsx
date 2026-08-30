@@ -109,6 +109,23 @@ export default function PrivacyPage() {
                   </div>
                 </div>
 
+                {/* Section III - Account Deletion */}
+                <div className="space-y-8 pt-8">
+                  <div className="flex items-center gap-3 border-b-2 border-red-200 pb-2">
+                    <Lock className="text-red-600 h-6 w-6" />
+                    <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">III. Suppression du Compte & des Données</h2>
+                  </div>
+
+                  <div className="space-y-4 bg-red-50 p-6 rounded-2xl border border-red-100">
+                    <p className="text-sm font-medium text-slate-700 leading-relaxed">
+                      Conformément aux directives de confidentialité Apple (Guideline 5.1.1) et à la réglementation sur les données personnelles, tout utilisateur peut supprimer définitivement son compte et effacer l'intégralité de ses données personnelles (nom, email, photo, transactions Stars, signalements) à tout moment.
+                    </p>
+                    <p className="text-xs text-slate-600 font-bold">
+                      Comment procéder : Cliquez sur votre photo de profil en haut à droite, puis sélectionnez « <strong>Supprimer mon compte</strong> » et confirmez votre choix.
+                    </p>
+                  </div>
+                </div>
+
                 <footer className="pt-12 border-t border-slate-100 text-center space-y-6">
                   <p className="text-sm font-black uppercase tracking-widest text-slate-400">Canal de support</p>
                   <div className="flex flex-col md:flex-row justify-center items-center gap-6">

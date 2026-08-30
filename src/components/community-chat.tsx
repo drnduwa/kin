@@ -41,6 +41,7 @@ import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
+import { compressImageForUpload } from '@/lib/image-compress';
 import { useToast } from '@/hooks/use-toast';
 import Image from 'next/image';
 import {
@@ -296,6 +297,8 @@ export default function CommunityChat() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const camInputRef = useRef<HTMLInputElement>(null);
+  const imgInputRef = useRef<HTMLInputElement>(null);
   
   const { user, firestore, firebaseApp } = useFirebase();
   const { toast } = useToast();
@@ -508,24 +511,56 @@ export default function CommunityChat() {
           <div className="flex items-center gap-1 shrink-0">
             <input 
               type="file" 
-              id="chat-cam" 
+              ref={camInputRef}
               className="hidden" 
               accept="image/*" 
-              onChange={e => e.target.files?.[0] && handleSend({ mediaFile: e.target.files[0], mediaType: 'image' })} 
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                e.target.value = '';
+                try {
+                  const compressed = await compressImageForUpload(file, 1280, 0.75);
+                  handleSend({ mediaFile: compressed, mediaType: 'image' });
+                } catch {
+                  handleSend({ mediaFile: file, mediaType: 'image' });
+                }
+              }} 
             />
-            <Button asChild variant="ghost" size="icon" className="rounded-full h-11 w-11 text-slate-400 hover:text-primary">
-              <label htmlFor="chat-cam" className="cursor-pointer"><Camera className="h-5 w-5" /></label>
+            <Button 
+              type="button"
+              variant="ghost" 
+              size="icon" 
+              onClick={() => camInputRef.current?.click()}
+              className="rounded-full h-11 w-11 text-slate-400 hover:text-primary"
+            >
+              <Camera className="h-5 w-5" />
             </Button>
 
             <input 
               type="file" 
-              id="chat-img" 
+              ref={imgInputRef}
               className="hidden" 
               accept="image/*" 
-              onChange={e => e.target.files?.[0] && handleSend({ mediaFile: e.target.files[0], mediaType: 'image' })} 
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                e.target.value = '';
+                try {
+                  const compressed = await compressImageForUpload(file, 1280, 0.75);
+                  handleSend({ mediaFile: compressed, mediaType: 'image' });
+                } catch {
+                  handleSend({ mediaFile: file, mediaType: 'image' });
+                }
+              }} 
             />
-            <Button asChild variant="ghost" size="icon" className="rounded-full h-11 w-11 text-slate-400 hover:text-primary">
-              <label htmlFor="chat-img" className="cursor-pointer"><ImageIcon className="h-5 w-5" /></label>
+            <Button 
+              type="button"
+              variant="ghost" 
+              size="icon" 
+              onClick={() => imgInputRef.current?.click()}
+              className="rounded-full h-11 w-11 text-slate-400 hover:text-primary"
+            >
+              <ImageIcon className="h-5 w-5" />
             </Button>
           </div>
 

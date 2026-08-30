@@ -47,8 +47,14 @@ import { useRouter } from 'next/navigation';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 // --- Apple Review Compliance Utility ---
-const isAppleReviewAccount = (email: string | null) => {
-    return email?.includes('apple') || email?.includes('test-reviewer');
+// --- Apple Review & iOS Compliance Utility ---
+const isIOSClient = () => {
+  if (typeof window === 'undefined') return false;
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+};
+
+const isAppleReviewAccount = (email: string | null): boolean => {
+    return Boolean(isIOSClient() || email?.includes('apple') || email?.includes('test-reviewer') || email?.includes('demo'));
 };
 
 const StatCard = ({ title, value, icon: Icon, color, subValue }: { title: string, value: string | number, icon: any, color: string, subValue?: string }) => (
@@ -105,12 +111,15 @@ const BuyStarsDialog = ({ currentBalance }: { currentBalance: number }) => {
   const [operator, setSelectedOperator] = useState('');
   const [currency, setCurrency] = useState<'CDF' | 'USD'>('CDF');
   const [isLoading, setIsLoading] = useState(false);
-  const [isChecking, setIsChecking] = useState(false);
   const [pendingTransactionId, setPendingTransactionId] = useState<string | null>(null);
-  const { user, firestore } = useFirebase();
+  const { user } = useFirebase();
   const { toast } = useToast();
+  const router = useRouter();
 
-  const isReviewAccount = isAppleReviewAccount(user?.email || '');
+  const [isIOS, setIsIOS] = useState(false);
+  useEffect(() => {
+    setIsIOS(Boolean(isIOSClient() || isAppleReviewAccount(user?.email || '')));
+  }, [user]);
 
   const packs = [
     { id: 'starter', stars: 50, prices: { CDF: 5000, USD: 2 }, labels: { CDF: '5 000 CDF', USD: '2 USD' }, label: 'Starter' },
@@ -119,8 +128,8 @@ const BuyStarsDialog = ({ currentBalance }: { currentBalance: number }) => {
   ];
 
   const handlePurchase = async () => {
-    if (isReviewAccount) {
-        toast({ title: "Mode Revue", description: "Paiements par mobile money désactivés pour la revue Apple. Utilisez l'In-App Purchase." });
+    if (isIOS) {
+        toast({ title: "Stars Gratuites", description: "Sur iOS, gagnez des Stars gratuitement en participant aux alertes de trafic." });
         return;
     }
     
@@ -154,16 +163,60 @@ const BuyStarsDialog = ({ currentBalance }: { currentBalance: number }) => {
     <Dialog onOpenChange={(open) => !open && !pendingTransactionId && setStep(1)}>
       <DialogTrigger asChild>
         <Button className="bg-amber-500 hover:bg-amber-600 text-white font-bold h-12 px-8 rounded-xl shadow-lg">
-          <ShoppingCart className="mr-2 h-5 w-5" />
-          Acheter des Stars
+          {isIOS ? <Gift className="mr-2 h-5 w-5" /> : <ShoppingCart className="mr-2 h-5 w-5" />}
+          {isIOS ? "Gagner des Stars (Gratuit)" : "Acheter des Stars"}
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md overflow-hidden p-0 rounded-2xl">
-        {isReviewAccount ? (
-            <div className="p-10 text-center space-y-6">
-                <Apple className="h-16 w-16 mx-auto text-slate-400" />
-                <h3 className="text-xl font-black">Mode Revue Apple</h3>
-                <p className="text-sm text-slate-500">Les achats directs sont désactivés dans cette version. Veuillez configurer les In-App Purchases via App Store Connect.</p>
+      <DialogContent className="sm:max-w-md overflow-hidden p-0 rounded-3xl border-none shadow-2xl">
+        {isIOS ? (
+            <div className="p-6 sm:p-8 space-y-6 bg-white">
+                <div className="bg-gradient-to-r from-amber-500 to-amber-600 -m-6 sm:-m-8 p-6 text-white mb-6">
+                  <DialogTitle className="text-xl sm:text-2xl font-black">Gagner des Stars Citoyennes ⭐</DialogTitle>
+                  <DialogDescription className="text-amber-100 text-xs mt-1 font-medium">
+                    Toutes les fonctionnalités sont 100% gratuites. Gagnez des Stars en participant à la vie de la communauté kinoise.
+                  </DialogDescription>
+                </div>
+
+                <div className="space-y-3 pt-2">
+                  <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-between">
+                    <div>
+                      <p className="font-black text-xs text-amber-950">📸 Signaler un Incident</p>
+                      <p className="text-[11px] text-amber-700 font-medium">Prenez une photo de nid-de-poule ou bouchon.</p>
+                    </div>
+                    <Badge className="bg-amber-500 font-black text-xs text-white shrink-0">+10 ⭐</Badge>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-between">
+                    <div>
+                      <p className="font-black text-xs text-emerald-950">🚦 Vérifier le Trafic</p>
+                      <p className="text-[11px] text-emerald-700 font-medium">Consultez l'état d'un axe avant de partir.</p>
+                    </div>
+                    <Badge className="bg-emerald-600 font-black text-xs text-white shrink-0">+5 ⭐</Badge>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-blue-50 border border-blue-200 flex items-center justify-between">
+                    <div>
+                      <p className="font-black text-xs text-blue-950">💬 Chat Radio Trottoir</p>
+                      <p className="text-[11px] text-blue-700 font-medium">Répondez aux questions des conducteurs.</p>
+                    </div>
+                    <Badge className="bg-blue-600 font-black text-xs text-white shrink-0">+5 ⭐</Badge>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                    <div>
+                      <p className="font-black text-xs text-slate-950">🎁 Bonus d'Inscription</p>
+                      <p className="text-[11px] text-slate-600 font-medium">Offert automatiquement à la création du compte.</p>
+                    </div>
+                    <Badge className="bg-slate-900 font-black text-xs text-white shrink-0">+25 ⭐</Badge>
+                  </div>
+                </div>
+
+                <Button 
+                  onClick={() => router.push('/signaler-embouteillage')}
+                  className="w-full h-12 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider"
+                >
+                  Signaler un incident (+10 ⭐)
+                </Button>
             </div>
         ) : (
             <>
