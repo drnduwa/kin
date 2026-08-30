@@ -1,57 +1,116 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { 
   Zap, 
-  TrendingUp, 
   RefreshCw, 
   Bot, 
-  ShieldCheck, 
-  History,
-  Navigation,
-  ArrowRight,
-  Loader2,
-  Waves,
-  Sparkles,
-  Shield,
-  AlertTriangle
+  Navigation, 
+  Loader2, 
+  Sparkles, 
+  Flame,
+  Lightbulb,
+  Clock,
+  CornerDownRight,
+  Timer
 } from 'lucide-react';
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { getGoogleTrafficStatusAction, getStrategicInsightsAction } from '@/app/actions';
 import { MAJOR_AXES } from '@/lib/constants';
 import { StrategicInsightsOutput } from '@/lib/types';
 import { useFirebase } from '@/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { format } from 'date-fns';
-import { fr } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 
-const REFRESH_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+// Pre-defined secret detours tested by Kinshasa drivers
+const DETOUR_ROUTES = [
+  {
+    id: 'gombe-ngaliema',
+    title: 'Gombe (Centre) ➔ Ngaliema / UPN (Ouest)',
+    congestedAxe: 'Boulevard du 30 Juin & Av. Mondjiba (Kintambo Magasin)',
+    smartDetour: 'Passer par l\'Avenue du Livre (Bandal) ➔ Avenue Moulaert ➔ Avenue de la Montagne.',
+    timeSaved: '20 à 25 min',
+    severity: 'Évitement Recommandé'
+  },
+  {
+    id: 'gombe-limete',
+    title: 'Gombe (Centre) ➔ Limete / Masina (Est)',
+    congestedAxe: 'Boulevard Lumumba (Échangeur de Limete saturé)',
+    smartDetour: 'Prendre l\'Avenue des Poids Lourds ➔ Kingabwa ➔ Petit Boulevard de Limete (7e Rue).',
+    timeSaved: '25 à 30 min',
+    severity: 'Très Rentable'
+  },
+  {
+    id: 'ouest-sud',
+    title: 'Ngaliema / Kintambo ➔ Lemba & Université (Sud)',
+    congestedAxe: 'Rond-Point Ngaba & By-Pass',
+    smartDetour: 'Emprunter la nouvelle Avenue Elengesa reliant directement Makala au Pont Gabu et à Kalamu.',
+    timeSaved: '30 min',
+    severity: 'Raccourci Majeur'
+  },
+  {
+    id: 'ndjili-centre',
+    title: 'Aéroport N\'djili ➔ Centre-ville (Gombe)',
+    congestedAxe: 'Masina Pascal & Marché de la Liberté',
+    smartDetour: 'Prendre l\'Avenue Ndjoku vers Kingabwa puis Poids Lourds dès la sortie de l\'Échangeur.',
+    timeSaved: '35 min',
+    severity: 'Indispensable'
+  },
+  {
+    id: 'victoire-bandal',
+    title: 'Victoire / Kalamu ➔ Bandalungwa',
+    congestedAxe: 'Avenue Kasa-Vubu (Carrefour Victoire)',
+    smartDetour: 'Passer par l\'Avenue de l\'Enseignement ➔ Avenue Inga / Pierre Mulele.',
+    timeSaved: '15 min',
+    severity: 'Gain Fluide'
+  }
+];
+
+const TIME_SLOTS = [
+  {
+    period: 'Matin (06h30 - 09h00)',
+    status: 'HEURE DE POINTE',
+    color: 'text-red-600 bg-red-50 border-red-200',
+    advice: 'Sens Ouest/Est vers Gombe très saturé. Privilégiez un départ avant 06h45 ou après 09h15.'
+  },
+  {
+    period: 'Midi (11h30 - 14h00)',
+    status: 'TRAFIC MODÉRÉ',
+    color: 'text-emerald-600 bg-emerald-50 border-emerald-200',
+    advice: 'Créneau idéal pour traverser la ville. Les grands boulevards roulent à vitesse normale.'
+  },
+  {
+    period: 'Soir (16h30 - 20h30)',
+    status: 'HEURE CRITIQUE',
+    color: 'text-red-600 bg-red-50 border-red-200',
+    advice: 'Sortie de Gombe vers Limete, Masina et Ngaliema bloquée. Utilisez nos raccourcis IA.'
+  },
+  {
+    period: 'Nuit (Après 21h00)',
+    status: 'FLUIDE',
+    color: 'text-blue-600 bg-blue-50 border-blue-200',
+    advice: 'Circulation très fluide sur tous les axes majeurs de Kinshasa.'
+  }
+];
 
 export default function StrategicInsights() {
-  const [trafficData, setTrafficData] = useState<any[]>([]);
   const [insights, setInsights] = useState<StrategicInsightsOutput | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [selectedDetour, setSelectedDetour] = useState<string>(DETOUR_ROUTES[0].id);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [timeLeft, setTimeLeft] = useState(REFRESH_INTERVAL_MS);
 
   const { firestore, user } = useFirebase();
   const { toast } = useToast();
 
   const performAnalysis = useCallback(async (isSilent = false) => {
-    if (!isSilent) setIsLoading(true);
     setIsRefreshing(true);
 
     try {
       const data = await getGoogleTrafficStatusAction(MAJOR_AXES);
-      setTrafficData(data);
 
       const aiResults = await getStrategicInsightsAction({
         axes: data.map(d => ({
@@ -68,292 +127,237 @@ export default function StrategicInsights() {
           userId: user.uid,
           timestamp: serverTimestamp(),
           globalStatus: aiResults.globalAdvice,
-          saturationScore: calculateSaturation(data),
           recommendations: aiResults.tips,
           criticalAxes: data.filter(d => d.status === 'EMBOUTEILLAGE').map(d => d.road)
         });
       }
 
-      setLastUpdated(new Date());
-      setTimeLeft(REFRESH_INTERVAL_MS);
-      if (!isSilent) toast({ title: "Analyse terminée" });
+      if (!isSilent) toast({ title: "Stratégies actualisées" });
     } catch (error) {
       console.error(error);
-      if (!isSilent) toast({ title: "Erreur d'analyse", variant: "destructive" });
+      if (!isSilent) toast({ title: "Conseils locaux chargés", description: "Utilisation des stratégies de secours." });
     } finally {
-      setIsLoading(false);
       setIsRefreshing(false);
     }
   }, [firestore, user, toast]);
 
   useEffect(() => {
-    performAnalysis();
-
-    const interval = setInterval(() => {
-      performAnalysis(true);
-    }, REFRESH_INTERVAL_MS);
-
-    const timer = setInterval(() => {
-      setTimeLeft(prev => Math.max(0, prev - 1000));
-    }, 1000);
-
-    return () => {
-      clearInterval(interval);
-      clearInterval(timer);
-    };
+    performAnalysis(true);
   }, [performAnalysis]);
 
-  const calculateSaturation = (data: any[]) => {
-    if (!data.length) return 0;
-    const scores = data.map(d => 
-        d.status === 'EMBOUTEILLAGE' ? 100 : 
-        d.status === 'DENSE' ? 75 : 
-        d.status === 'MODÉRÉ' ? 40 : 10
-    );
-    return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
-  };
+  const activeDetour = useMemo(() => {
+    return DETOUR_ROUTES.find(d => d.id === selectedDetour) || DETOUR_ROUTES[0];
+  }, [selectedDetour]);
 
-  const globalSaturation = useMemo(() => calculateSaturation(trafficData), [trafficData]);
-
-  const formatTimeLeft = (ms: number) => {
-    const mins = Math.floor(ms / 60000);
-    const secs = Math.floor((ms % 60000) / 1000);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  if (isLoading) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full w-full gap-6 p-4">
-        <div className="relative">
-          <Loader2 className="h-12 w-12 text-primary animate-spin" />
-          <Bot className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-5 w-5 text-primary" />
-        </div>
-        <div className="text-center space-y-2">
-          <h2 className="text-sm font-black uppercase tracking-widest text-slate-800">Analyse IA des 100 axes</h2>
-          <p className="text-xs text-muted-foreground italic">Génération de conseils stratégiques...</p>
-        </div>
-      </div>
-    );
-  }
+  // Fallback tips tailored for Kinshasa drivers
+  const currentTips = useMemo(() => {
+    if (insights && insights.tips && insights.tips.length > 0) {
+      return insights.tips;
+    }
+    return [
+      "Évitez l'Échangeur de Limete aux heures de pointe en empruntant l'Avenue des Poids Lourds.",
+      "Pour rejoindre UPN depuis Gombe, contournez le bouchon de Kintambo Magasin via Bandal Moulaert.",
+      "L'Avenue Elengesa est la meilleure alternative pour relier Makala, Kalamu et le rond-point Ngaba.",
+      "Surveillez les sorties d'écoles à Gombe vers 12h30 et 15h30 pour éviter les ralentissements."
+    ];
+  }, [insights]);
 
   return (
-    <div className="w-full h-full overflow-y-auto bg-slate-50/50 p-4 md:p-6">
-      <div className="max-w-6xl mx-auto space-y-6 md:space-y-10 pb-20">
-        
-        {/* Header Section */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <motion.div initial={{ x: -20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="space-y-1">
-            <div className="flex items-center gap-2">
-                <div className="bg-primary p-2 rounded-xl shadow-lg">
-                    <Zap className="text-white h-5 w-5" />
-                </div>
-                <h1 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight">K-Flow Insights</h1>
+    <div className="w-full h-full min-h-0 flex flex-col bg-slate-50 overflow-hidden rounded-2xl md:rounded-3xl border border-slate-100">
+      
+      {/* ── Top Header Bar ── */}
+      <div className="bg-white border-b shadow-sm z-30 p-3.5 sm:p-4 md:p-5 shrink-0">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="bg-amber-500 text-white p-2.5 rounded-2xl shadow-md shadow-amber-500/20 shrink-0">
+              <Lightbulb className="h-6 w-6" />
             </div>
-            <p className="text-muted-foreground font-medium italic text-sm md:text-base">Veille automatisée (100 axes) toutes les 15 min.</p>
-          </motion.div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg md:text-xl font-black text-slate-900 tracking-tight">Guide Anti-Bouchons</h1>
+                <Badge className="bg-amber-500 text-white font-black text-[9px] uppercase px-1.5 py-0 border-none">
+                  MALIN & IA
+                </Badge>
+              </div>
+              <p className="text-[10px] md:text-xs font-medium text-slate-500">
+                Raccourcis secrets, déviations et stratégies d'évitement en temps réel à Kinshasa
+              </p>
+            </div>
+          </div>
 
-          <motion.div initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="flex items-center gap-3 bg-white p-2 md:p-3 rounded-2xl shadow-md border border-slate-100 w-full md:w-auto justify-between md:justify-start">
-            <div className="text-right px-4 border-r">
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Suivant</p>
-                <p className="text-lg font-black text-primary font-mono">{formatTimeLeft(timeLeft)}</p>
-            </div>
+          <div className="flex items-center gap-2 shrink-0">
             <Button 
-                onClick={() => performAnalysis()} 
-                disabled={isRefreshing}
-                variant="ghost"
-                className="rounded-xl h-10 px-4 gap-2 hover:bg-slate-50 font-black text-[10px] uppercase tracking-widest"
+              variant="outline" 
+              size="sm" 
+              onClick={() => performAnalysis(false)} 
+              disabled={isRefreshing} 
+              className="rounded-xl h-10 border-2 font-bold px-3 text-xs bg-white hover:bg-slate-50 gap-1.5"
             >
-                <RefreshCw className={cn("h-3.5 w-3.5 text-primary", isRefreshing && "animate-spin")} />
-                Actualiser
+              {isRefreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4 text-amber-600" />}
+              <span>Actualiser</span>
             </Button>
-          </motion.div>
+          </div>
         </div>
+      </div>
 
-        {/* Top Intelligence Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          
-          {/* Saturation Score */}
-          <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }}>
-            <Card className="border-none shadow-lg rounded-[2rem] bg-white transition-all h-full">
-                <CardHeader className="pb-2">
-                    <CardTitle className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
-                        <Waves className="h-4 w-4 text-blue-500" /> Charge Urbaine
-                    </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-6 pt-2">
-                    <div className="flex items-baseline gap-2">
-                        <span className="text-5xl md:text-6xl font-black text-slate-900 tracking-tighter">{globalSaturation}%</span>
-                        <Badge className={cn(
-                            "font-black text-[9px] uppercase px-2 py-0.5 rounded-full",
-                            globalSaturation > 70 ? "bg-red-500" : globalSaturation > 40 ? "bg-amber-500" : "bg-emerald-500"
-                        )}>
-                            {globalSaturation > 70 ? "Critique" : globalSaturation > 40 ? "Saturé" : "Fluide"}
-                        </Badge>
-                    </div>
-                    <div className="space-y-2">
-                        <div className="flex justify-between text-[9px] font-black text-slate-400 tracking-widest uppercase">
-                            <span>Flux Libre</span>
-                            <span>{100 - globalSaturation}%</span>
-                        </div>
-                        <Progress value={globalSaturation} className="h-3 rounded-full bg-slate-100" />
-                    </div>
-                </CardContent>
-            </Card>
-          </motion.div>
+      {/* ── Scrollable Body ── */}
+      <div className="p-3 sm:p-4 md:p-6 flex-1 min-h-0 overflow-y-auto overscroll-contain">
+        <div className="max-w-7xl mx-auto space-y-6 pb-24 md:pb-12">
 
-          {/* AI Strategic Advice */}
-          <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }} className="md:col-span-2">
-            <Card className="border-none shadow-lg rounded-[2rem] bg-slate-900 text-white relative h-full overflow-hidden">
-                <div className="absolute top-[-20%] right-[-10%] w-64 h-64 bg-primary/20 rounded-full blur-[80px]"></div>
-                <CardHeader className="pb-2">
-                    <div className="flex justify-between items-center relative z-10">
-                        <CardTitle className="text-[10px] font-black uppercase text-primary tracking-widest flex items-center gap-2">
-                            <Bot className="h-4 w-4" /> Rapport IA
-                        </CardTitle>
-                        <span className="text-[9px] font-black uppercase text-primary/60">Analyse Active</span>
-                    </div>
-                </CardHeader>
-                <CardContent className="relative z-10 pt-2 flex flex-col justify-between min-h-[160px]">
-                    <p className="text-lg md:text-2xl font-bold leading-tight text-slate-50 italic">
-                        "{insights?.globalAdvice}"
-                    </p>
-                    <div className="flex items-center gap-6 border-t border-white/10 pt-4 mt-4">
-                        <div className="flex items-center gap-2">
-                            <div className="bg-white/10 p-2 rounded-xl">
-                                <TrendingUp className={cn(
-                                    "h-4 w-4",
-                                    insights?.trend === 'dégradation' ? "text-red-400 rotate-45" : 
-                                    insights?.trend === 'amélioration' ? "text-emerald-400 -rotate-45" : "text-blue-400"
-                                )} />
-                            </div>
-                            <div>
-                                <p className="text-[9px] font-black text-slate-500 uppercase mb-0.5">Tendance</p>
-                                <p className="text-xs font-black capitalize">{insights?.trend}</p>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <div className="bg-white/10 p-2 rounded-xl">
-                                <ShieldCheck className="h-4 w-4 text-primary" />
-                            </div>
-                            <div>
-                                <p className="text-[9px] font-black text-slate-500 uppercase mb-0.5">Vérifié</p>
-                                <p className="text-xs font-black">99.2%</p>
-                            </div>
-                        </div>
-                    </div>
-                </CardContent>
-            </Card>
-          </motion.div>
-        </div>
-
-        {/* Smart Tips & Critical Axes */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-12">
-            
-            {/* Smart Tips Section */}
-            <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                    <h2 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-                        <Sparkles className="text-amber-500 h-5 w-5" />
-                        Conseils IA
-                    </h2>
-                    <Badge variant="outline" className="border-amber-200 text-amber-700 bg-amber-50 font-black text-[9px]">{insights?.tips.length || 0} TIPS</Badge>
-                </div>
-                
-                <div className="grid gap-4">
-                    {insights?.tips.map((tip, i) => (
-                        <motion.div 
-                            key={i} 
-                            initial={{ opacity: 0, x: -20 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            transition={{ delay: 0.3 + (i * 0.1) }}
-                            className="bg-white p-5 rounded-2xl shadow-sm border-l-4 border-l-primary flex items-start gap-4"
-                        >
-                            <div className="bg-primary/10 text-primary font-black p-2 rounded-lg text-xs w-8 h-8 flex items-center justify-center shrink-0">
-                                {i+1}
-                            </div>
-                            <p className="font-bold text-slate-700 text-sm leading-relaxed">
-                                {tip}
-                            </p>
-                        </motion.div>
-                    ))}
-                </div>
-            </div>
-
-            {/* Critical Tronçons Section */}
-            <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                    <h2 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-                        <AlertTriangle className="text-red-500 h-5 w-5" />
-                        Points Chauds
-                    </h2>
-                    <Badge className="bg-red-500 text-white font-black text-[9px] uppercase">Alertes</Badge>
-                </div>
-
-                <div className="grid gap-3">
-                    {trafficData.filter(d => d.status === 'EMBOUTEILLAGE' || d.status === 'DENSE').slice(0, 6).map((item, i) => (
-                        <motion.div 
-                            key={i} 
-                            initial={{ opacity: 0, scale: 0.98 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm"
-                        >
-                            <div className="flex items-center gap-3">
-                                <div className={cn(
-                                    "w-3 h-3 rounded-full",
-                                    item.status === 'EMBOUTEILLAGE' ? "bg-red-500 animate-pulse" : "bg-orange-500"
-                                )} />
-                                <div>
-                                    <p className="font-black text-slate-900 text-sm leading-none mb-1">{item.road}</p>
-                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{item.status}</p>
-                                </div>
-                            </div>
-                            <div className="text-right">
-                                <p className="text-sm font-black text-red-600">+{item.delay}m</p>
-                                <p className="text-[9px] font-black text-slate-400 uppercase">{item.speed} km/h</p>
-                            </div>
-                        </motion.div>
-                    ))}
-                    {trafficData.filter(d => d.status === 'EMBOUTEILLAGE' || d.status === 'DENSE').length === 0 && (
-                        <div className="p-10 text-center bg-white rounded-[2rem] border-2 border-dashed border-slate-200">
-                            <Shield className="h-10 w-10 text-emerald-500 mx-auto mb-3 opacity-20" />
-                            <p className="text-xs font-black text-slate-400 uppercase">Kinshasa Fluide</p>
-                        </div>
-                    )}
-                </div>
-            </div>
-        </div>
-
-        {/* Footer Actions */}
-        <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.8 }}
-            className="pt-8 border-t border-slate-200 flex flex-col md:flex-row justify-between items-center gap-6"
-        >
-            <div className="flex items-center gap-4">
-                <div className="bg-slate-200 p-3 rounded-xl">
-                    <History className="h-5 w-5 text-slate-500" />
-                </div>
+          {/* 1. Hero Banner : Générateur de Raccourcis de Kinshasa */}
+          <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white rounded-3xl p-5 sm:p-7 shadow-xl relative overflow-hidden border border-slate-800">
+            <div className="relative z-10 space-y-5">
+              
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                    <p className="text-[9px] font-black text-slate-400 uppercase mb-0.5">Dernier audit (100 axes)</p>
-                    <p className="text-sm font-black text-slate-700">
-                        {lastUpdated ? format(lastUpdated, 'EEEE dd MMMM, HH:mm', { locale: fr }) : '--'}
-                    </p>
+                  <Badge className="bg-amber-500 text-slate-950 font-black text-[9px] uppercase px-2 py-0.5 border-none mb-1.5">
+                    DÉVIATIONS & GAIN DE TEMPS
+                  </Badge>
+                  <h2 className="text-xl sm:text-2xl font-black tracking-tight">
+                    Sélectionnez un trajet pour voir le raccourci conseillé
+                  </h2>
                 </div>
-            </div>
-            <div className="flex gap-3 w-full md:w-auto">
-                <Button variant="outline" className="h-12 rounded-xl px-6 font-black flex-1 md:flex-none uppercase tracking-widest text-[9px] border-2 bg-white" asChild>
-                    <Link href="/flux-infrastructure">Analyse Tech</Link>
-                </Button>
-                <Button className="h-12 rounded-xl px-8 font-black flex-1 md:flex-none uppercase tracking-widest text-[9px] shadow-lg shadow-primary/20 gap-2" asChild>
+                <div className="flex items-center gap-1.5 bg-white/10 px-3 py-1.5 rounded-xl text-xs font-bold text-amber-300 self-start sm:self-auto">
+                  <Sparkles className="h-4 w-4" />
+                  <span>Jusqu'à -35 min économisées</span>
+                </div>
+              </div>
+
+              {/* Corridor Selection Pills */}
+              <div className="flex gap-2 overflow-x-auto scrollbar-none pb-1">
+                {DETOUR_ROUTES.map((route) => {
+                  const isSelected = selectedDetour === route.id;
+                  return (
+                    <button
+                      key={route.id}
+                      onClick={() => setSelectedDetour(route.id)}
+                      className={cn(
+                        "px-3.5 py-2 rounded-2xl text-xs font-bold whitespace-nowrap transition-all shrink-0",
+                        isSelected
+                          ? "bg-amber-500 text-slate-950 font-black shadow-lg shadow-amber-500/30 scale-105"
+                          : "bg-white/10 text-white/80 hover:bg-white/20 border border-white/10"
+                      )}
+                    >
+                      {route.title}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Selected Detour Details Card */}
+              <motion.div 
+                key={activeDetour.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-white/10 backdrop-blur-md rounded-2xl p-4 sm:p-5 border border-white/15 space-y-4"
+              >
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  
+                  {/* Left: The Congested Problem */}
+                  <div className="bg-red-500/15 border border-red-500/30 rounded-xl p-3.5 space-y-1">
+                    <p className="text-[10px] font-black uppercase text-red-300 tracking-wider flex items-center gap-1.5">
+                      <Flame className="h-3.5 w-3.5 text-red-400" /> Axe saturé à éviter
+                    </p>
+                    <p className="text-xs sm:text-sm font-bold text-white leading-snug">
+                      {activeDetour.congestedAxe}
+                    </p>
+                  </div>
+
+                  {/* Right: The Smart Solution */}
+                  <div className="bg-emerald-500/15 border border-emerald-500/30 rounded-xl p-3.5 space-y-1">
+                    <p className="text-[10px] font-black uppercase text-emerald-300 tracking-wider flex items-center gap-1.5">
+                      <CornerDownRight className="h-3.5 w-3.5 text-emerald-400" /> Raccourci Malin conseillé
+                    </p>
+                    <p className="text-xs sm:text-sm font-bold text-white leading-snug">
+                      {activeDetour.smartDetour}
+                    </p>
+                  </div>
+
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t border-white/10 pt-3">
+                  <div className="flex items-center gap-2">
+                    <Timer className="h-4 w-4 text-amber-300" />
+                    <span className="text-xs text-white/80 font-medium">Gain estimé :</span>
+                    <strong className="text-sm font-black text-amber-300">{activeDetour.timeSaved}</strong>
+                  </div>
+
+                  <Button asChild className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl h-10 px-5 shadow-lg shadow-amber-500/20 gap-2">
                     <Link href="/k-flow-nav">
-                        <Navigation className="h-3.5 w-3.5 fill-white" />
-                        Navigation
-                        <ArrowRight className="h-3 w-3 opacity-50" />
+                      <Navigation className="h-4 w-4 fill-current" />
+                      <span>Lancer le GPS sur ce raccourci</span>
                     </Link>
-                </Button>
+                  </Button>
+                </div>
+              </motion.div>
+
             </div>
-        </motion.div>
+          </div>
+
+          {/* 2. Real-Time Smart Tips from AI & Drivers */}
+          <div className="space-y-3">
+            <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">
+              <Zap className="h-4 w-4 text-primary" /> Conseils & Stratégies du Moment
+            </h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {currentTips.map((tip, idx) => (
+                <div key={idx} className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm flex items-start gap-3 hover:shadow-md transition-all">
+                  <div className="w-7 h-7 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center font-black text-xs shrink-0 mt-0.5">
+                    {idx + 1}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs sm:text-sm font-bold text-slate-800 leading-relaxed">
+                      {tip}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 3. Horloge des Heures de Pointe (Quand partir ?) */}
+          <div className="space-y-3">
+            <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">
+              <Clock className="h-4 w-4 text-primary" /> Guide des Meilleurs Horaires à Kinshasa
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {TIME_SLOTS.map((slot, i) => (
+                <div key={i} className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm space-y-2 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between gap-1 mb-1.5">
+                      <span className="text-xs font-black text-slate-900">{slot.period}</span>
+                      <span className={cn("text-[9px] font-black uppercase px-2 py-0.5 rounded-lg border", slot.color)}>
+                        {slot.status}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                      {slot.advice}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 4. Assistant IA Floating Helper */}
+          <div className="bg-gradient-to-r from-primary to-blue-600 rounded-3xl p-5 sm:p-6 text-white shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3.5">
+              <div className="bg-white/20 p-3 rounded-2xl shrink-0">
+                <Bot className="h-7 w-7 text-white" />
+              </div>
+              <div>
+                <h4 className="font-black text-base tracking-tight">Vous avez un trajet spécifique à faire ?</h4>
+                <p className="text-xs text-white/80 font-medium">Demandez à l'Assistant IA le meilleur raccourci actuel pour votre adresse exacte.</p>
+              </div>
+            </div>
+            <Button asChild className="bg-white hover:bg-slate-100 text-primary font-black rounded-2xl h-11 px-6 shrink-0 shadow-lg">
+              <Link href="/assistant">Demander à l'IA</Link>
+            </Button>
+          </div>
+
+        </div>
       </div>
     </div>
   );

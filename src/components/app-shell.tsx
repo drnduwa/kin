@@ -12,7 +12,8 @@ import {
   MessageCircle,
   Headphones,
   TrafficCone,
-  Clock
+  Clock,
+  Lightbulb
 } from 'lucide-react';
 import {
   Sidebar,
@@ -229,7 +230,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       '/verifier-trafic': 'Vérifier Trafic',
       '/k-flow-nav': 'K-Flow Nav',
       '/hazard-map': 'Carte des Dangers',
-      '/insights': 'K-Flow Insights',
+      '/insights': 'Guide Anti-Bouchons',
       '/flux-infrastructure': 'Flux & Infrastructure',
       '/routes': 'État des Routes',
       '/map': 'Carte',
@@ -353,13 +354,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
               {isEnabled('insights') && (
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={pathname === '/insights'} className={cn("bg-primary/5 mb-2 h-11 rounded-xl px-4", pathname === '/insights' && "bg-primary/15")}>
-                    <Link href="/insights" className="font-bold flex items-center justify-between w-full text-primary">
+                  <SidebarMenuButton asChild isActive={pathname === '/insights'} className={cn("bg-amber-500/10 mb-2 h-11 rounded-xl px-4", pathname === '/insights' && "bg-amber-500/20")}>
+                    <Link href="/insights" className="font-bold flex items-center justify-between w-full text-slate-800">
                       <div className="flex items-center gap-3">
-                        <Zap className={cn("h-5 w-5", pathname === '/insights' ? "text-accent" : "text-primary")} />
-                        <span>K-Flow Insights</span>
+                        <Lightbulb className={cn("h-5 w-5", pathname === '/insights' ? "text-amber-500" : "text-amber-600")} />
+                        <span>Guide Anti-Bouchons</span>
                       </div>
-                      <Badge className="bg-primary/20 text-primary text-[8px]">AI</Badge>
+                      <Badge className="bg-amber-500 text-slate-950 font-black text-[8px]">MALIN</Badge>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
