@@ -13,7 +13,8 @@ import {
   Headphones,
   TrafficCone,
   Clock,
-  Lightbulb
+  Lightbulb,
+  HelpCircle
 } from 'lucide-react';
 import {
   Sidebar,
@@ -28,6 +29,8 @@ import {
   SidebarSeparator,
 } from '@/components/ui/sidebar';
 import { UserNav } from './auth/user-nav';
+import { LiveOnlineCounter } from './live-online-counter';
+import { InteractiveGuideModal } from './interactive-guide-modal';
 import { useUser, useFirebase, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import React, { useEffect, useState, useCallback } from 'react';
 import { Logo } from './logo';
@@ -238,6 +241,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       '/notifications': 'Notifications',
       '/community-chat': 'K-Flow Chat',
       '/mes-stars': subSettings?.mode === 'cash' ? 'Mon Abonnement' : 'Mes Stars',
+      '/guide': 'Guide & Tutoriel',
       '/privacy': 'Confidentialité',
     };
     return titles[pathname] || (pathname.startsWith('/admin') ? 'Administration' : 'Kinshasa Flow');
@@ -446,6 +450,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </SidebarMenuItem>
               )}
 
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/guide'} className={cn(pathname === '/guide' && "bg-white/10")}>
+                  <Link href="/guide" className="font-bold flex items-center gap-3 h-11 px-4 rounded-xl text-amber-600 dark:text-amber-400">
+                    <HelpCircle className="h-5 w-5 text-amber-500" />
+                    <span>Guide & Aide</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
               <SidebarSeparator className="my-2 opacity-20" />
 
               {isPartnerAdmin && (
@@ -540,12 +553,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </Sidebar>
         <SidebarInset className="h-full min-h-0 w-full overflow-hidden flex flex-col">
             <div className="flex flex-col h-full min-h-0 w-full relative overflow-hidden">
-                <header className="bg-card border-b px-3.5 py-3 md:p-4 flex items-center justify-between gap-4 shadow-sm z-20 shrink-0">
-                    <div className="flex items-center gap-3 md:gap-4">
-                      <SidebarTrigger className="md:hidden" />
-                      <h1 className="text-xl md:text-2xl font-black text-foreground tracking-tight">{getPageTitle()}</h1>
+                <header className="bg-card border-b px-3 py-2.5 md:p-4 flex items-center justify-between gap-2 md:gap-4 shadow-sm z-20 shrink-0">
+                    <div className="flex items-center gap-2 md:gap-4 min-w-0">
+                      <SidebarTrigger className="md:hidden shrink-0" />
+                      <h1 className="text-base sm:text-xl md:text-2xl font-black text-foreground tracking-tight truncate">{getPageTitle()}</h1>
                     </div>
-                    <UserNav />
+                    <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+                      <LiveOnlineCounter />
+                      <InteractiveGuideModal />
+                      <UserNav />
+                    </div>
                 </header>
                 <main className="flex-1 min-h-0 p-2 sm:p-3 md:p-4 flex flex-col gap-2 md:gap-4 overflow-hidden bg-background">
                     <NotificationPermission />
