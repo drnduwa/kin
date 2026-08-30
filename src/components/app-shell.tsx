@@ -223,7 +223,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   
   const getPageTitle = () => {
     const titles: Record<string, string> = {
-      '/reports': 'Rapports de trafic',
+      '/reports': 'Baromètre Trafic',
       '/live-traffic': 'Temps Réel',
       '/local-traffic': 'Trafic Local',
       '/verifier-trafic': 'Vérifier Trafic',
@@ -306,8 +306,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   <SidebarMenuButton asChild isActive={pathname === '/reports'} className={cn(pathname === '/reports' && "bg-white/10")}>
                     <Link href="/reports" className="font-bold flex items-center justify-between w-full h-11 px-4 rounded-xl">
                       <div className="flex items-center gap-3">
-                        <Home className={cn("h-5 w-5", pathname === '/reports' ? "text-accent" : "text-primary")} />
-                        <span>Rapports</span>
+                        <Compass className={cn("h-5 w-5", pathname === '/reports' ? "text-accent" : "text-primary")} />
+                        <span>Baromètre Trafic</span>
                       </div>
                       {unreadReports > 0 && <Badge variant="destructive" className="h-5 px-1.5 min-w-[20px] justify-center text-[10px] rounded-full font-black">{unreadReports}</Badge>}
                     </Link>
@@ -604,7 +604,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     </span>
                   </Link>
 
-                  {/* 4. Rapports 100 Axes */}
+                  {/* 4. Baromètre Trafic */}
                   <Link 
                     href="/reports" 
                     className={cn(
@@ -613,14 +613,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     )}
                   >
                     <div className={cn("p-1 rounded-xl transition-all relative", pathname === '/reports' && "bg-primary/10")}>
-                      <Activity className={cn("h-5 w-5", pathname === '/reports' ? "text-primary" : "text-slate-400")} />
+                      <Compass className={cn("h-5 w-5", pathname === '/reports' ? "text-primary" : "text-slate-400")} />
                       {unreadReports > 0 && (
                         <span className="absolute -top-1 -right-1 flex h-3.5 min-w-[14px] px-0.5 items-center justify-center rounded-full bg-destructive text-[8px] font-black text-white">
                           {unreadReports}
                         </span>
                       )}
                     </div>
-                    <span className="text-[9px] font-bold tracking-tight mt-0.5">100 Axes</span>
+                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Baromètre</span>
                   </Link>
 
                   {/* 5. Assistant IA */}
