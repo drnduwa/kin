@@ -2,6 +2,7 @@ import type {Metadata, Viewport} from 'next';
 import './globals.css';
 import { Toaster } from "@/components/ui/toaster"
 import { FirebaseClientProvider } from '@/firebase';
+import { InAppPopupNotifications } from '@/components/in-app-popup-notifications';
 
 export const viewport: Viewport = {
   themeColor: '#248eeb',
@@ -112,6 +113,7 @@ export default function RootLayout({
       </head>
       <body className="font-body antialiased">
         <FirebaseClientProvider>
+          <InAppPopupNotifications />
           {children}
           <Toaster />
         </FirebaseClientProvider>
