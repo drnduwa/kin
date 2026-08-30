@@ -9,11 +9,14 @@ import {
   Navigation, 
   Loader2, 
   CheckCircle2, 
-  Zap,
-  Info,
-  X,
-  RefreshCw,
-  AlertCircle
+  Zap, 
+  Info, 
+  X, 
+  RefreshCw, 
+  AlertCircle,
+  Radar,
+  Flame,
+  Sparkles
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -25,6 +28,7 @@ import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import { CONFIG } from '@/lib/config';
+import { MAJOR_AXES } from '@/lib/constants';
 
 const STATUS_CONFIG = {
   BLOQUÉ: { color: "bg-purple-600", icon: "🔴", label: "Bloqué" },
@@ -35,6 +39,21 @@ const STATUS_CONFIG = {
   ERREUR: { color: "bg-red-900", icon: "⚠️", label: "Erreur" },
 };
 
+const HOTSPOT_CANDIDATES = [
+  { name: "Échangeur de Limete", district: "Limete", coords: { lat: -4.3570, lng: 15.3580 } },
+  { name: "Av. Mondjiba (Kintambo Magasin)", district: "Ngaliema", coords: { lat: -4.3270, lng: 15.2740 } },
+  { name: "Route de Matadi (UPN)", district: "Ngaliema", coords: { lat: -4.3800, lng: 15.2580 } },
+  { name: "Blvd Lumumba (Masina Pascal)", district: "Masina", coords: { lat: -4.3850, lng: 15.4200 } },
+  { name: "Av. Kasa-Vubu (Victoire)", district: "Kalamu", coords: { lat: -4.3430, lng: 15.3120 } },
+  { name: "Av. By-Pass (Triangle)", district: "Lemba", coords: { lat: -4.4100, lng: 15.3150 } },
+  { name: "Blvd 30 Juin (Rond-point Mandela)", district: "Gombe", coords: { lat: -4.3120, lng: 15.2980 } },
+  { name: "Av. des Huileries", district: "Lingwala", coords: { lat: -4.3250, lng: 15.3100 } },
+  { name: "Av. Libération (24/11 - Lingwala)", district: "Lingwala", coords: { lat: -4.3350, lng: 15.3020 } },
+  { name: "Av. de l'Université (Pont Gabu)", district: "Kalamu", coords: { lat: -4.3550, lng: 15.3180 } },
+  { name: "Av. Elengesa (Pont)", district: "Makala", coords: { lat: -4.3720, lng: 15.3050 } },
+  { name: "Av. des Poids Lourds (Kingabwa)", district: "Limete", coords: { lat: -4.3150, lng: 15.3400 } },
+];
+
 export default function TrafficCheck() {
   const [search, setSearch] = useState('');
   const [location, setLocation] = useState<{lat: number, lng: number} | null>(null);
@@ -42,13 +61,21 @@ export default function TrafficCheck() {
   const [forecast, setForecast] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
+  const [isAutoAlert, setIsAutoAlert] = useState(false);
+  const [autoAxisName, setAutoAxisName] = useState('');
+  const [hotspotIndex, setHotspotIndex] = useState<number>(-1);
   const { toast } = useToast();
   const mapRef = useRef<google.maps.Map | null>(null);
+  const hasInitializedRef = useRef(false);
 
-  const handleCheck = useCallback(async (coords: {lat: number, lng: number}, address?: string) => {
+  const handleCheck = useCallback(async (coords: {lat: number, lng: number}, address?: string, isAuto: boolean = false) => {
     setResult(null); 
     setForecast(null);
     setIsLoading(true);
+    setIsAutoAlert(isAuto);
+    if (isAuto && address) {
+      setAutoAxisName(address);
+    }
     try {
       const data = await checkTrafficAction({ ...coords, address });
       setResult(data);
@@ -59,7 +86,7 @@ export default function TrafficCheck() {
         mapRef.current.setZoom(16);
       }
       
-      if (data.status === "ERREUR") {
+      if (data.status === "ERREUR" && !isAuto) {
           toast({ 
               title: "Erreur d'analyse", 
               description: data.verdict, 
@@ -67,20 +94,41 @@ export default function TrafficCheck() {
           });
       }
     } catch (e: any) {
-      toast({ title: "Erreur", description: e.message || "Impossible d'analyser cet axe.", variant: "destructive" });
+      if (!isAuto) {
+        toast({ title: "Erreur", description: e.message || "Impossible d'analyser cet axe.", variant: "destructive" });
+      }
     } finally {
       setIsLoading(false);
     }
   }, [toast]);
 
+  const loadRandomHotspot = useCallback((currentIdx?: number) => {
+    let nextIdx = Math.floor(Math.random() * HOTSPOT_CANDIDATES.length);
+    if (currentIdx !== undefined && HOTSPOT_CANDIDATES.length > 1 && nextIdx === currentIdx) {
+      nextIdx = (nextIdx + 1) % HOTSPOT_CANDIDATES.length;
+    }
+    setHotspotIndex(nextIdx);
+    const chosen = HOTSPOT_CANDIDATES[nextIdx];
+    setLocation(chosen.coords);
+    handleCheck(chosen.coords, chosen.name, true);
+  }, [handleCheck]);
+
+  useEffect(() => {
+    if (!hasInitializedRef.current) {
+      hasInitializedRef.current = true;
+      loadRandomHotspot();
+    }
+  }, [loadRandomHotspot]);
+
   const useMyLocation = () => {
     setIsLocating(true);
+    setIsAutoAlert(false);
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
           setLocation(coords);
-          handleCheck(coords, "Ma position actuelle");
+          handleCheck(coords, "Ma position actuelle", false);
           setIsLocating(false);
         },
         () => {
@@ -112,7 +160,8 @@ export default function TrafficCheck() {
                 onChange={setSearch} 
                 onSelect={(coords, address) => {
                   setLocation(coords);
-                  handleCheck(coords, address);
+                  setIsAutoAlert(false);
+                  handleCheck(coords, address, false);
                 }}
               />
               <Button 
@@ -130,6 +179,71 @@ export default function TrafficCheck() {
 
         <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 md:p-8 w-full min-w-0 overscroll-contain">
           <div className="max-w-xl mx-auto w-full min-w-0 pb-24 md:pb-12">
+          
+          {/* Automatic Hotspot Warning Header */}
+          <AnimatePresence>
+            {isAutoAlert && result && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="mb-4 bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-amber-500/10 border border-amber-300/70 rounded-2xl p-3 sm:p-4 shadow-sm flex items-center justify-between gap-3"
+              >
+                <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+                  <div className="bg-amber-500 text-white p-2 rounded-xl shrink-0 shadow-md shadow-amber-500/20">
+                    <Flame className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <Badge className="bg-amber-500 text-white font-black text-[9px] uppercase px-2 py-0 border-none">
+                        Alerte Préventive
+                      </Badge>
+                      <span className="text-[10px] font-bold text-slate-500 hidden sm:inline">Point chaud sous surveillance</span>
+                    </div>
+                    <p className="text-xs sm:text-sm font-black text-slate-900 truncate mt-0.5">
+                      {result.road || autoAxisName}
+                    </p>
+                  </div>
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => loadRandomHotspot(hotspotIndex)}
+                  disabled={isLoading}
+                  className="h-9 px-3 rounded-xl border-amber-300 bg-white hover:bg-amber-50 text-[10px] font-black uppercase text-amber-800 shrink-0 gap-1.5 shadow-sm"
+                >
+                  <RefreshCw className={cn("h-3.5 w-3.5 text-amber-600", isLoading && "animate-spin")} />
+                  <span>Autre axe</span>
+                </Button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Initial Loading Pulse */}
+          {isLoading && !result && (
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }}
+              className="w-full bg-white rounded-3xl p-8 sm:p-12 shadow-sm border border-slate-100 flex flex-col items-center justify-center text-center space-y-4 py-12 sm:py-16 mb-6"
+            >
+              <div className="relative">
+                <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center animate-pulse">
+                  <Radar className="h-8 w-8 text-primary animate-spin" />
+                </div>
+                <div className="absolute inset-0 rounded-full border-2 border-primary/20 animate-ping"></div>
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-black text-slate-800">
+                  {isAutoAlert ? "Scan d'un point chaud de Kinshasa..." : "Analyse du trafic en cours..."}
+                </h3>
+                <p className="text-xs font-medium text-slate-400">
+                  {isAutoAlert ? "Détection d'un axe nécessitant votre attention." : "Calcul de la fluidité et des prévisions horaires."}
+                </p>
+              </div>
+            </motion.div>
+          )}
+
           {/* Result Panel */}
           <AnimatePresence>
             {result && (
@@ -140,9 +254,11 @@ export default function TrafficCheck() {
                 className="w-full bg-white rounded-3xl shadow-xl border border-slate-100 flex flex-col overflow-hidden mb-6"
               >
                 <div className={cn("p-5 sm:p-6 md:p-8 text-white relative", STATUS_CONFIG[result.status as keyof typeof STATUS_CONFIG]?.color)}>
-                  <button onClick={() => setResult(null)} className="absolute top-4 right-4 text-white/70 hover:text-white p-1.5 rounded-full bg-black/10 hover:bg-black/20 transition-colors"><X className="h-5 w-5" /></button>
+                  <button onClick={() => { setResult(null); setIsAutoAlert(false); }} className="absolute top-4 right-4 text-white/70 hover:text-white p-1.5 rounded-full bg-black/10 hover:bg-black/20 transition-colors"><X className="h-5 w-5" /></button>
                   <div className="space-y-2 md:space-y-4 relative z-10 pr-8">
-                    <Badge className="bg-white/20 border-white/30 text-white font-bold mb-1 md:mb-2 text-[10px] md:text-xs">VERDICT K-FLOW</Badge>
+                    <Badge className="bg-white/20 border-white/30 text-white font-bold mb-1 md:mb-2 text-[10px] md:text-xs">
+                      {isAutoAlert ? "POINT CHAUD EN DIRECT" : "VERDICT K-FLOW"}
+                    </Badge>
                     <div className="flex items-center gap-2.5 md:gap-3">
                       <span className="text-3xl md:text-4xl">{STATUS_CONFIG[result.status as keyof typeof STATUS_CONFIG]?.icon}</span>
                       <h2 className="text-2xl md:text-3xl font-black uppercase tracking-tighter leading-none">
