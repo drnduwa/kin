@@ -231,7 +231,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       '/k-flow-nav': 'K-Flow Nav',
       '/hazard-map': 'Carte des Dangers',
       '/insights': 'Guide Anti-Bouchons',
-      '/flux-infrastructure': 'Flux & Infrastructure',
+      '/flux-infrastructure': 'Chantiers & Infrastructures',
       '/routes': 'État des Routes',
       '/map': 'Carte',
       '/assistant': 'Assistant IA',
@@ -370,8 +370,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={pathname === '/flux-infrastructure'} className={cn(pathname === '/flux-infrastructure' && "bg-white/10")}>
                     <Link href="/flux-infrastructure" className="font-medium flex items-center gap-3 h-11 px-4 rounded-xl">
-                      <BarChart3 className={cn("h-5 w-5", pathname === '/flux-infrastructure' ? "text-accent" : "text-primary")} />
-                      <span>Flux & Infrastructure</span>
+                      <Construction className={cn("h-5 w-5", pathname === '/flux-infrastructure' ? "text-accent" : "text-amber-500")} />
+                      <span>Chantiers & Travaux</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

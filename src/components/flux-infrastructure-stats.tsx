@@ -1,450 +1,476 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Button } from '@/components/ui/button';
 import { 
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer,
-  AreaChart,
-  Area
-} from 'recharts';
-import { 
-  Activity,
-  History,
-  BarChart3,
+  Construction,
   RefreshCw,
-  Database,
   Search,
-  TrendingUp,
   AlertTriangle,
-  Zap,
+  MapPin,
+  CheckCircle2,
+  Clock,
+  Camera,
+  Navigation,
+  Waves,
+  Car,
   ShieldAlert,
-  Info
+  ArrowRight,
+  TrendingUp,
+  Layers,
+  Sparkles,
+  PlusCircle,
+  HelpCircle,
+  Eye
 } from 'lucide-react';
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { Button } from '@/components/ui/button';
-import { getGoogleTrafficStatusAction } from '@/app/actions';
-import { MAJOR_AXES } from '@/lib/constants';
-import { useFirebase, useCollection, useMemoFirebase, errorEmitter } from '@/firebase';
-import { collection, query, orderBy, limit, addDoc, serverTimestamp } from 'firebase/firestore';
-import { DailyTrafficReport, FirestorePermissionError } from '@/lib/types';
+import { useFirebase, useCollection, useMemoFirebase } from '@/firebase';
+import { collection, query, orderBy, limit } from 'firebase/firestore';
+import { EventReport } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
+import Link from 'next/link';
 
-const containerVariants = {
-  hidden: { opacity: 0 },
-  visible: { opacity: 1, transition: { staggerChildren: 0.1 } }
-};
+// Major Active Roadwork Projects in Kinshasa
+const MAJOR_PROJECTS = [
+  {
+    id: 'matadi-upn',
+    title: 'Élargissement Route de Matadi (Binza Météo ➔ UPN)',
+    district: 'Ngaliema',
+    progress: 65,
+    status: 'Travaux en cours',
+    lanes: '1 voie par sens (Chaussée rétrécie)',
+    impact: 'Fort ralentissement aux heures de pointe',
+    advice: 'Prendre l\'Avenue de la Montagne ou passer tôt avant 07h00.',
+    tag: 'Axe Ouest',
+    tagColor: 'bg-amber-100 text-amber-800'
+  },
+  {
+    id: 'universite-gabu',
+    title: 'Réhabilitation Avenue de l\'Université & Pont Gabu',
+    district: 'Kalamu / Lemba',
+    progress: 80,
+    status: 'Finition des berges & Asphalte',
+    lanes: '2 voies praticables avec prudence',
+    impact: 'Ralentissement modéré aux abords du pont',
+    advice: 'Privilégier l\'Avenue Elengesa pour contourner le pont Gabu.',
+    tag: 'Axe Centre-Sud',
+    tagColor: 'bg-blue-100 text-blue-800'
+  },
+  {
+    id: 'elengesa-neuf',
+    title: 'Avenue Elengesa (Makala ➔ Ngaba / By-Pass)',
+    district: 'Makala / Ngaba',
+    progress: 100,
+    status: 'Axe Neuf Ouvert',
+    lanes: '2 voies fluides',
+    impact: 'Circulation fluide, excellent délestage',
+    advice: 'Meilleur itinéraire pour éviter le rond-point Ngaba et Victoire.',
+    tag: 'Recommandé',
+    tagColor: 'bg-emerald-100 text-emerald-800'
+  },
+  {
+    id: 'poids-lourds',
+    title: 'Avenue des Poids Lourds & Kingabwa',
+    district: 'Limete',
+    progress: 90,
+    status: 'Entretien régulier & Éclairage',
+    lanes: '2 voies praticables',
+    impact: 'Trafic de poids lourds, fluide pour les berlines',
+    advice: 'Idéal pour relier Gombe à Limete 7e Rue sans passer par Lumumba.',
+    tag: 'Axe Industriel',
+    tagColor: 'bg-purple-100 text-purple-800'
+  }
+];
+
+// Strategic Bridges & Flyovers Status
+const BRIDGES_AND_FLYOVERS = [
+  { name: 'Saut-de-Mouton Mandela (Gombe)', status: 'FLUIDE', note: 'Circulation normale', delay: 0 },
+  { name: 'Saut-de-Mouton Pompage (Ngaliema)', status: 'DENSE', note: 'Ralentissements vers DGC', delay: 10 },
+  { name: 'Saut-de-Mouton Socimat (Gombe)', status: 'FLUIDE', note: 'Passage fluide', delay: 0 },
+  { name: 'Échangeur de Limete (Nœud Est)', status: 'EMBOUTEILLAGE', note: 'Bouchon aux bretelles vers N\'djili', delay: 20 },
+  { name: 'Pont Matete (Axe Lumumba)', status: 'MODÉRÉ', note: 'Ralentissement aux abords du marché', delay: 8 },
+  { name: 'Pont Gabu (Avenue Université)', status: 'MODÉRÉ', note: 'Travaux de nuit, passage ralenti', delay: 5 },
+  { name: 'Pont Makelele (Kintambo / Bandal)', status: 'FLUIDE', note: 'Trafic normal', delay: 0 },
+  { name: 'Pont Sendwe (Kalamu / Gombe)', status: 'FLUIDE', note: 'Axe ouvert et dégagé', delay: 0 },
+];
+
+// Typical Road Hazards in Kinshasa
+const COMMON_HAZARDS = [
+  {
+    icon: Waves,
+    title: 'Eaux & Inondations Pluviales',
+    desc: 'Après la pluie, zones comme Carrefour Mososo, Debonhomme et Blvd Triomphal deviennent très lentes.',
+    advice: 'Évitez les berlines basses par temps d\'orage.'
+  },
+  {
+    icon: AlertTriangle,
+    title: 'Nids-de-Poule & Chaussées Dégradées',
+    desc: 'Les ralentissements soudains sont souvent provoqués par des trous forçant les voitures à rouler au pas.',
+    advice: 'Gardez vos distances de sécurité.'
+  },
+  {
+    icon: Construction,
+    title: 'Chantiers & Engins de Travaux',
+    desc: 'Travaux d\'assainissement et pose de collecteurs réduisant le nombre de voies disponibles.',
+    advice: 'Consultez nos raccourcis sur le Guide Anti-Bouchons.'
+  },
+  {
+    icon: Car,
+    title: 'Marchés & Arrêts Anarchiques',
+    desc: 'Les arrêts prolongés des taxis-bus (207) et les étals créent des goulots d\'étranglement.',
+    advice: 'Anticipez les changements de voie.'
+  }
+];
 
 export default function FluxInfrastructureStats() {
   const { firestore } = useFirebase();
   const { toast } = useToast();
-  const [isUpdating, setIsUpdating] = useState(false);
-  const [lastLocalReport, setLastLocalReport] = useState<any>(null);
-  const [searchAxis, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeTab, setActiveTab] = useState<'chantiers' | 'ponts' | 'photos'>('chantiers');
 
-  // Fetch historical reports from Firebase
+  // Fetch real citizen photo reports
   const reportsQuery = useMemoFirebase(() => {
-    return query(collection(firestore, "daily_traffic_reports"), orderBy("timestamp", "desc"), limit(14));
+    return query(collection(firestore, "events"), orderBy("createdAt", "desc"), limit(20));
   }, [firestore]);
   
-  const { data: history, isLoading: isHistoryLoading } = useCollection<DailyTrafficReport>(reportsQuery);
+  const { data: userReports, isLoading: isReportsLoading } = useCollection<EventReport>(reportsQuery);
 
-  const handleUpdateAndArchive = async () => {
-    setIsUpdating(true);
-    try {
-        const trafficData = await getGoogleTrafficStatusAction(MAJOR_AXES);
-        
-        const totalSaturation = trafficData.reduce((acc, curr) => {
-            const val = curr.status === "EMBOUTEILLAGE" ? 100 : curr.status === "DENSE" ? 75 : curr.status === "MODÉRÉ" ? 40 : 10;
-            return acc + val;
-        }, 0) / trafficData.length;
-
-        const reportData = {
-            timestamp: serverTimestamp(),
-            globalSaturation: Math.round(totalSaturation),
-            axisStats: trafficData.map((d, idx) => {
-                const axisConfig = MAJOR_AXES[idx];
-                const capacity = axisConfig.capacity || 5000;
-                
-                let volumeRatio = 0.1;
-                if (d.status === 'EMBOUTEILLAGE') volumeRatio = 0.95 + (Math.random() * 0.15);
-                else if (d.status === 'DENSE') volumeRatio = 0.75 + (Math.random() * 0.2);
-                else if (d.status === 'MODÉRÉ') volumeRatio = 0.4 + (Math.random() * 0.3);
-                else volumeRatio = 0.1 + (Math.random() * 0.2);
-
-                const vehicleCount = Math.round(capacity * volumeRatio);
-
-                return {
-                    road: d.road,
-                    status: d.status,
-                    speed: d.speed,
-                    delay: d.delay,
-                    vehicleCount,
-                    capacity
-                };
-            })
-        };
-
-        const colRef = collection(firestore, "daily_traffic_reports");
-        addDoc(colRef, reportData).catch(async (serverError) => {
-            const permissionError = new FirestorePermissionError({
-                path: colRef.path,
-                operation: 'create',
-                requestResourceData: reportData,
-            });
-            errorEmitter.emit('permission-error', permissionError);
-        });
-
-        const now = new Date();
-        setLastLocalReport({
-            ...reportData,
-            timestamp: { toDate: () => now }
-        });
-
-        toast({ 
-            title: "Archive Stratégique Créée", 
-            description: "Analyse des volumes effectuée sur 100 axes.",
-            variant: "default"
-        });
-    } catch (e: any) {
-        toast({ title: "Échec de l'archivage", description: e.message, variant: "destructive" });
-    } finally {
-        setIsUpdating(false);
-    }
-  };
-
-  const currentStats = useMemo(() => {
-    const report = lastLocalReport || (history && history[0]);
-    if (!report) return null;
-    return report;
-  }, [lastLocalReport, history]);
-
-  const trendsData = useMemo(() => {
-    if (!history) return [];
-    return [...history].reverse().map(h => ({
-        date: h.timestamp?.toDate ? format(h.timestamp.toDate(), 'dd/MM') : '...',
-        saturation: h.globalSaturation
-    }));
-  }, [history]);
-
-  const filteredStats = useMemo(() => {
-    if (!currentStats) return [];
-    if (!searchAxis.trim()) return currentStats.axisStats;
-    const q = searchAxis.toLowerCase();
-    return currentStats.axisStats.filter((a: any) => a.road.toLowerCase().includes(q));
-  }, [currentStats, searchAxis]);
-
-  const criticalAxes = useMemo(() => {
-    if (!currentStats) return [];
-    return currentStats.axisStats.filter((a: any) => (a.vehicleCount / a.capacity) > 0.9);
-  }, [currentStats]);
+  const filteredProjects = useMemo(() => {
+    if (!searchQuery.trim()) return MAJOR_PROJECTS;
+    const q = searchQuery.toLowerCase();
+    return MAJOR_PROJECTS.filter(p => 
+      p.title.toLowerCase().includes(q) || 
+      p.district.toLowerCase().includes(q) || 
+      p.advice.toLowerCase().includes(q)
+    );
+  }, [searchQuery]);
 
   return (
-    <div className="w-full h-full overflow-y-auto bg-slate-50/50 p-4 md:p-8">
-      <motion.div 
-        variants={containerVariants}
-        initial="hidden"
-        animate="visible"
-        className="max-w-7xl mx-auto space-y-8 pb-20"
-      >
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div className="space-y-1">
-            <h1 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-3">
-              <BarChart3 className="text-primary h-8 w-8" />
-              Flux & Infrastructure
-            </h1>
-            <p className="text-muted-foreground font-medium italic">
-              Analyse strategique des volumes (Vehicle Counts) et planification urbaine.
-            </p>
-          </div>
-          
+    <div className="w-full h-full min-h-0 flex flex-col bg-slate-50 overflow-hidden rounded-2xl md:rounded-3xl border border-slate-100">
+      
+      {/* ── Top Header Bar ── */}
+      <div className="bg-white border-b shadow-sm z-30 p-3.5 sm:p-4 md:p-5 shrink-0">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <Button 
-                onClick={handleUpdateAndArchive} 
-                disabled={isUpdating}
-                className="h-12 px-6 rounded-2xl font-black shadow-xl shadow-primary/20 gap-2 transition-all"
-            >
-                {isUpdating ? <RefreshCw className="h-5 w-5 animate-spin" /> : <Database className="h-5 w-5" />}
-                Actualiser & Archiver
+            <div className="bg-amber-500 text-white p-2.5 rounded-2xl shadow-md shadow-amber-500/20 shrink-0">
+              <Construction className="h-6 w-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg md:text-xl font-black text-slate-900 tracking-tight">Chantiers & Infrastructures</h1>
+                <Badge className="bg-primary text-white font-black text-[9px] uppercase px-1.5 py-0 border-none">
+                  OBSERVATOIRE KINSHASA
+                </Badge>
+              </div>
+              <p className="text-[10px] md:text-xs font-medium text-slate-500">
+                Suivi des grands travaux, sauts-de-mouton, ponts et état des chaussées dans la capitale
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <Button asChild size="sm" className="rounded-xl h-10 bg-primary hover:bg-primary/90 text-white font-black text-xs px-4 shadow-md shadow-primary/20 gap-1.5">
+              <Link href="/signaler-embouteillage">
+                <Camera className="h-4 w-4" />
+                <span>Signaler un chantier (+10 ⭐)</span>
+              </Link>
             </Button>
-            <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 px-4 py-1.5 rounded-full font-black text-[10px] uppercase tracking-widest">
-              Vehicle Counts Active
-            </Badge>
           </div>
         </div>
+      </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <StatCard 
-            title="Flux Global" 
-            value={currentStats ? `${currentStats.globalSaturation}%` : '--'} 
-            subValue="Charge urbaine moyenne (Kinshasa)" 
-            icon={Activity} 
-            color="bg-primary" 
-          />
-          <StatCard 
-            title="Volume Max" 
-            value={currentStats ? `${Math.max(...currentStats.axisStats.map((a: any) => a.vehicleCount))}` : '--'} 
-            subValue="Véhicules / Heure détectés (Axe critique)" 
-            icon={TrendingUp} 
-            color="bg-orange-500" 
-          />
-          <StatCard 
-            title="Alertes Capacité" 
-            value={criticalAxes.length.toString()} 
-            subValue="Tronçons dépassant 90% de charge théorique" 
-            icon={ShieldAlert} 
-            color="bg-red-600" 
-          />
-          <StatCard 
-            title="Dernier Audit" 
-            value={currentStats?.timestamp?.toDate ? format(currentStats.timestamp.toDate(), 'HH:mm') : '--'} 
-            subValue={currentStats?.timestamp?.toDate ? format(currentStats.timestamp.toDate(), 'EEEE dd MMMM', { locale: fr }) : 'En attente...'} 
-            icon={History} 
-            color="bg-slate-800" 
-          />
-        </div>
+      {/* ── Scrollable Body ── */}
+      <div className="p-3 sm:p-4 md:p-6 flex-1 min-h-0 overflow-y-auto overscroll-contain">
+        <div className="max-w-7xl mx-auto space-y-6 pb-24 md:pb-12">
 
-        {/* Moteur de Recherche d'Axe */}
-        <Card className="border-none shadow-sm rounded-[2rem] bg-white overflow-hidden">
-            <CardHeader className="p-8 pb-4">
-                <div className="flex flex-col md:flex-row justify-between gap-4">
-                    <div>
-                        <CardTitle className="text-xl font-black">Analyseur de Segments Routiers</CardTitle>
-                        <CardDescription>Recherchez un axe pour voir son volume et sa charge en temps réel.</CardDescription>
-                    </div>
-                    <div className="relative w-full md:w-80">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                        <Input 
-                            placeholder="Ex: Boulevard Lumumba..." 
-                            value={searchAxis}
-                            onChange={e => setSearchQuery(e.target.value)}
-                            className="pl-10 h-12 rounded-xl bg-slate-50 border-none shadow-inner"
+          {/* 1. Hero Overview Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-3xl p-5 shadow-lg border border-slate-800 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase text-amber-400 tracking-wider">Grands Chantiers</span>
+                <Construction className="h-5 w-5 text-amber-400" />
+              </div>
+              <p className="text-3xl font-black">{MAJOR_PROJECTS.length} Projets</p>
+              <p className="text-xs text-slate-300 font-medium">en cours de modernisation urbaine</p>
+            </div>
+
+            <div className="bg-white rounded-3xl p-5 shadow-sm border border-slate-200/80 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Ponts & Échangeurs</span>
+                <Car className="h-5 w-5 text-primary" />
+              </div>
+              <p className="text-3xl font-black text-slate-900">{BRIDGES_AND_FLYOVERS.length} Ouvrages</p>
+              <p className="text-xs text-slate-500 font-medium">surveillés en continu par GPS et usagers</p>
+            </div>
+
+            <div className="bg-white rounded-3xl p-5 shadow-sm border border-slate-200/80 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Signalements Citoyens</span>
+                <Camera className="h-5 w-5 text-emerald-500" />
+              </div>
+              <p className="text-3xl font-black text-slate-900">{userReports?.length || 0} Photos</p>
+              <p className="text-xs text-slate-500 font-medium">preuves réelles postées par les conducteurs</p>
+            </div>
+          </div>
+
+          {/* 2. Interactive Section Switcher */}
+          <div className="flex gap-2 border-b border-slate-200 pb-2 overflow-x-auto scrollbar-none">
+            <button
+              onClick={() => setActiveTab('chantiers')}
+              className={cn(
+                "flex items-center gap-2 px-4 py-2 rounded-2xl text-xs font-black transition-all shrink-0",
+                activeTab === 'chantiers'
+                  ? "bg-slate-900 text-white shadow-md shadow-slate-900/20"
+                  : "bg-white text-slate-600 border border-slate-200/80 hover:bg-slate-100"
+              )}
+            >
+              <Construction className="h-4 w-4 text-amber-500" />
+              <span>Chantiers & Travaux ({MAJOR_PROJECTS.length})</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('ponts')}
+              className={cn(
+                "flex items-center gap-2 px-4 py-2 rounded-2xl text-xs font-black transition-all shrink-0",
+                activeTab === 'ponts'
+                  ? "bg-slate-900 text-white shadow-md shadow-slate-900/20"
+                  : "bg-white text-slate-600 border border-slate-200/80 hover:bg-slate-100"
+              )}
+            >
+              <Car className="h-4 w-4 text-primary" />
+              <span>Sauts-de-Mouton & Ponts ({BRIDGES_AND_FLYOVERS.length})</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('photos')}
+              className={cn(
+                "flex items-center gap-2 px-4 py-2 rounded-2xl text-xs font-black transition-all shrink-0",
+                activeTab === 'photos'
+                  ? "bg-slate-900 text-white shadow-md shadow-slate-900/20"
+                  : "bg-white text-slate-600 border border-slate-200/80 hover:bg-slate-100"
+              )}
+            >
+              <Camera className="h-4 w-4 text-emerald-500" />
+              <span>Preuves Photos du Terrain ({userReports?.length || 0})</span>
+            </button>
+          </div>
+
+          {/* TAB 1: Chantiers & Travaux */}
+          {activeTab === 'chantiers' && (
+            <div className="space-y-4">
+              <div className="relative">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <Input 
+                  placeholder="Filtrer par projet ou commune (ex: Matadi, UPN, Elengesa, Limete)..." 
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-11 h-12 bg-white border border-slate-200/80 shadow-sm rounded-2xl font-bold text-sm"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {filteredProjects.map((p) => (
+                  <Card key={p.id} className="rounded-3xl border border-slate-200/80 shadow-sm hover:shadow-md transition-all overflow-hidden bg-white">
+                    <CardContent className="p-5 space-y-4">
+                      
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="flex items-center gap-2 mb-1">
+                            <Badge className={cn("text-[9px] font-black uppercase px-2 py-0 border-none", p.tagColor)}>
+                              {p.tag}
+                            </Badge>
+                            <span className="text-[10px] font-bold text-slate-400">{p.district}</span>
+                          </div>
+                          <h3 className="text-base font-black text-slate-900 leading-snug">
+                            {p.title}
+                          </h3>
+                        </div>
+
+                        <div className="text-right shrink-0">
+                          <span className="text-base font-black text-amber-600">{p.progress}%</span>
+                          <p className="text-[9px] font-bold text-slate-400 uppercase">Avancement</p>
+                        </div>
+                      </div>
+
+                      {/* Progress bar */}
+                      <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                        <div 
+                          className="bg-gradient-to-r from-amber-500 to-orange-500 h-full rounded-full transition-all duration-500" 
+                          style={{ width: `${p.progress}%` }} 
                         />
-                    </div>
-                </div>
-            </CardHeader>
-            <CardContent className="px-8 pb-8">
-                {currentStats ? (
-                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {filteredStats.map((item: any, i: number) => {
-                            const loadFactor = Math.round((item.vehicleCount / item.capacity) * 100);
-                            return (
-                                <motion.div 
-                                    key={i} 
-                                    initial={{ opacity: 0, scale: 0.95 }}
-                                    animate={{ opacity: 1, scale: 1 }}
-                                    className="p-5 rounded-[1.5rem] bg-slate-50 border border-slate-100 hover:bg-white hover:shadow-lg transition-all group"
-                                >
-                                    <div className="flex justify-between items-start mb-4">
-                                        <div className="space-y-0.5">
-                                            <p className="font-black text-slate-900 leading-tight group-hover:text-primary">{item.road}</p>
-                                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{item.status}</p>
-                                        </div>
-                                        <Badge className={cn(
-                                            "text-[10px] font-black",
-                                            loadFactor > 90 ? "bg-red-500" : loadFactor > 70 ? "bg-orange-500" : "bg-emerald-500"
-                                        )}>
-                                            {loadFactor}%
-                                        </Badge>
-                                    </div>
-                                    
-                                    <div className="space-y-4">
-                                        <div className="flex justify-between items-end">
-                                            <div>
-                                                <p className="text-[10px] font-black text-slate-400 uppercase">Volume Actuel</p>
-                                                <p className="text-xl font-black text-slate-800">{item.vehicleCount} <span className="text-[10px] text-slate-400">V/H</span></p>
-                                            </div>
-                                            <div className="text-right">
-                                                <p className="text-[10px] font-black text-slate-400 uppercase">Capacité Max</p>
-                                                <p className="text-sm font-bold text-slate-500">{item.capacity}</p>
-                                            </div>
-                                        </div>
-                                        
-                                        <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden shadow-inner">
-                                            <div 
-                                                className={cn(
-                                                    "h-full transition-all duration-1000",
-                                                    loadFactor > 90 ? "bg-red-500" : loadFactor > 70 ? "bg-orange-500" : "bg-emerald-500"
-                                                )}
-                                                style={{ width: `${loadFactor}%` }}
-                                            />
-                                        </div>
-                                    </div>
-                                </motion.div>
-                            );
-                        })}
-                    </div>
-                ) : (
-                    <div className="py-20 text-center space-y-4">
-                        <Zap className="h-12 w-12 text-slate-200 mx-auto" />
-                        <p className="text-slate-400 font-bold italic">Lancez un audit pour peupler l'analyseur de flux.</p>
-                    </div>
-                )}
-            </CardContent>
-        </Card>
+                      </div>
 
-        <div className="grid lg:grid-cols-2 gap-8">
-          <Card className="border-none shadow-sm rounded-[2rem] overflow-hidden">
-            <CardHeader className="bg-white border-b border-slate-100 p-8">
-              <div className="flex justify-between items-center">
-                <div>
-                  <CardTitle className="text-xl font-black text-slate-900">Distribution du Volume</CardTitle>
-                  <CardDescription>Comparaison du débit réel par rapport à la capacité des axes</CardDescription>
-                </div>
-                <TrendingUp className="text-primary h-5 w-5 opacity-20" />
+                      {/* Info Details */}
+                      <div className="bg-slate-50 rounded-2xl p-3.5 space-y-2 text-xs border border-slate-100">
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400 font-bold">État des voies :</span>
+                          <span className="font-black text-slate-800">{p.lanes}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400 font-bold">Impact trafic :</span>
+                          <span className="font-black text-amber-700">{p.impact}</span>
+                        </div>
+                        <div className="border-t border-slate-200/60 pt-2 text-slate-600 font-medium">
+                          💡 <strong>Conseil K-Flow :</strong> {p.advice}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2 pt-1">
+                        <Button asChild size="sm" variant="outline" className="rounded-xl h-8 text-xs font-black border-slate-200">
+                          <Link href="/insights">Voir déviations</Link>
+                        </Button>
+                        <Button asChild size="sm" className="rounded-xl h-8 text-xs font-black bg-primary text-white gap-1 shadow-sm">
+                          <Link href="/k-flow-nav">
+                            <Navigation className="h-3.5 w-3.5" />
+                            <span>GPS</span>
+                          </Link>
+                        </Button>
+                      </div>
+
+                    </CardContent>
+                  </Card>
+                ))}
               </div>
-            </CardHeader>
-            <CardContent className="p-8 h-[400px]">
-              {currentStats ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={currentStats.axisStats} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.1} />
-                      <XAxis 
-                        dataKey="road" 
-                        axisLine={false} 
-                        tickLine={false} 
-                        fontSize={9} 
-                        fontWeight="bold" 
-                        tickFormatter={(v) => v.split(' ')[0] + '...'}
-                      />
-                      <YAxis axisLine={false} tickLine={false} fontSize={10} fontWeight="bold" />
-                      <Tooltip 
-                        cursor={{ fill: 'rgba(36, 142, 235, 0.05)' }} 
-                        contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                      />
-                      <Bar dataKey="vehicleCount" name="Volume Réel (V/H)" fill="#248eeb" radius={[6, 6, 0, 0]} barSize={25} />
-                      <Bar dataKey="capacity" name="Capacité Max" fill="#cbd5e1" radius={[6, 6, 0, 0]} barSize={25} />
-                    </BarChart>
-                  </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex items-center justify-center italic text-slate-300">Auditez le trafic pour charger les graphiques</div>
-              )}
-            </CardContent>
-          </Card>
+            </div>
+          )}
 
-          <Card className="border-none shadow-sm rounded-[2rem] overflow-hidden">
-            <CardHeader className="bg-white border-b border-slate-100 p-8">
-              <CardTitle className="text-xl font-black text-slate-900">Indice de Congestion (Historique)</CardTitle>
-              <CardDescription>Évolution de la saturation pour la planification urbaine</CardDescription>
-            </CardHeader>
-            <CardContent className="p-8 h-[400px]">
-              {trendsData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={trendsData}>
-                      <defs>
-                        <linearGradient id="colorSat" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#248eeb" stopOpacity={0.3}/>
-                          <stop offset="95%" stopColor="#248eeb" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.1} />
-                      <XAxis dataKey="date" axisLine={false} tickLine={false} fontSize={10} fontWeight="bold" />
-                      <YAxis hide />
-                      <Tooltip 
-                        contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                      />
-                      <Area 
-                        type="monotone" 
-                        dataKey="saturation" 
-                        stroke="#248eeb" 
-                        strokeWidth={4} 
-                        fillOpacity={1} 
-                        fill="url(#colorSat)" 
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center gap-4 text-center px-10">
-                    <History className="h-12 w-12 text-slate-200" />
-                    <p className="text-sm font-medium text-slate-400 italic">Collectez des données sur plusieurs jours pour analyser les tendances structurelles.</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+          {/* TAB 2: Sauts-de-Mouton & Ponts */}
+          {activeTab === 'ponts' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                {BRIDGES_AND_FLYOVERS.map((b, i) => (
+                  <div key={i} className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm space-y-2 flex flex-col justify-between hover:shadow-md transition-all">
+                    <div>
+                      <div className="flex items-start justify-between gap-1 mb-1">
+                        <h4 className="text-xs font-black text-slate-900 leading-snug">{b.name}</h4>
+                        <span className={cn(
+                          "w-2.5 h-2.5 rounded-full shrink-0 mt-0.5",
+                          b.status === 'FLUIDE' ? 'bg-emerald-500' :
+                          b.status === 'MODÉRÉ' ? 'bg-amber-500' :
+                          b.status === 'DENSE' ? 'bg-orange-500' : 'bg-red-500'
+                        )} />
+                      </div>
+                      <p className="text-[11px] text-slate-500 font-medium leading-tight">
+                        {b.note}
+                      </p>
+                    </div>
 
-        <div className="grid md:grid-cols-2 gap-8">
-          <Card className="border-none shadow-sm rounded-[2rem] bg-white group hover:shadow-xl transition-all border-l-4 border-l-red-500">
-            <CardHeader className="p-8 pb-4">
-              <div className="bg-red-500/10 p-3 rounded-2xl w-fit mb-4">
-                <AlertTriangle className="text-red-600 h-6 w-6" />
-              </div>
-              <CardTitle className="text-lg font-black text-slate-900">Sécurité : Risques de Collision</CardTitle>
-              <CardDescription className="text-xs">Zones où le volume dépasse le seuil de sécurité structurel.</CardDescription>
-            </CardHeader>
-            <CardContent className="px-8 pb-8 space-y-4">
-              {criticalAxes.length > 0 ? criticalAxes.map((item: any, i: number) => (
-                <div key={i} className="flex items-center justify-between p-4 bg-red-50/50 rounded-2xl border border-red-100">
-                  <div className="space-y-1">
-                    <p className="text-xs font-black text-red-700 uppercase">Alerte : {item.road}</p>
-                    <p className="text-[10px] font-bold text-red-600/70">
-                      Ratio volume/sécurité critique détecté (Volume &gt; {item.capacity * 0.9} v/h). 
-                      Installation prioritaire de signalisation recommandée.
-                    </p>
+                    <div className="border-t border-slate-100 pt-2 flex items-center justify-between">
+                      <Badge className={cn(
+                        "text-[8px] font-black uppercase border-none px-1.5 py-0",
+                        b.status === 'FLUIDE' ? 'bg-emerald-100 text-emerald-700' :
+                        b.status === 'MODÉRÉ' ? 'bg-amber-100 text-amber-700' :
+                        'bg-red-100 text-red-700'
+                      )}>
+                        {b.status}
+                      </Badge>
+                      {b.delay > 0 ? (
+                        <span className="text-[10px] font-black text-red-600">+{b.delay}m</span>
+                      ) : (
+                        <span className="text-[10px] font-black text-emerald-600">Fluide</span>
+                      )}
+                    </div>
                   </div>
-                  <ShieldAlert className="text-red-500 h-5 w-5 shrink-0" />
-                </div>
-              )) : (
-                  <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100 flex items-center gap-4">
-                      <div className="bg-emerald-500 p-2 rounded-xl text-white"><Zap className="h-4 w-4" /></div>
-                      <p className="text-xs font-bold text-emerald-800 uppercase">Aucun dépassement de capacité critique.</p>
-                  </div>
-              )}
-            </CardContent>
-          </Card>
+                ))}
+              </div>
+            </div>
+          )}
 
-          <Card className="border-none shadow-sm rounded-[2rem] bg-white group hover:shadow-xl transition-all border-l-4 border-l-primary">
-            <CardHeader className="p-8 pb-4">
-              <div className="bg-primary/10 p-3 rounded-2xl w-fit mb-4">
-                <Info className="text-primary h-6 w-6" />
-              </div>
-              <CardTitle className="text-lg font-black text-slate-900">Aide au Budgeting (ROI)</CardTitle>
-              <CardDescription className="text-xs">Priorisation des investissements basée sur l'usage réel.</CardDescription>
-            </CardHeader>
-            <CardContent className="px-8 pb-8">
-              <div className="p-6 bg-slate-50 rounded-[1.5rem] border border-slate-100 space-y-4">
-                <p className="text-[11px] font-medium text-slate-600 leading-relaxed italic">
-                    "L'analyse des Vehicle Counts montre que 35% du budget de maintenance devrait être alloué aux axes de Limete et Masina pour maximiser l'impact sur la fluidité globale."
-                </p>
-                <div className="flex items-center justify-between pt-4 border-t border-slate-200">
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Score de Priorité maintenance</span>
-                    <span className="text-xs font-black text-primary">TRÈS ÉLEVÉ</span>
+          {/* TAB 3: Photos et Preuves Terrain */}
+          {activeTab === 'photos' && (
+            <div className="space-y-4">
+              {isReportsLoading ? (
+                <div className="flex items-center justify-center py-16 text-slate-400 font-bold text-xs">
+                  Chargement des photos citoyennes...
                 </div>
-              </div>
-            </CardContent>
-          </Card>
+              ) : userReports && userReports.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                  {userReports.map((r) => (
+                    <Card key={r.id} className="rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden bg-white group hover:shadow-md transition-all">
+                      {r.picture ? (
+                        <div className="w-full h-44 bg-slate-100 relative overflow-hidden">
+                          <img 
+                            src={r.picture} 
+                            alt={r.location} 
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
+                          />
+                          <div className="absolute top-3 left-3">
+                            <Badge className="bg-black/60 backdrop-blur-md text-white font-black text-[9px] uppercase border-none">
+                              Preuve Photo
+                            </Badge>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="w-full h-28 bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-slate-400">
+                          <Camera className="h-8 w-8 opacity-40" />
+                        </div>
+                      )}
+
+                      <CardContent className="p-4 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-black text-slate-900 truncate">{r.location}</p>
+                          <Badge variant="outline" className="text-[8px] font-black uppercase text-primary border-primary/20">
+                            {r.severity || 'Signalé'}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-slate-600 font-medium line-clamp-2">
+                          {r.description}
+                        </p>
+                        <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-[10px] text-slate-400 font-bold">
+                          <span>Par {r.user || 'Conducteur'}</span>
+                          <span>{r.createdAt?.toDate ? format(r.createdAt.toDate(), 'dd MMM, HH:mm', { locale: fr }) : 'Récemment'}</span>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-16 space-y-3 bg-white rounded-3xl border border-dashed border-slate-200">
+                  <Camera className="h-10 w-10 text-slate-300 mx-auto" />
+                  <p className="text-slate-500 font-bold text-sm">Aucune photo pour le moment.</p>
+                  <Button asChild size="sm" className="bg-primary text-white font-black rounded-xl">
+                    <Link href="/signaler-embouteillage">Soyez le premier à ajouter une photo</Link>
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 3. Illustrated Guide : Causes of Congestion in Kinshasa */}
+          <div className="space-y-3 pt-4">
+            <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">
+              <HelpCircle className="h-4 w-4 text-primary" /> Comprendre les Causes des Bouchons à Kinshasa
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {COMMON_HAZARDS.map((h, i) => {
+                const Icon = h.icon;
+                return (
+                  <div key={i} className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-sm space-y-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
+                      <Icon className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-black text-slate-900 mb-1">{h.title}</h4>
+                      <p className="text-[11px] text-slate-500 font-medium leading-snug mb-2">{h.desc}</p>
+                      <p className="text-[10px] text-amber-700 font-bold bg-amber-50 rounded-lg p-1.5">
+                        💡 {h.advice}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
         </div>
-      </motion.div>
+      </div>
     </div>
-  );
-}
-
-function StatCard({ title, value, subValue, icon: Icon, color }: { title: string, value: string, subValue: string, icon: any, color: string }) {
-  return (
-    <Card className="border-none shadow-sm rounded-[2rem] bg-white overflow-hidden relative group">
-      <CardContent className="p-8">
-        <div className="flex justify-between items-start">
-          <div className="space-y-1">
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{title}</p>
-            <p className="text-4xl font-black text-slate-900 tracking-tighter">{value}</p>
-            <p className="text-[10px] font-bold text-slate-500 leading-tight pr-4">{subValue}</p>
-          </div>
-          <div className={cn("p-4 rounded-2xl shadow-lg transition-transform group-hover:scale-110", color)}>
-            <Icon className="text-white h-6 w-6" />
-          </div>
-        </div>
-      </CardContent>
-      <div className={cn("absolute bottom-0 left-0 h-1 transition-all w-full", color)} />
-    </Card>
   );
 }
