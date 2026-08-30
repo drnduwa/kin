@@ -3,6 +3,7 @@ import './globals.css';
 import { Toaster } from "@/components/ui/toaster"
 import { FirebaseClientProvider } from '@/firebase';
 import { InAppPopupNotifications } from '@/components/in-app-popup-notifications';
+import { TrafficSentinelRadar } from '@/components/traffic-sentinel-radar';
 
 export const viewport: Viewport = {
   themeColor: '#248eeb',
@@ -114,6 +115,7 @@ export default function RootLayout({
       <body className="font-body antialiased">
         <FirebaseClientProvider>
           <InAppPopupNotifications />
+          <TrafficSentinelRadar />
           {children}
           <Toaster />
         </FirebaseClientProvider>
