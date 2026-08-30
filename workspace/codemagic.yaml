@@ -46,9 +46,10 @@ workflows:
           sed -i '' "s/MARKETING_VERSION = .*;/MARKETING_VERSION = $VERSION;/g" ios/App/App.xcodeproj/project.pbxproj
           # Mise à jour du numéro de build (incrémental via Codemagic)
           sed -i '' "s/CURRENT_PROJECT_VERSION = .*;/CURRENT_PROJECT_VERSION = $BUILD_NUMBER;/g" ios/App/App.xcodeproj/project.pbxproj
-      - name: Set Bundle ID
+      - name: Set Bundle ID and Minimum OS Version
         script: |
           sed -i '' "s/PRODUCT_BUNDLE_IDENTIFIER = .*;/PRODUCT_BUNDLE_IDENTIFIER = $BUNDLE_ID;/g" ios/App/App.xcodeproj/project.pbxproj
+          sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = .*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g" ios/App/App.xcodeproj/project.pbxproj
       - name: Set up keychain
         script: keychain initialize
       - name: Add certificate to keychain
