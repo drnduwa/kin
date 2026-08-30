@@ -16,7 +16,10 @@ import {
   AlertCircle,
   Radar,
   Flame,
-  Sparkles
+  Sparkles,
+  Share2,
+  MapPin,
+  MessageCircle
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -73,12 +76,17 @@ export default function TrafficCheck() {
     setForecast(null);
     setIsLoading(true);
     setIsAutoAlert(isAuto);
-    if (isAuto && address) {
+    if (address) {
       setAutoAxisName(address);
+    } else if (search) {
+      setAutoAxisName(search);
     }
     try {
       const data = await checkTrafficAction({ ...coords, address });
       setResult(data);
+      if (data.road && !address) {
+        setAutoAxisName(data.road);
+      }
       const fData = await getTrafficForecastAction(address || data.road || "Kinshasa");
       setForecast(fData);
       if (mapRef.current) {
@@ -100,7 +108,21 @@ export default function TrafficCheck() {
     } finally {
       setIsLoading(false);
     }
-  }, [toast]);
+  }, [search, toast]);
+
+  const currentRouteName = autoAxisName || result?.road || search || "Axe de Kinshasa";
+
+  const handleShareWhatsApp = () => {
+    if (!result) return;
+    const statusLabel = STATUS_CONFIG[result.status as keyof typeof STATUS_CONFIG]?.label || result.status;
+    const statusIcon = STATUS_CONFIG[result.status as keyof typeof STATUS_CONFIG]?.icon || "🚦";
+    const delayText = result.delay > 0 ? `+${result.delay} min` : "Fluide";
+    
+    const message = `🚦 *INFO TRAFIC KINSHASA - KINSHASA FLOW* 🚦\n\n📍 *Axe :* ${currentRouteName}\n${statusIcon} *Statut :* ${statusLabel} (${delayText})\n💬 *Verdict :* "${result.verdict}"\n🇨🇩 *Lingala :* ${result.lingala || "Tosa trafic!"}\n\n📱 *Vérifiez l'état de vos routes en temps réel sur :*\n👉 https://kinshasaflow.online/verifier-trafic`;
+
+    const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
+    window.open(whatsappUrl, '_blank');
+  };
 
   const loadRandomHotspot = useCallback((currentIdx?: number) => {
     let nextIdx = Math.floor(Math.random() * HOTSPOT_CANDIDATES.length);
@@ -255,11 +277,22 @@ export default function TrafficCheck() {
               >
                 <div className={cn("p-5 sm:p-6 md:p-8 text-white relative", STATUS_CONFIG[result.status as keyof typeof STATUS_CONFIG]?.color)}>
                   <button onClick={() => { setResult(null); setIsAutoAlert(false); }} className="absolute top-4 right-4 text-white/70 hover:text-white p-1.5 rounded-full bg-black/10 hover:bg-black/20 transition-colors"><X className="h-5 w-5" /></button>
-                  <div className="space-y-2 md:space-y-4 relative z-10 pr-8">
-                    <Badge className="bg-white/20 border-white/30 text-white font-bold mb-1 md:mb-2 text-[10px] md:text-xs">
-                      {isAutoAlert ? "POINT CHAUD EN DIRECT" : "VERDICT K-FLOW"}
-                    </Badge>
-                    <div className="flex items-center gap-2.5 md:gap-3">
+                  <div className="space-y-2 md:space-y-3 relative z-10 pr-8">
+                    <div className="flex items-center gap-2">
+                      <Badge className="bg-white/20 border-white/30 text-white font-bold text-[10px] md:text-xs">
+                        {isAutoAlert ? "POINT CHAUD EN DIRECT" : "VERDICT K-FLOW"}
+                      </Badge>
+                    </div>
+
+                    {/* Road Name Prominently Displayed */}
+                    <div className="flex items-center gap-2 bg-black/20 backdrop-blur-md px-3.5 py-1.5 rounded-2xl w-fit border border-white/20">
+                      <MapPin className="h-4 w-4 text-white shrink-0" />
+                      <span className="text-sm sm:text-base font-black text-white leading-tight">
+                        {currentRouteName}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2.5 md:gap-3 pt-1">
                       <span className="text-3xl md:text-4xl">{STATUS_CONFIG[result.status as keyof typeof STATUS_CONFIG]?.icon}</span>
                       <h2 className="text-2xl md:text-3xl font-black uppercase tracking-tighter leading-none">
                         {STATUS_CONFIG[result.status as keyof typeof STATUS_CONFIG]?.label}
@@ -331,18 +364,30 @@ export default function TrafficCheck() {
                 </div>
 
                 <div className="p-4 sm:p-5 md:p-6 bg-slate-50 border-t flex flex-col gap-2.5 sm:gap-3">
-                  <Button asChild variant="outline" className="h-12 sm:h-14 rounded-2xl border-2 font-black text-xs uppercase tracking-widest gap-2">
-                    <Link href="/signaler-embouteillage">
-                      <RefreshCw className="h-4 w-4" />
-                      Signaler un changement
-                    </Link>
+                  
+                  {/* WhatsApp Share Button */}
+                  <Button 
+                    onClick={handleShareWhatsApp}
+                    className="h-12 sm:h-14 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm uppercase tracking-wider gap-2 shadow-xl shadow-emerald-600/20"
+                  >
+                    <MessageCircle className="h-5 w-5 fill-current" />
+                    <span>Partager ce Trafic sur WhatsApp</span>
                   </Button>
-                  <Button asChild className="h-12 sm:h-14 rounded-2xl font-black text-xs uppercase tracking-widest gap-2 shadow-xl shadow-primary/20">
-                    <Link href="/k-flow-nav">
-                      <Navigation className="h-4 w-4" />
-                      Lancer le guidage
-                    </Link>
-                  </Button>
+
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <Button asChild variant="outline" className="h-12 rounded-2xl border-2 font-black text-xs uppercase tracking-wider gap-1.5">
+                      <Link href="/signaler-embouteillage">
+                        <RefreshCw className="h-4 w-4" />
+                        <span>Signaler</span>
+                      </Link>
+                    </Button>
+                    <Button asChild className="h-12 rounded-2xl font-black text-xs uppercase tracking-wider gap-1.5 shadow-lg shadow-primary/20">
+                      <Link href="/k-flow-nav">
+                        <Navigation className="h-4 w-4" />
+                        <span>GPS Nav</span>
+                      </Link>
+                    </Button>
+                  </div>
                 </div>
               </motion.div>
             )}
