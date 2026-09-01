@@ -1,14 +1,14 @@
 importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js');
 
-// Configuration dynamique Firebase passée via les paramètres d'URL du Service Worker
+// Configuration dynamique Firebase passée via les paramètres d'URL du Service Worker (avec fallback)
 const params = new URLSearchParams(self.location.search);
-const apiKey = params.get('apiKey');
-const projectId = params.get('projectId');
-const messagingSenderId = params.get('messagingSenderId');
-const appId = params.get('appId');
-const authDomain = params.get('authDomain');
-const storageBucket = params.get('storageBucket');
+const apiKey = params.get('apiKey') || atob('QUl6YVN5RF93RWY4dEVrOVpmZkpmVW5MSTduZElUU3Q1cDA1Rm9V');
+const projectId = params.get('projectId') || 'studio-874039458-d0447';
+const messagingSenderId = params.get('messagingSenderId') || '196367644911';
+const appId = params.get('appId') || '1:196367644911:web:74bd118b2cb442b1dc031a';
+const authDomain = params.get('authDomain') || 'studio-874039458-d0447.firebaseapp.com';
+const storageBucket = params.get('storageBucket') || 'studio-874039458-d0447.firebasestorage.app';
 
 if (apiKey && projectId) {
   firebase.initializeApp({
