@@ -13,9 +13,15 @@
 # production
 /build
 
-# misc
+# misc & secrets
 .DS_Store
 *.pem
+*.key
+*.certSigningRequest
+*.p12
+*.cer
+*.mobileprovision
+.vscode/
 
 # debug
 npm-debug.log*

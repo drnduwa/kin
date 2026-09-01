@@ -7,6 +7,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Bell, Loader2, Sparkles, CheckCircle2, X } from 'lucide-react';
 import { saveSubscription, saveFCMToken } from '@/lib/push';
 import { useFirebase } from '@/firebase';
+import { firebaseConfig } from '@/firebase/config';
 import { getToken, onMessage } from 'firebase/messaging';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -54,7 +55,15 @@ export function NotificationPermission() {
 
     try {
       // 1. Enregistrement explicite du Service Worker pour FCM
-      const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
+      const swParams = new URLSearchParams({
+        apiKey: firebaseConfig.apiKey || '',
+        projectId: firebaseConfig.projectId || '',
+        messagingSenderId: firebaseConfig.messagingSenderId || '',
+        appId: firebaseConfig.appId || '',
+        authDomain: firebaseConfig.authDomain || '',
+        storageBucket: firebaseConfig.storageBucket || '',
+      });
+      const registration = await navigator.serviceWorker.register(`/firebase-messaging-sw.js?${swParams.toString()}`, {
         scope: '/firebase-cloud-messaging-push-scope'
       });
       

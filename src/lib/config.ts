@@ -3,9 +3,8 @@
  */
 
 export const CONFIG = {
-  // Clé API "Kinshasaflow 3" configurée par l'utilisateur. 
-  // On force l'usage de cette clé pour éviter les conflits AuthFailure.
-  GOOGLE_MAPS_API_KEY: "AIzaSyBgpYk0GoVsX24X5Bq1oKud0NfQUurRPFM",
+  // Clé API injectée depuis l'environnement
+  GOOGLE_MAPS_API_KEY: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "",
   KINSHASA_BOUNDS: {
     north: -4.240,
     south: -4.516,

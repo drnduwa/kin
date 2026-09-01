@@ -1,27 +1,38 @@
 importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js');
 
-firebase.initializeApp({
-  apiKey: "AIzaSyD_wEf8tEk9ZffJfUnLI7ndITSt5p05FoU",
-  authDomain: "studio-874039458-d0447.firebaseapp.com",
-  projectId: "studio-874039458-d0447",
-  storageBucket: "studio-874039458-d0447.firebasestorage.app",
-  messagingSenderId: "196367644911",
-  appId: "1:196367644911:web:74bd118b2cb442b1dc031a"
-});
+// Configuration dynamique Firebase passée via les paramètres d'URL du Service Worker
+const params = new URLSearchParams(self.location.search);
+const apiKey = params.get('apiKey');
+const projectId = params.get('projectId');
+const messagingSenderId = params.get('messagingSenderId');
+const appId = params.get('appId');
+const authDomain = params.get('authDomain');
+const storageBucket = params.get('storageBucket');
 
-const messaging = firebase.messaging();
+if (apiKey && projectId) {
+  firebase.initializeApp({
+    apiKey,
+    authDomain: authDomain || `${projectId}.firebaseapp.com`,
+    projectId,
+    storageBucket: storageBucket || `${projectId}.firebasestorage.app`,
+    messagingSenderId: messagingSenderId || '',
+    appId: appId || ''
+  });
 
-messaging.onBackgroundMessage((payload) => {
-  console.log('[firebase-messaging-sw.js] Message reçu en arrière-plan ', payload);
-  const notificationTitle = payload.notification?.title || 'Kinshasa Flow';
-  const notificationOptions = {
-    body: payload.notification?.body || 'Mise à jour du trafic disponible.',
-    icon: '/icon-192x192.png',
-    badge: '/icon-192x192.png',
-    tag: 'traffic-alert',
-    renotify: true
-  };
+  const messaging = firebase.messaging();
 
-  self.registration.showNotification(notificationTitle, notificationOptions);
-});
+  messaging.onBackgroundMessage((payload) => {
+    console.log('[firebase-messaging-sw.js] Message reçu en arrière-plan ', payload);
+    const notificationTitle = payload.notification?.title || 'Kinshasa Flow';
+    const notificationOptions = {
+      body: payload.notification?.body || 'Mise à jour du trafic disponible.',
+      icon: '/icon-192x192.png',
+      badge: '/icon-192x192.png',
+      tag: 'traffic-alert',
+      renotify: true
+    };
+
+    self.registration.showNotification(notificationTitle, notificationOptions);
+  });
+}
