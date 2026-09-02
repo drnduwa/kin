@@ -2,10 +2,69 @@
 
 import { AppShell } from "@/components/app-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Shield, FileText, Scale, Info, MapPin, CreditCard, Lock } from "lucide-react";
+import { Shield, FileText, Scale, Info, MapPin, CreditCard, Lock, Trash2, ShieldAlert, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
+import { useUser, useFirebase } from "@/firebase";
+import { deleteUser, signOut } from "firebase/auth";
+import { doc, deleteDoc } from "firebase/firestore";
+import { useToast } from "@/hooks/use-toast";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 export default function PrivacyPage() {
+  const { user } = useUser();
+  const { auth, firestore } = useFirebase();
+  const { toast } = useToast();
+  const router = useRouter();
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleDeleteAccount = async () => {
+    if (!auth.currentUser || !user) return;
+    
+    setIsDeleting(true);
+    try {
+      const userDocRef = doc(firestore, "users", user.uid);
+      await deleteDoc(userDocRef);
+      await deleteUser(auth.currentUser);
+
+      toast({
+        title: "Compte supprimé",
+        description: "Toutes vos données ont été définitivement effacées.",
+      });
+      router.push('/');
+    } catch (error: any) {
+      console.error("Error deleting account:", error);
+      if (error.code === 'auth/requires-recent-login') {
+        toast({
+          title: "Action requise",
+          description: "Veuillez vous reconnecter pour confirmer la suppression.",
+          variant: "destructive"
+        });
+        await signOut(auth);
+        router.push('/login');
+      } else {
+        toast({
+          title: "Erreur",
+          description: "Impossible de supprimer le compte.",
+          variant: "destructive"
+        });
+      }
+    } finally {
+      setIsDeleting(false);
+    }
+  };
   return (
     <AppShell>
       <div className="w-full h-full overflow-y-auto bg-slate-50/50 pb-20">
@@ -120,9 +179,45 @@ export default function PrivacyPage() {
                     <p className="text-sm font-medium text-slate-700 leading-relaxed">
                       Conformément aux directives de confidentialité Apple (Guideline 5.1.1) et à la réglementation sur les données personnelles, tout utilisateur peut supprimer définitivement son compte et effacer l'intégralité de ses données personnelles (nom, email, photo, transactions Stars, signalements) à tout moment.
                     </p>
-                    <p className="text-xs text-slate-600 font-bold">
-                      Comment procéder : Cliquez sur votre photo de profil en haut à droite, puis sélectionnez « <strong>Supprimer mon compte</strong> » et confirmez votre choix.
-                    </p>
+                    
+                    {user ? (
+                      <div className="pt-2">
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="destructive" className="rounded-xl font-black gap-2 h-11 shadow-md shadow-red-500/20">
+                              <Trash2 className="h-4 w-4" />
+                              <span>Supprimer définitivement mon compte maintenant</span>
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent className="rounded-3xl">
+                            <AlertDialogHeader>
+                              <AlertDialogTitle className="flex items-center gap-2">
+                                <ShieldAlert className="text-destructive h-5 w-5" />
+                                Action Irréversible
+                              </AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Êtes-vous sûr de vouloir supprimer votre compte Kinshasa Flow ({user.email}) ? Toutes vos stars, signalements et préférences seront définitivement effacés de nos serveurs.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel className="rounded-xl">Annuler</AlertDialogCancel>
+                              <AlertDialogAction 
+                                onClick={handleDeleteAccount} 
+                                className="bg-destructive hover:bg-destructive/90 rounded-xl"
+                                disabled={isDeleting}
+                              >
+                                {isDeleting ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : null}
+                                Confirmer la suppression
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-600 font-bold">
+                        Comment procéder : Connectez-vous à votre compte, puis cliquez sur votre photo de profil en haut à droite ou revenez sur cette page pour sélectionner « <strong>Supprimer mon compte</strong> ».
+                      </p>
+                    )}
                   </div>
                 </div>
 

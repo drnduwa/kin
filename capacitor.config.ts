@@ -8,9 +8,13 @@ const config: CapacitorConfig = {
     url: 'https://kinshasaflow.online',
     allowNavigation: [
       'kinshasaflow.online',
+      '*.kinshasaflow.online',
       '*.firebaseapp.com',
       '*.google.com',
-      '*.googleapis.com'
+      '*.googleapis.com',
+      'accounts.google.com',
+      'appleid.apple.com',
+      '*.apple.com'
     ],
     cleartext: true
   },

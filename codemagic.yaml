@@ -50,6 +50,13 @@ workflows:
         script: |
           sed -i '' "s/PRODUCT_BUNDLE_IDENTIFIER = .*;/PRODUCT_BUNDLE_IDENTIFIER = $BUNDLE_ID;/g" ios/App/App.xcodeproj/project.pbxproj
           sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = .*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g" ios/App/App.xcodeproj/project.pbxproj
+          # Injection des permissions de confidentialité iOS (Caméra, Photos, Micro, Localisation)
+          PLIST="ios/App/App/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'Kinshasa Flow utilise votre appareil photo pour photographier et signaler les embouteillages en direct.'" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSCameraUsageDescription 'Kinshasa Flow utilise votre appareil photo pour photographier et signaler les embouteillages en direct.'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string 'Kinshasa Flow accède à votre galerie pour vous permettre de joindre des photos de signalement du trafic.'" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryUsageDescription 'Kinshasa Flow accède à votre galerie pour vous permettre de joindre des photos de signalement du trafic.'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string 'Kinshasa Flow peut enregistrer des photos du trafic dans votre galerie.'" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryAddUsageDescription 'Kinshasa Flow peut enregistrer des photos du trafic dans votre galerie.'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'Kinshasa Flow utilise le microphone pour enregistrer des messages vocaux dans le chat communautaire.'" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSMicrophoneUsageDescription 'Kinshasa Flow utilise le microphone pour enregistrer des messages vocaux dans le chat communautaire.'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string 'Kinshasa Flow a besoin de votre position pour afficher le trafic autour de vous et vous guider en temps réel.'" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :NSLocationWhenInUseUsageDescription 'Kinshasa Flow a besoin de votre position pour afficher le trafic autour de vous et vous guider en temps réel.'" "$PLIST"
       - name: Set up keychain
         script: keychain initialize
       - name: Add certificate to keychain

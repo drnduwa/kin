@@ -151,6 +151,7 @@ function ProtectedContent({ children }: { children: React.ReactNode }) {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { user } = useUser();
   const { firestore } = useFirebase();
   const { toast } = useToast();
@@ -199,12 +200,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!profile || !subSettings) return;
+    const isIOS = typeof window !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+    if (isIOS) return; // Mode 100% gratuit et civique sur iOS pour conformité Apple Guideline 3.1.1
+
     if (subSettings.mode === 'stars') {
       if (profile.currentStarsBalance < 5 && pathname !== '/mes-stars' && !['/', '/privacy'].includes(pathname)) {
         toast({
           title: 'Solde faible',
           variant: 'destructive',
-          action: <ToastAction altText="Recharger" onClick={() => window.location.href = '/mes-stars'}>Recharger</ToastAction>,
+          action: <ToastAction altText="Recharger" onClick={() => router.push('/mes-stars')}>Recharger</ToastAction>,
         });
       }
     } else {
@@ -213,11 +217,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         toast({
           title: 'Abonnement expiré',
           variant: 'destructive',
-          action: <ToastAction altText="S'abonner" onClick={() => window.location.href = '/mes-stars'}>S'abonner</ToastAction>,
+          action: <ToastAction altText="S'abonner" onClick={() => router.push('/mes-stars')}>S'abonner</ToastAction>,
         });
       }
     }
-  }, [profile, subSettings, pathname, toast]);
+  }, [profile, subSettings, pathname, toast, router]);
 
   const isAdmin = user?.email === 'drnduwa@gmail.com';
   const isPartnerAdmin = user?.email === 'contact.congonamotema@gmail.com' || isAdmin;
@@ -455,6 +459,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   <Link href="/guide" className="font-bold flex items-center gap-3 h-11 px-4 rounded-xl text-amber-600 dark:text-amber-400">
                     <HelpCircle className="h-5 w-5 text-amber-500" />
                     <span>Guide & Aide</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/privacy'} className={cn(pathname === '/privacy' && "bg-white/10")}>
+                  <Link href="/privacy" className="font-bold flex items-center gap-3 h-11 px-4 rounded-xl text-slate-600 dark:text-slate-300">
+                    <Shield className="h-5 w-5 text-slate-500" />
+                    <span>Confidentialité & Données</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
