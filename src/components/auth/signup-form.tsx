@@ -47,9 +47,16 @@ export function SignupForm() {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
     const [isAppleSubmitting, setIsAppleSubmitting] = useState(false);
+    const [isIOS, setIsIOS] = useState(false);
     
     const { auth, firestore } = useFirebase();
     const { user, isUserLoading } = useUser();
+
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            setIsIOS(/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+        }
+    }, []);
 
     useEffect(() => {
         if (user && user.emailVerified) {
@@ -319,21 +326,25 @@ export function SignupForm() {
                 </TabsContent>
                 </Tabs>
                 
-                 <div className="relative my-6 md:my-8">
-                    <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
-                    <div className="relative flex justify-center text-[10px] uppercase"><span className="bg-white px-4 text-muted-foreground font-black tracking-[0.2em]">Ou s'inscrire avec</span></div>
-                </div>
-                
-                <div className="grid grid-cols-1 gap-3">
-                  <Button variant="outline" className="w-full h-12 rounded-2xl font-bold border-2 transition-all hover:bg-slate-50 active:scale-95 flex items-center justify-center text-sm" onClick={onGoogleSignIn} disabled={isGoogleSubmitting}>
-                      {isGoogleSubmitting ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <GoogleIcon />}
-                      <span>Continuer avec Google</span>
-                  </Button>
-                  <Button variant="default" className="w-full h-12 rounded-2xl font-bold bg-black text-white hover:bg-black/90 active:scale-95 flex items-center justify-center text-sm shadow-sm" onClick={onAppleSignIn} disabled={isAppleSubmitting}>
-                      {isAppleSubmitting ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <AppleOfficialLogo />}
-                      <span>Continuer avec Apple</span>
-                  </Button>
-                </div>
+                {!isIOS && (
+                  <>
+                    <div className="relative my-6 md:my-8">
+                        <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
+                        <div className="relative flex justify-center text-[10px] uppercase"><span className="bg-white px-4 text-muted-foreground font-black tracking-[0.2em]">Ou s'inscrire avec</span></div>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 gap-3">
+                      <Button variant="outline" className="w-full h-12 rounded-2xl font-bold border-2 transition-all hover:bg-slate-50 active:scale-95 flex items-center justify-center text-sm" onClick={onGoogleSignIn} disabled={isGoogleSubmitting}>
+                          {isGoogleSubmitting ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <GoogleIcon />}
+                          <span>Continuer avec Google</span>
+                      </Button>
+                      <Button variant="default" className="w-full h-12 rounded-2xl font-bold bg-black text-white hover:bg-black/90 active:scale-95 flex items-center justify-center text-sm shadow-sm" onClick={onAppleSignIn} disabled={isAppleSubmitting}>
+                          {isAppleSubmitting ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <AppleOfficialLogo />}
+                          <span>Continuer avec Apple</span>
+                      </Button>
+                    </div>
+                  </>
+                )}
             </CardContent>
              <CardFooter className="flex justify-center border-t bg-slate-50 p-6">
                 <p className="text-sm text-muted-foreground font-medium">

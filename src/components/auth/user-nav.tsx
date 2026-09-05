@@ -54,6 +54,7 @@ export function UserNav() {
     const router = useRouter();
 
     const [dialogOpen, setDialogOpen] = useState(false);
+    const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
     const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -178,50 +179,52 @@ export function UserNav() {
                         </DropdownMenuLabel>
                         <DropdownMenuSeparator />
                         <DropdownMenuGroup>
-                           <DropdownMenuItem onSelect={() => setDialogOpen(true)}>
+                            <DropdownMenuItem onSelect={() => router.push('/profil')} className="cursor-pointer font-bold">
                                 <User className="mr-2 h-4 w-4" />
+                                <span>Mon Profil & Compte</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => setDialogOpen(true)} className="cursor-pointer">
+                                <ImageIcon className="mr-2 h-4 w-4" />
                                 <span>Ma Photo de Profil</span>
                             </DropdownMenuItem>
                         </DropdownMenuGroup>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={handleSignOut} className="text-slate-600">
+                        <DropdownMenuItem onClick={handleSignOut} className="text-slate-600 cursor-pointer">
                             <LogOut className="mr-2 h-4 w-4" />
                             <span>Se déconnecter</span>
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <DropdownMenuItem onSelect={(e) => e.preventDefault()} className="text-destructive focus:bg-destructive/10">
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                <span>Supprimer mon compte</span>
-                            </DropdownMenuItem>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent className="rounded-3xl">
-                            <AlertDialogHeader>
-                              <AlertDialogTitle className="flex items-center gap-2">
-                                <ShieldAlert className="text-destructive h-5 w-5" />
-                                Action Irréversible
-                              </AlertDialogTitle>
-                              <AlertDialogDescription>
-                                Êtes-vous sûr de vouloir supprimer votre compte Kinshasa Flow ? Toutes vos stars, signalements et préférences seront définitivement effacés conformément aux directives RGPD/RDC.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel className="rounded-xl">Annuler</AlertDialogCancel>
-                              <AlertDialogAction 
-                                onClick={handleDeleteAccount} 
-                                className="bg-destructive hover:bg-destructive/90 rounded-xl"
-                                disabled={isDeleting}
-                              >
-                                {isDeleting ? <Loader2 className="animate-spin mr-2" /> : null}
-                                Confirmer la suppression
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
+                        <DropdownMenuItem onSelect={() => setDeleteDialogOpen(true)} className="text-destructive focus:bg-destructive/10 cursor-pointer font-bold">
+                            <Trash2 className="mr-2 h-4 w-4 text-destructive" />
+                            <span>Supprimer mon compte</span>
+                        </DropdownMenuItem>
                     </DropdownMenuContent>
                 </DropdownMenu>
+
+                <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+                  <AlertDialogContent className="rounded-3xl">
+                    <AlertDialogHeader>
+                      <AlertDialogTitle className="flex items-center gap-2">
+                        <ShieldAlert className="text-destructive h-5 w-5" />
+                        Action Irréversible
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Êtes-vous sûr de vouloir supprimer définitivement votre compte Kinshasa Flow ({user.email}) ? Toutes vos stars, signalements et préférences seront immédiatement et définitivement effacés de nos serveurs.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel className="rounded-xl">Annuler</AlertDialogCancel>
+                      <AlertDialogAction 
+                        onClick={handleDeleteAccount} 
+                        className="bg-destructive hover:bg-destructive/90 rounded-xl font-bold"
+                        disabled={isDeleting}
+                      >
+                        {isDeleting ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : null}
+                        Confirmer la suppression
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
 
                 <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
                     <DialogContent className="rounded-3xl">

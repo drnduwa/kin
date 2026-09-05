@@ -331,12 +331,14 @@ const SubscriptionStatus = ({ subscription }: { subscription: WithId<TransportSu
                 {subscription?.status === 'approved' && (
                   <Alert variant="default">
                       <DollarSign className="h-4 w-4" />
-                      <AlertTitle>Abonnement Approuvé !</AlertTitle>
-                      <AlertDescription>Votre abonnement a été approuvé. Veuillez procéder au paiement de ${subscription.price} pour l'activer.</AlertDescription>
-                      <Button className="mt-4 w-full" onClick={handlePayment} disabled={isPaying}>
-                          {isPaying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <DollarSign className="mr-2 h-4 w-4" />}
-                           Payer ${subscription.price}
-                      </Button>
+                      <AlertTitle>Demande de Navette Approuvée !</AlertTitle>
+                      <AlertDescription>
+                        Votre réservation de transport physique a été validée par notre service d'exploitation.
+                      </AlertDescription>
+                      <div className="mt-3 p-3 bg-muted/50 rounded-xl text-xs space-y-1">
+                        <p><strong>Tarif convenu:</strong> ${subscription.price} / mois</p>
+                        <p className="text-muted-foreground">Le règlement s'effectue directement auprès de votre chauffeur lors de la remise de votre pass physique.</p>
+                      </div>
                   </Alert>
                 )}
                 

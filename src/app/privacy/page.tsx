@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import Link from "next/link";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -214,9 +215,17 @@ export default function PrivacyPage() {
                         </AlertDialog>
                       </div>
                     ) : (
-                      <p className="text-xs text-slate-600 font-bold">
-                        Comment procéder : Connectez-vous à votre compte, puis cliquez sur votre photo de profil en haut à droite ou revenez sur cette page pour sélectionner « <strong>Supprimer mon compte</strong> ».
-                      </p>
+                      <div className="pt-2 space-y-3">
+                        <p className="text-xs text-slate-600 font-medium">
+                          Vous n'êtes actuellement pas connecté. Pour initier la suppression de votre compte et de toutes vos données :
+                        </p>
+                        <Button asChild variant="destructive" className="rounded-xl font-bold gap-2 h-11">
+                          <Link href="/login?redirect=/profil">
+                            <Trash2 className="h-4 w-4" />
+                            <span>Se connecter et supprimer mon compte</span>
+                          </Link>
+                        </Button>
+                      </div>
                     )}
                   </div>
                 </div>

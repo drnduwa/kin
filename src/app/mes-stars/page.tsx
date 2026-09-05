@@ -32,6 +32,7 @@ import {
   Calendar,
   CreditCard,
   Shield,
+  ShieldCheck,
   Apple
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
@@ -116,9 +117,12 @@ const BuyStarsDialog = ({ currentBalance }: { currentBalance: number }) => {
   const { toast } = useToast();
   const router = useRouter();
 
-  const [isIOS, setIsIOS] = useState(false);
+  const [isIOS, setIsIOS] = useState(true);
   useEffect(() => {
-    setIsIOS(Boolean(isIOSClient() || isAppleReviewAccount(user?.email || '')));
+    if (typeof window !== 'undefined') {
+      const isMobileDevice = /iPad|iPhone|iPod|Android/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      setIsIOS(Boolean(isMobileDevice || isIOSClient() || isAppleReviewAccount(user?.email || '')));
+    }
   }, [user]);
 
   const packs = [
@@ -283,7 +287,7 @@ export default function MesStarsPage() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <StatCard title="Solde actuel" value={`${profile?.currentStarsBalance || 0} ⭐`} icon={Star} color="bg-amber-500" subValue="Disponible" />
               <StatCard title="Stars Gagnées" value={`${profile?.totalStarsEarned || 0} ⭐`} icon={Gift} color="bg-emerald-500" subValue="Total cumulé" />
-              <StatCard title="Stars Achetées" value={`${profile?.totalStarsPurchased || 0} ⭐`} icon={ShoppingCart} color="bg-blue-500" subValue="Paiements validés" />
+              <StatCard title="Activité Citoyenne" value={`${(profile?.totalStarsEarned || 0) + (profile?.currentStarsBalance || 0)} pts`} icon={ShieldCheck} color="bg-blue-500" subValue="Score d'engagement" />
               <StatCard title="Usage" value={`${profile?.totalStarsUsed || 0} ⭐`} icon={TrendingUp} color="bg-orange-500" subValue="Dépenses IA" />
             </div>
 

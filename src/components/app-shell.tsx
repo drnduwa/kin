@@ -14,7 +14,8 @@ import {
   TrafficCone,
   Clock,
   Lightbulb,
-  HelpCircle
+  HelpCircle,
+  User
 } from 'lucide-react';
 import {
   Sidebar,
@@ -453,6 +454,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               )}
+
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/profil'} className={cn(pathname === '/profil' && "bg-white/10")}>
+                  <Link href="/profil" className="font-bold flex items-center gap-3 h-11 px-4 rounded-xl text-slate-700 dark:text-slate-200">
+                    <User className="h-5 w-5 text-primary" />
+                    <span>Mon Profil & Compte</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
 
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={pathname === '/guide'} className={cn(pathname === '/guide' && "bg-white/10")}>
