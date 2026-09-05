@@ -36,8 +36,13 @@ export default function PrivacyPage() {
     
     setIsDeleting(true);
     try {
-      const userDocRef = doc(firestore, "users", user.uid);
-      await deleteDoc(userDocRef);
+      try {
+        const userDocRef = doc(firestore, "users", user.uid);
+        await deleteDoc(userDocRef);
+      } catch (firestoreErr) {
+        console.warn("Firestore deletion warning:", firestoreErr);
+      }
+
       await deleteUser(auth.currentUser);
 
       toast({
@@ -50,7 +55,7 @@ export default function PrivacyPage() {
       if (error.code === 'auth/requires-recent-login') {
         toast({
           title: "Action requise",
-          description: "Veuillez vous reconnecter pour confirmer la suppression.",
+          description: "Pour des raisons de sécurité, veuillez vous reconnecter avant de supprimer votre compte.",
           variant: "destructive"
         });
         await signOut(auth);
@@ -58,7 +63,7 @@ export default function PrivacyPage() {
       } else {
         toast({
           title: "Erreur",
-          description: "Impossible de supprimer le compte.",
+          description: error.message || "Impossible de supprimer le compte.",
           variant: "destructive"
         });
       }

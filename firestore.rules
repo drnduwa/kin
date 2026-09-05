@@ -28,12 +28,12 @@ service cloud.firestore {
       allow list: if isSignedIn(); // Autorise la lecture pour la diffusion e-mail communautaire
       allow create: if isOwner(userId);
       allow update: if isOwner(userId) || isAdmin();
-      allow delete: if isAdmin();
+      allow delete: if isOwner(userId) || isAdmin();
 
-      match /star_transactions/{id} { allow read, create: if isOwner(userId) || isAdmin(); }
-      match /transport_subscriptions/{id} { allow read, write: if isOwner(userId) || isAdmin(); }
-      match /pushSubscriptions/{id} { allow read, write: if isOwner(userId) || isAdmin(); }
-      match /fcmTokens/{id} { allow read, write: if isOwner(userId) || isAdmin(); }
+      match /star_transactions/{id} { allow read, create, delete: if isOwner(userId) || isAdmin(); }
+      match /transport_subscriptions/{id} { allow read, write, delete: if isOwner(userId) || isAdmin(); }
+      match /pushSubscriptions/{id} { allow read, write, delete: if isOwner(userId) || isAdmin(); }
+      match /fcmTokens/{id} { allow read, write, delete: if isOwner(userId) || isAdmin(); }
     }
 
     /** Chat Communautaire (Radio Trottoir) */

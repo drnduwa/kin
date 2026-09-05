@@ -71,15 +71,19 @@ export function UserNav() {
         setIsDeleting(true);
         try {
             // 1. Supprimer les données Firestore
-            const userDocRef = doc(firestore, "users", user.uid);
-            await deleteDoc(userDocRef);
+            try {
+                const userDocRef = doc(firestore, "users", user.uid);
+                await deleteDoc(userDocRef);
+            } catch (firestoreErr) {
+                console.warn("Firestore user deletion warning:", firestoreErr);
+            }
 
             // 2. Supprimer l'utilisateur de Firebase Auth
             await deleteUser(auth.currentUser);
 
             toast({
                 title: "Compte supprimé",
-                description: "Toutes vos données ont été effacées de nos serveurs.",
+                description: "Toutes vos données ont été définitivement effacées.",
             });
             router.push('/');
         } catch (error: any) {
@@ -87,20 +91,21 @@ export function UserNav() {
             if (error.code === 'auth/requires-recent-login') {
                 toast({
                     title: "Action requise",
-                    description: "Veuillez vous reconnecter pour confirmer la suppression de votre compte.",
+                    description: "Pour des raisons de sécurité, veuillez vous reconnecter avant de supprimer votre compte.",
                     variant: "destructive"
                 });
                 await signOut(auth);
                 router.push('/login');
             } else {
                 toast({
-                    title: "Erreur",
-                    description: "Impossible de supprimer le compte. Contactez le support.",
+                    title: "Erreur de suppression",
+                    description: error.message || "Impossible de supprimer le compte.",
                     variant: "destructive"
                 });
             }
         } finally {
             setIsDeleting(false);
+            setDeleteDialogOpen(false);
         }
     };
 

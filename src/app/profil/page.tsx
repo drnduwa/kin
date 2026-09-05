@@ -62,11 +62,13 @@ export default function ProfilPage() {
 
     setIsDeleting(true);
     try {
-      // 1. Supprimer le document Firestore
-      const userDocRef = doc(firestore, 'users', user.uid);
-      await deleteDoc(userDocRef);
+      try {
+        const userDocRef = doc(firestore, 'users', user.uid);
+        await deleteDoc(userDocRef);
+      } catch (firestoreErr) {
+        console.warn('Firestore deletion warning:', firestoreErr);
+      }
 
-      // 2. Supprimer le compte Firebase Auth
       await deleteUser(auth.currentUser);
 
       toast({
@@ -87,7 +89,7 @@ export default function ProfilPage() {
       } else {
         toast({
           title: 'Erreur',
-          description: 'Impossible de supprimer le compte. Veuillez réessayer.',
+          description: error.message || 'Impossible de supprimer le compte. Veuillez réessayer.',
           variant: 'destructive',
         });
       }
