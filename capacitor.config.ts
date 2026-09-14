@@ -11,10 +11,7 @@ const config: CapacitorConfig = {
       '*.kinshasaflow.online',
       '*.firebaseapp.com',
       '*.google.com',
-      '*.googleapis.com',
-      'accounts.google.com',
-      'appleid.apple.com',
-      '*.apple.com'
+      '*.googleapis.com'
     ],
     cleartext: true
   },
