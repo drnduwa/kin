@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { fulfillFlexPayPayment } from '@/app/actions';
-import { initializeFirebase } from '@/firebase';
+import { getServerFirestore } from '@/firebase/server';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 
 /**
@@ -28,7 +28,7 @@ export async function POST(request: Request) {
       }
     } else if (statusCode === '1') {
       console.log(`[FlexPay Webhook] Order ${orderNumber} failed or declined`);
-      const { firestore } = initializeFirebase();
+      const firestore = getServerFirestore();
       const paymentRef = doc(firestore, 'payments', orderNumber);
       await updateDoc(paymentRef, {
         status: 'failed',

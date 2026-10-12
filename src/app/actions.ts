@@ -8,7 +8,7 @@ import { getStrategicInsights } from "@/ai/flows/strategic-insights-flow";
 import { TrafficTipsInput, AssistantInput, PushSubscription, StrategicInsightsInput, StrategicInsightsOutput, RoadConditionReport, PaymentRecord, UserProfile } from "@/lib/types";
 import * as webpush from 'web-push';
 import * as nodemailer from 'nodemailer';
-import { initializeFirebase } from "@/firebase";
+import { getServerFirestore } from "@/firebase/server";
 import { collection, getDocs, query, where, Timestamp, limit, doc, getDoc, setDoc, updateDoc, runTransaction, serverTimestamp } from "firebase/firestore";
 import { CONFIG } from "@/lib/config";
 import { initiateFlexPayMobileMoney, initiateFlexPayCard, checkFlexPayTransactionStatus, detectDRCOperator } from "@/lib/flexpay";
@@ -32,7 +32,7 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
         // 1. Initialisation Firebase prudente sur le serveur
         let localReport = null;
         try {
-            const { firestore } = initializeFirebase();
+            const firestore = getServerFirestore();
             const reportsQuery = query(
                 collection(firestore, 'road_condition_reports'),
                 where('status', '==', 'active'),
@@ -305,7 +305,7 @@ export async function broadcastEmailAction(params: {
       recipientList = Array.from(new Set([...recipientList, ...params.recipientEmails]));
   } else {
       try {
-        const { firestore } = initializeFirebase();
+        const firestore = getServerFirestore();
         const usersSnap = await getDocs(collection(firestore, 'users'));
         
         if (!usersSnap.empty) {
@@ -526,7 +526,7 @@ export async function sendRelanceGiftEmailAction(recipientEmails: string[]) {
 
 export async function fulfillFlexPayPayment(orderNumber: string): Promise<{ success: boolean; error?: string }> {
   try {
-    const { firestore } = initializeFirebase();
+    const firestore = getServerFirestore();
     const paymentRef = doc(firestore, 'payments', orderNumber);
     
     let alreadySuccess = false;
@@ -667,7 +667,7 @@ export async function initiateFlexPayPaymentAction(params: {
     }
 
     // Sauvegarder dans Firestore
-    const { firestore } = initializeFirebase();
+    const firestore = getServerFirestore();
     const paymentRef = doc(firestore, 'payments', result.orderNumber);
     const network = params.phone ? detectDRCOperator(params.phone) : undefined;
 
@@ -724,7 +724,7 @@ export async function checkFlexPayStatusAction(orderNumber: string): Promise<{
         fulfilled: fulfillment.success,
       };
     } else if (checkRes.status === '1') {
-      const { firestore } = initializeFirebase();
+      const firestore = getServerFirestore();
       const paymentRef = doc(firestore, 'payments', orderNumber);
       await updateDoc(paymentRef, { status: 'failed', failedAt: serverTimestamp() }).catch(() => {});
       return {

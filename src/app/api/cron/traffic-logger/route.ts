@@ -1,5 +1,5 @@
-﻿import { NextResponse } from 'next/server';
-import { initializeFirebase } from '@/firebase';
+import { NextResponse } from 'next/server';
+import { getServerFirestore } from '@/firebase/server';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { getGoogleTrafficStatusAction } from '@/app/actions';
 import { MAJOR_AXES } from '@/lib/constants';
@@ -13,7 +13,7 @@ export async function GET(request: Request) {
   try {
     const data = await getGoogleTrafficStatusAction(MAJOR_AXES);
     
-    const { firestore } = initializeFirebase();
+    const firestore = getServerFirestore();
     const historyCol = collection(firestore, 'traffic_history');
 
     const now = new Date();

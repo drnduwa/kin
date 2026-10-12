@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { AppShell } from '@/components/app-shell';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -104,10 +104,10 @@ const UNLIMITED_PASSES = [
 ];
 
 const OPERATORS = [
-  { id: 'vodacom', name: 'M-Pesa (Vodacom)', color: 'border-red-500 hover:bg-red-50', badge: '081, 082, 083' },
-  { id: 'orange', name: 'Orange Money', color: 'border-orange-500 hover:bg-orange-50', badge: '084, 085, 089' },
-  { id: 'airtel', name: 'Airtel Money', color: 'border-red-600 hover:bg-red-50', badge: '097, 098, 099' },
-  { id: 'afrimoney', name: 'Afrimoney', color: 'border-purple-500 hover:bg-purple-50', badge: '090, 091' },
+  { id: 'vodacom', name: 'M-Pesa (Vodacom)', shortName: 'M-Pesa', badge: '081, 082, 083', defaultPrefix: '081', bgActive: 'border-red-500 bg-red-50/50' },
+  { id: 'orange', name: 'Orange Money', shortName: 'Orange Money', badge: '084, 085, 089', defaultPrefix: '085', bgActive: 'border-orange-500 bg-orange-50/50' },
+  { id: 'airtel', name: 'Airtel Money', shortName: 'Airtel Money', badge: '097, 098, 099', defaultPrefix: '097', bgActive: 'border-red-600 bg-red-50/50' },
+  { id: 'afrimoney', name: 'Afrimoney', shortName: 'Afrimoney', badge: '090, 091', defaultPrefix: '090', bgActive: 'border-purple-600 bg-purple-50/50' },
 ];
 
 function MesStarsContent() {
@@ -141,8 +141,35 @@ function MesStarsContent() {
   } | null>(null);
 
   const [paymentChannel, setPaymentChannel] = useState<'mobile_money' | 'card'>('mobile_money');
+  const [selectedOperator, setSelectedOperator] = useState<string | null>(null);
   const [phone, setPhone] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Détection automatique de l'opérateur selon le numéro
+  const detectedOperatorId = useMemo(() => {
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length < 2) return null;
+    const prefix = digits.startsWith('243') ? digits.substring(3, 5) : digits.startsWith('0') ? digits.substring(1, 3) : digits.substring(0, 2);
+    if (['81', '82', '83'].includes(prefix)) return 'vodacom';
+    if (['80', '84', '85', '89'].includes(prefix)) return 'orange';
+    if (['97', '98', '99'].includes(prefix)) return 'airtel';
+    if (['90', '91'].includes(prefix)) return 'afrimoney';
+    return null;
+  }, [phone]);
+
+  const currentOperatorId = selectedOperator || detectedOperatorId;
+  const currentOperator = OPERATORS.find(o => o.id === currentOperatorId);
+
+  const handleSelectOperator = (opId: string) => {
+    setSelectedOperator(opId);
+    const op = OPERATORS.find(o => o.id === opId);
+    if (op) {
+      const digits = phone.replace(/\D/g, '');
+      if (digits.length < 4) {
+        setPhone(op.defaultPrefix);
+      }
+    }
+  };
 
   // État de la transaction en cours de validation FlexPay
   const [pendingOrderNumber, setPendingOrderNumber] = useState<string | null>(null);
@@ -773,16 +800,47 @@ function MesStarsContent() {
 
                 {paymentChannel === 'mobile_money' ? (
                   <div className="space-y-4">
-                    {/* Opérateurs supportés */}
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-bold text-slate-700">Réseaux supportés :</Label>
+                    {/* Choix interactif du Réseau Mobile Money */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs font-bold text-slate-700">Choisissez votre réseau :</Label>
+                        {currentOperator && (
+                          <Badge variant="outline" className="text-[10px] font-black text-primary border-primary/30 bg-primary/5">
+                            {currentOperator.shortName} sélectionné
+                          </Badge>
+                        )}
+                      </div>
+
                       <div className="grid grid-cols-2 gap-2">
-                        {OPERATORS.map(op => (
-                          <div key={op.id} className="p-2 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between">
-                            <span className="text-[11px] font-bold text-slate-800">{op.name}</span>
-                            <span className="text-[9px] font-mono text-slate-400">{op.badge}</span>
-                          </div>
-                        ))}
+                        {OPERATORS.map(op => {
+                          const isSelected = currentOperatorId === op.id;
+                          return (
+                            <button
+                              key={op.id}
+                              type="button"
+                              onClick={() => handleSelectOperator(op.id)}
+                              className={cn(
+                                "p-2.5 rounded-2xl border-2 text-left transition-all flex flex-col justify-between gap-1 cursor-pointer",
+                                isSelected 
+                                  ? cn("ring-2 ring-primary/20", op.bgActive)
+                                  : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+                              )}
+                            >
+                              <div className="flex items-center justify-between w-full">
+                                <span className={cn("text-xs font-black", isSelected ? "text-slate-900" : "text-slate-700")}>
+                                  {op.name}
+                                </span>
+                                <div className={cn(
+                                  "w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center transition-all",
+                                  isSelected ? "border-primary bg-primary" : "border-slate-300"
+                                )}>
+                                  {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                                </div>
+                              </div>
+                              <span className="text-[10px] font-mono text-slate-400">{op.badge}</span>
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
 
@@ -793,11 +851,20 @@ function MesStarsContent() {
                         type="tel"
                         placeholder="Ex: 0812345678 ou 243812345678"
                         value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
+                        onChange={(e) => {
+                          setPhone(e.target.value);
+                          if (!e.target.value) setSelectedOperator(null);
+                        }}
                         className="h-12 rounded-2xl text-base font-medium"
                       />
                       <p className="text-[10px] text-slate-400">
-                        Vous recevrez un message USSD instantané sur ce numéro pour taper votre code secret.
+                        {currentOperator ? (
+                          <span className="text-emerald-600 font-semibold">
+                            ✓ Réseau : {currentOperator.name}. Vous recevrez un push USSD pour entrer votre PIN.
+                          </span>
+                        ) : (
+                          "Vous recevrez un message USSD instantané sur ce numéro pour taper votre code secret."
+                        )}
                       </p>
                     </div>
                   </div>
@@ -824,7 +891,7 @@ function MesStarsContent() {
                       <Loader2 className="h-4 w-4 animate-spin" /> Connexion à FlexPay...
                     </span>
                   ) : paymentChannel === 'mobile_money' ? (
-                    `Payer ${selectedItem?.amount} ${selectedItem?.currency} via Mobile Money`
+                    `Payer ${selectedItem?.amount} ${selectedItem?.currency} via ${currentOperator ? currentOperator.shortName : 'Mobile Money'}`
                   ) : (
                     `Continuer vers FlexPay (${selectedItem?.amount} ${selectedItem?.currency})`
                   )}
