@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Search, Lock, Star, Loader2, Map as MapIcon, X } from 'lucide-react';
 import { useFirebase, useUser, useDoc, useMemoFirebase } from '@/firebase';
 import { doc, runTransaction, serverTimestamp, collection } from 'firebase/firestore';
-import { STAR_COSTS, UserProfile } from '@/lib/types';
+import { STAR_COSTS, UserProfile, isUserSubscribedOrHasPass } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -40,15 +40,26 @@ export default function TrafficMap() {
     const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
     const { data: profile } = useDoc<UserProfile>(userRef);
 
+    useEffect(() => {
+        if (isUserSubscribedOrHasPass(profile)) {
+            setIsUnlocked(true);
+        }
+    }, [profile]);
+
     const handleUnlock = async () => {
         if (!user || !profile) return;
+
+        if (isUserSubscribedOrHasPass(profile)) {
+            setIsUnlocked(true);
+            return;
+        }
 
         if (profile.currentStarsBalance < STAR_COSTS.MAP_VIEW) {
             toast({
                 title: "Solde insuffisant",
-                description: `L'accès à la carte premium coûte ${STAR_COSTS.MAP_VIEW} stars.`,
+                description: `L'accès à la carte premium coûte ${STAR_COSTS.MAP_VIEW} stars. Rechargez votre compte ou activez un Pass Illimité.`,
                 variant: "destructive",
-                action: <Button asChild variant="outline" size="sm"><Link href="/mes-stars">Recharger</Link></Button>
+                action: <Button asChild variant="outline" size="sm"><Link href="/mes-stars">Boutique</Link></Button>
             });
             return;
         }

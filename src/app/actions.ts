@@ -5,12 +5,13 @@ import { getTrafficTips } from "@/ai/flows/traffic-tips-flow";
 import { askAssistant } from "@/ai/flows/assistant-flow";
 import { generateSpeech } from "@/ai/flows/tts-flow";
 import { getStrategicInsights } from "@/ai/flows/strategic-insights-flow";
-import { TrafficTipsInput, AssistantInput, PushSubscription, StrategicInsightsInput, StrategicInsightsOutput, RoadConditionReport } from "@/lib/types";
+import { TrafficTipsInput, AssistantInput, PushSubscription, StrategicInsightsInput, StrategicInsightsOutput, RoadConditionReport, PaymentRecord, UserProfile } from "@/lib/types";
 import * as webpush from 'web-push';
 import * as nodemailer from 'nodemailer';
 import { initializeFirebase } from "@/firebase";
-import { collection, getDocs, query, where, Timestamp, limit } from "firebase/firestore";
+import { collection, getDocs, query, where, Timestamp, limit, doc, getDoc, setDoc, updateDoc, runTransaction, serverTimestamp } from "firebase/firestore";
 import { CONFIG } from "@/lib/config";
+import { initiateFlexPayMobileMoney, initiateFlexPayCard, checkFlexPayTransactionStatus, detectDRCOperator } from "@/lib/flexpay";
 
 const GOOGLE_API_KEY = CONFIG.GOOGLE_MAPS_API_KEY;
 
@@ -436,49 +437,312 @@ export async function sendAlertEmailAction(params: { type: string, location: str
   });
 }
 
-export async function initiateMbiyoPaymentAction(data: {
-    amount: number;
-    currency: string;
-    phone: string;
-    network: string;
-    order_id: string;
-}) {
-    try {
-        const phoneWithPlus = data.phone.startsWith('+') ? data.phone : `+${data.phone}`;
-        const payload = {
-            amount: data.amount,
-            currency: data.currency,
-            payment_method: "mobile_money",
-            order_id: data.order_id,
-            callback_url: "https://kinshasaflow.online/api/payment-callback",
-            metadata: { network: data.network.toLowerCase(), phone_number: phoneWithPlus, country_code: "CD" }
-        };
+export async function sendRelanceGiftEmailAction(recipientEmails: string[]) {
+  const smtpUser = process.env.SMTP_USER || "kinshasaflow@gmail.com";
+  const smtpPass = (process.env.SMTP_PASS || "jrgl kgjl qlqj vmfc").replace(/"/g, '');
 
-        const response = await fetch("https://dashboard.mbiyo.africa/api/v1/merchant/payin", {
-            method: "POST",
-            headers: { "Authorization": "Bearer COjbIMdkfbeZ8RJUH03oj0kNKJLzCK", "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        });
+  if (!recipientEmails || recipientEmails.length === 0) {
+    return { success: false, error: "Aucun email destinataire spécifié." };
+  }
 
-        if (!response.ok) return { success: false, error: "Erreur serveur." };
-        const result = await response.json();
-        return { success: true, data: { id: result.data.id, status: result.data.status } };
-    } catch (error) {
-        return { success: false, error: "Connexion impossible." };
-    }
+  // Filtrer et dédoublonner les emails valides
+  const cleanEmails = Array.from(new Set(
+    recipientEmails
+      .filter(e => e && e.includes('@') && !e.endsWith('@kinshasaflow.online'))
+  ));
+
+  if (cleanEmails.length === 0) {
+    return { success: false, error: "Aucun email valide trouvé." };
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: { user: smtpUser, pass: smtpPass },
+  });
+
+  const mailOptions = {
+    from: `"Kinshasa Flow" <${smtpUser}>`,
+    to: smtpUser, // Destinataire principal
+    bcc: cleanEmails, // Copie cachée à tous les utilisateurs
+    subject: "🎁 Cadeau Spécial : 25 Stars Offertes sur votre compte Kinshasa Flow !",
+    html: `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 20px; color: #1e293b; background-color: #f8fafc;">
+        <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 24px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.08);">
+          <div style="background-color: #248eeb; padding: 36px 20px; text-align: center;">
+            <h1 style="color: #ffffff; margin: 0; font-size: 26px; font-weight: 900; letter-spacing: -0.5px;">🎁 Cadeau Spécial K-Flow</h1>
+            <p style="color: #ffffff; opacity: 0.9; margin: 8px 0 0; font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">
+              25 Stars Créditées sur votre compte
+            </p>
+          </div>
+          <div style="padding: 36px 24px; text-align: center;">
+            <h2 style="color: #0f172a; margin-top: 0; font-size: 20px; font-weight: 800;">Profitez de vos 25 Stars gratuites ⭐</h2>
+            <p style="font-size: 15px; color: #475569; line-height: 1.6; text-align: left; margin: 16px 0;">
+              Chère communauté de <strong>Kinshasa Flow</strong>,
+            </p>
+            <p style="font-size: 15px; color: #475569; line-height: 1.6; text-align: left; margin: 16px 0;">
+              Pour vous remercier de votre fidélité et vous faire découvrir toutes les nouveautés de l'application, nous avons le plaisir de vous offrir <strong>25 Stars gratuites</strong> !
+            </p>
+
+            <div style="margin: 28px 0; padding: 22px; background-color: #f0f9ff; border-radius: 18px; text-align: left; border: 1px solid #bae6fd;">
+              <h3 style="color: #0369a1; margin: 0 0 12px 0; font-size: 15px; font-weight: 800;">🚀 Ce que vous pouvez faire dès maintenant :</h3>
+              <ul style="margin: 0; padding-left: 20px; color: #334155; font-size: 13px; line-height: 1.8;">
+                <li><strong>Assistant Vocal IA</strong> : Posez vos questions d'itinéraires en Lingala et en Français.</li>
+                <li><strong>GPS K-Flow Nav</strong> : Calculez le meilleur trajet pour contourner les embouteillages.</li>
+                <li><strong>Radar de Circulation</strong> : Consultez l'état du trafic en temps réel sur les grands axes kinois.</li>
+              </ul>
+            </div>
+
+            <div style="margin: 20px 0; padding: 18px; background-color: #f8fafc; border-radius: 14px; text-align: left; border-left: 4px solid #248eeb;">
+              <p style="margin: 0; font-size: 13px; color: #475569; line-height: 1.5;">
+                💳 <strong>Nouveau :</strong> Rechargez vos Stars en toute simplicité ou activez un <strong>Pass Illimité (7 ou 30 jours)</strong> via <strong>FlexPay</strong> (Vodacom M-Pesa, Orange Money, Airtel Money, Afrimoney et Carte Bancaire Visa/Mastercard).
+              </p>
+            </div>
+
+            <div style="text-align: center; margin-top: 32px;">
+              <a href="https://kinshasaflow.online/mes-stars" style="background-color: #248eeb; color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 14px; font-weight: 900; font-size: 15px; display: inline-block; box-shadow: 0 4px 14px rgba(36, 142, 235, 0.35);">
+                DÉCOUVRIR MES 25 STARS EN DIRECT
+              </a>
+            </div>
+          </div>
+          <div style="padding: 20px; text-align: center; font-size: 11px; color: #94a3b8; border-top: 1px solid #f1f5f9; background-color: #fafafa;">
+            Kinshasa Flow • Swazi Appli Lab sarl.<br/>
+            <em>Vous recevez ce message car vous êtes membre de la communauté Kinshasa Flow.</em>
+          </div>
+        </div>
+      </div>
+    `,
+  };
+
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    return { success: true, count: cleanEmails.length, messageId: info.messageId };
+  } catch (error: any) {
+    console.error('[Relance Email] Error:', error);
+    return { success: false, error: error.message };
+  }
 }
 
-export async function checkMbiyoTransactionStatusAction(transactionId: string) {
-    try {
-        const response = await fetch(`https://dashboard.mbiyo.africa/api/v1/merchant/transactions/${transactionId}`, {
-            method: "GET",
-            headers: { "Authorization": "Bearer COjbIMdkfbeZ8RJUH03oj0kNKJLzCK", "Content-Type": "application/json" }
+export async function fulfillFlexPayPayment(orderNumber: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { firestore } = initializeFirebase();
+    const paymentRef = doc(firestore, 'payments', orderNumber);
+    
+    let alreadySuccess = false;
+    await runTransaction(firestore, async (transaction) => {
+      const paymentSnap = await transaction.get(paymentRef);
+      if (!paymentSnap.exists()) {
+        throw new Error(`Paiement ${orderNumber} introuvable dans la base.`);
+      }
+
+      const paymentData = paymentSnap.data() as PaymentRecord;
+      if (paymentData.status === 'success') {
+        alreadySuccess = true;
+        return;
+      }
+
+      const userRef = doc(firestore, 'users', paymentData.userId);
+      const userSnap = await transaction.get(userRef);
+      if (!userSnap.exists()) {
+        throw new Error(`Utilisateur ${paymentData.userId} introuvable.`);
+      }
+
+      const userData = userSnap.data() as UserProfile;
+
+      // 1. Mettre à jour le statut du paiement
+      transaction.update(paymentRef, {
+        status: 'success',
+        completedAt: serverTimestamp(),
+      });
+
+      // 2. Créditer les Stars ou activer le Pass Illimité
+      if (paymentData.itemType === 'pack' && paymentData.stars) {
+        const addedStars = Number(paymentData.stars);
+        const newBalance = (userData.currentStarsBalance || 0) + addedStars;
+        const newPurchased = (userData.totalStarsPurchased || 0) + addedStars;
+
+        transaction.update(userRef, {
+          currentStarsBalance: newBalance,
+          totalStarsPurchased: newPurchased,
         });
-        const result = await response.json();
-        return { success: true, data: { status: String(result.data.status).toLowerCase() } };
-    } catch (error) {
-        return { success: false, error: "Erreur réseau." };
+
+        // Historique de transaction utilisateur
+        const starTransRef = doc(collection(userRef, 'star_transactions'));
+        transaction.set(starTransRef, {
+          userId: paymentData.userId,
+          type: 'purchase',
+          starsChange: addedStars,
+          balanceAfterTransaction: newBalance,
+          description: `Achat Pack ${addedStars} Stars FlexPay (${paymentData.amount} ${paymentData.currency})`,
+          relatedObjectId: orderNumber,
+          relatedObjectType: 'flexpay_pack',
+          timestamp: serverTimestamp(),
+        });
+      } else if (paymentData.itemType === 'pass' && paymentData.passType) {
+        const daysToAdd = paymentData.passType === 'weekly' ? 7 : 30;
+        let baseDate = new Date();
+        if (userData.hasActivePass && userData.passExpiresAt) {
+          const currentExpiry = userData.passExpiresAt.toDate ? userData.passExpiresAt.toDate() : new Date(userData.passExpiresAt);
+          if (currentExpiry > baseDate) {
+            baseDate = currentExpiry; // Prolonge l'abonnement en cours
+          }
+        }
+
+        const newExpiryDate = new Date(baseDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000);
+
+        transaction.update(userRef, {
+          hasActivePass: true,
+          passExpiresAt: Timestamp.fromDate(newExpiryDate),
+          passType: paymentData.passType,
+        });
+
+        const starTransRef = doc(collection(userRef, 'star_transactions'));
+        transaction.set(starTransRef, {
+          userId: paymentData.userId,
+          type: 'purchase',
+          starsChange: 0,
+          balanceAfterTransaction: userData.currentStarsBalance || 0,
+          description: `Activation Pass Illimité (${paymentData.passType === 'weekly' ? '7 Jours' : '30 Jours'})`,
+          relatedObjectId: orderNumber,
+          relatedObjectType: 'flexpay_pass',
+          timestamp: serverTimestamp(),
+        });
+      }
+    });
+
+    return { success: true };
+  } catch (err: any) {
+    console.error(`[FlexPay] Erreur lors du fulfillment ${orderNumber}:`, err);
+    return { success: false, error: err.message || 'Erreur lors du crédit de la commande.' };
+  }
+}
+
+export async function initiateFlexPayPaymentAction(params: {
+  userId: string;
+  itemType: 'pack' | 'pass';
+  itemId: string;
+  stars?: number;
+  passType?: 'weekly' | 'monthly';
+  amount: number;
+  currency: 'CDF' | 'USD';
+  channel: 'mobile_money' | 'card';
+  phone?: string;
+}): Promise<{
+  success: boolean;
+  orderNumber?: string;
+  reference?: string;
+  url?: string;
+  message?: string;
+  error?: string;
+}> {
+  try {
+    const reference = `KF_${Date.now()}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+    let result: { success: boolean; orderNumber?: string; url?: string; message?: string; error?: string };
+
+    if (params.channel === 'mobile_money') {
+      if (!params.phone) {
+        return { success: false, error: 'Numéro de téléphone requis pour le paiement Mobile Money.' };
+      }
+      result = await initiateFlexPayMobileMoney({
+        phone: params.phone,
+        amount: params.amount,
+        currency: params.currency,
+        reference,
+      });
+    } else {
+      result = await initiateFlexPayCard({
+        amount: params.amount,
+        currency: params.currency,
+        reference,
+        description: params.itemType === 'pass'
+          ? `Pass Illimité Kinshasa Flow (${params.passType})`
+          : `Pack ${params.stars} Stars Kinshasa Flow`,
+      });
     }
+
+    if (!result.success || !result.orderNumber) {
+      return { success: false, error: result.error || 'Impossible d\'initier le paiement.' };
+    }
+
+    // Sauvegarder dans Firestore
+    const { firestore } = initializeFirebase();
+    const paymentRef = doc(firestore, 'payments', result.orderNumber);
+    const network = params.phone ? detectDRCOperator(params.phone) : undefined;
+
+    await setDoc(paymentRef, {
+      id: result.orderNumber,
+      orderNumber: result.orderNumber,
+      reference,
+      userId: params.userId,
+      itemType: params.itemType,
+      itemId: params.itemId,
+      stars: params.stars || 0,
+      passType: params.passType || null,
+      amount: params.amount,
+      currency: params.currency,
+      channel: params.channel,
+      network: network || null,
+      phone: params.phone || null,
+      status: 'pending',
+      createdAt: serverTimestamp(),
+    });
+
+    return {
+      success: true,
+      orderNumber: result.orderNumber,
+      reference,
+      url: result.url,
+      message: result.message,
+    };
+  } catch (err: any) {
+    console.error('[FlexPay] Exception in initiateFlexPayPaymentAction:', err);
+    return { success: false, error: err.message || 'Erreur lors de l\'initiation du paiement.' };
+  }
+}
+
+export async function checkFlexPayStatusAction(orderNumber: string): Promise<{
+  success: boolean;
+  status: '0' | '1' | '2' | 'unknown';
+  message?: string;
+  fulfilled?: boolean;
+  error?: string;
+}> {
+  try {
+    const checkRes = await checkFlexPayTransactionStatus(orderNumber);
+    if (!checkRes.success) {
+      return { success: false, status: 'unknown', error: checkRes.error };
+    }
+
+    if (checkRes.status === '0') {
+      const fulfillment = await fulfillFlexPayPayment(orderNumber);
+      return {
+        success: true,
+        status: '0',
+        message: 'Paiement confirmé avec succès ! Vos crédits sont activés.',
+        fulfilled: fulfillment.success,
+      };
+    } else if (checkRes.status === '1') {
+      const { firestore } = initializeFirebase();
+      const paymentRef = doc(firestore, 'payments', orderNumber);
+      await updateDoc(paymentRef, { status: 'failed', failedAt: serverTimestamp() }).catch(() => {});
+      return {
+        success: true,
+        status: '1',
+        message: 'La transaction a été annulée ou refusée.',
+      };
+    } else {
+      return {
+        success: true,
+        status: '2',
+        message: 'En attente de validation PIN...',
+      };
+    }
+  } catch (err: any) {
+    console.error('[FlexPay] Exception in checkFlexPayStatusAction:', err);
+    return { success: false, status: 'unknown', error: err.message };
+  }
 }
 
 import { TrafficForecast, HourlyForecast } from '@/lib/types';
@@ -504,7 +768,7 @@ export async function getTrafficForecastAction(routeName: string): Promise<Traff
   const generateStatus = (hour: number) => {
     if (hour >= 7 && hour <= 9) return { status: 'EMBOUTEILLAGE', delay: Math.floor(Math.random() * 20) + 15 };
     if (hour >= 16 && hour <= 19) return { status: 'EMBOUTEILLAGE', delay: Math.floor(Math.random() * 25) + 20 };
-    if (hour >= 10 && hour <= 15) return { status: 'MOD�R�', delay: Math.floor(Math.random() * 10) + 5 };
+    if (hour >= 10 && hour <= 15) return { status: 'MOD�R�', delay: Math.floor(Math.random() * 10) + 5 };
     if (hour >= 20 || hour <= 6) return { status: 'FLUIDE', delay: 0 };
     return { status: 'DENSE', delay: 12 };
   };
@@ -529,11 +793,11 @@ export async function getTrafficForecastAction(routeName: string): Promise<Traff
     'Avenue Kasa-Vubu': ["Avenue de l'Enseignement", 'Avenue Gambela']
   };
 
-  const alts = alternativesMap[routeName] || ['Avenue parall�le la plus proche'];
+  const alts = alternativesMap[routeName] || ['Avenue parall�le la plus proche'];
   const alternatives = alts.map(alt => ({
     road: alt,
     delay: Math.max(0, currentDelay - Math.floor(Math.random() * 10) - 2),
-    status: (currentDelay - 5) > 10 ? 'MOD�R�' : 'FLUIDE'
+    status: (currentDelay - 5) > 10 ? 'MOD�R�' : 'FLUIDE'
   }));
 
   return {

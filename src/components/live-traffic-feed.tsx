@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { STAR_COSTS, UserProfile } from '@/lib/types';
+import { STAR_COSTS, UserProfile, isUserSubscribedOrHasPass } from '@/lib/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { 
@@ -204,11 +204,12 @@ export default function LiveTrafficFeed() {
 
   const handleVerify = async () => {
     if (!user || !profile) return;
+    const hasPass = isUserSubscribedOrHasPass(profile);
 
-    if (profile.currentStarsBalance < STAR_COSTS.ROAD_VERIFY) {
+    if (!hasPass && profile.currentStarsBalance < STAR_COSTS.ROAD_VERIFY) {
         toast({
             title: "Stars insuffisantes",
-            description: "Rechargez votre solde pour accéder aux détails.",
+            description: "Rechargez votre solde ou activez un Pass Illimité.",
             variant: "destructive",
             action: <Button asChild variant="outline" size="sm"><Link href="/mes-stars">Boutique</Link></Button>
         });
@@ -217,31 +218,33 @@ export default function LiveTrafficFeed() {
 
     setIsVerifying(true);
     try {
-        await runTransaction(firestore, async (transaction) => {
-            const userDoc = await transaction.get(userRef!);
-            const data = userDoc.data() as UserProfile;
-            const newBalance = data.currentStarsBalance - STAR_COSTS.ROAD_VERIFY;
-            
-            transaction.update(userRef!, {
-                currentStarsBalance: newBalance,
-                totalStarsUsed: (data.totalStarsUsed || 0) + STAR_COSTS.ROAD_VERIFY
-            });
+        if (!hasPass) {
+          await runTransaction(firestore, async (transaction) => {
+              const userDoc = await transaction.get(userRef!);
+              const data = userDoc.data() as UserProfile;
+              const newBalance = data.currentStarsBalance - STAR_COSTS.ROAD_VERIFY;
+              
+              transaction.update(userRef!, {
+                  currentStarsBalance: newBalance,
+                  totalStarsUsed: (data.totalStarsUsed || 0) + STAR_COSTS.ROAD_VERIFY
+              });
 
-            const starTransRef = doc(collection(userRef!, 'star_transactions'));
-            transaction.set(starTransRef, {
-                userId: user.uid,
-                type: 'spent',
-                starsChange: -STAR_COSTS.ROAD_VERIFY,
-                balanceAfterTransaction: newBalance,
-                description: `Consultation segment : ${selectedAxis.name}`,
-                timestamp: serverTimestamp(),
-            });
-        });
+              const starTransRef = doc(collection(userRef!, 'star_transactions'));
+              transaction.set(starTransRef, {
+                  userId: user.uid,
+                  type: 'spent',
+                  starsChange: -STAR_COSTS.ROAD_VERIFY,
+                  balanceAfterTransaction: newBalance,
+                  description: `Consultation segment : ${selectedAxis.name}`,
+                  timestamp: serverTimestamp(),
+              });
+          });
+        }
 
         setVerifiedAxes(prev => new Set(prev).add(selectedAxisId));
         toast({ title: "Segment déverrouillé", description: "Les informations en direct sont maintenant visibles." });
     } catch (error) {
-        toast({ title: "Erreur", description: "Impossible de déduire les stars.", variant: "destructive" });
+        toast({ title: "Erreur", description: "Impossible d'accéder aux informations.", variant: "destructive" });
     } finally {
         setIsVerifying(false);
     }
@@ -249,32 +252,40 @@ export default function LiveTrafficFeed() {
 
   const handleStartNavigation = async () => {
     if (!user || !profile) return;
+    const hasPass = isUserSubscribedOrHasPass(profile);
 
-    if (profile.currentStarsBalance < STAR_COSTS.NAVIGATION_SESSION) {
-        toast({ title: "Solde insuffisant", description: `La navigation premium coûte ${STAR_COSTS.NAVIGATION_SESSION} stars.`, variant: "destructive" });
+    if (!hasPass && profile.currentStarsBalance < STAR_COSTS.NAVIGATION_SESSION) {
+        toast({ 
+          title: "Solde insuffisant", 
+          description: `La navigation premium coûte ${STAR_COSTS.NAVIGATION_SESSION} stars ou activez un Pass Illimité.`, 
+          variant: "destructive",
+          action: <Button asChild variant="outline" size="sm"><Link href="/mes-stars">Boutique</Link></Button>
+        });
         return;
     }
 
     setIsStartingNav(true);
     try {
-        await runTransaction(firestore, async (transaction) => {
-            const userDoc = await transaction.get(userRef!);
-            const data = userDoc.data() as UserProfile;
-            const newBalance = data.currentStarsBalance - STAR_COSTS.NAVIGATION_SESSION;
-            transaction.update(userRef!, { currentStarsBalance: newBalance });
-            const starTransRef = doc(collection(userRef!, 'star_transactions'));
-            transaction.set(starTransRef, {
-                userId: user.uid,
-                type: 'spent',
-                starsChange: -STAR_COSTS.NAVIGATION_SESSION,
-                balanceAfterTransaction: newBalance,
-                description: `Navigation vers segment : ${selectedAxis.name}`,
-                timestamp: serverTimestamp(),
-            });
-        });
+        if (!hasPass) {
+          await runTransaction(firestore, async (transaction) => {
+              const userDoc = await transaction.get(userRef!);
+              const data = userDoc.data() as UserProfile;
+              const newBalance = data.currentStarsBalance - STAR_COSTS.NAVIGATION_SESSION;
+              transaction.update(userRef!, { currentStarsBalance: newBalance });
+              const starTransRef = doc(collection(userRef!, 'star_transactions'));
+              transaction.set(starTransRef, {
+                  userId: user.uid,
+                  type: 'spent',
+                  starsChange: -STAR_COSTS.NAVIGATION_SESSION,
+                  balanceAfterTransaction: newBalance,
+                  description: `Navigation vers segment : ${selectedAxis.name}`,
+                  timestamp: serverTimestamp(),
+              });
+          });
+        }
         setNavTarget({ lat: selectedAxis.coords.lat, lng: selectedAxis.coords.lng, name: selectedAxis.name });
     } catch (e) {
-        toast({ title: "Erreur", description: "Paiement échoué.", variant: "destructive" });
+        toast({ title: "Erreur", description: "Impossible de lancer la navigation.", variant: "destructive" });
     } finally {
         setIsStartingNav(false);
     }

@@ -6,12 +6,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useUser, useFirebase, useDoc, useMemoFirebase } from '@/firebase';
-import { UserProfile } from '@/lib/types';
+import { UserProfile, isUserSubscribedOrHasPass } from '@/lib/types';
 import { doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { deleteUser, signOut, updateProfile } from 'firebase/auth';
 import { getStorage, ref as storageRef, uploadString, getDownloadURL } from 'firebase/storage';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
+import { cn } from '@/lib/utils';
 import { 
   User, 
   Mail, 
@@ -23,7 +24,8 @@ import {
   Star, 
   LogOut,
   ArrowRight,
-  AlertTriangle
+  AlertTriangle,
+  Crown
 } from 'lucide-react';
 import {
   AlertDialog,
@@ -211,12 +213,18 @@ export default function ProfilPage() {
                   <Mail className="h-3.5 w-3.5" />
                   {user.email}
                 </p>
-                <div className="flex items-center gap-2 mt-2">
+                <div className="flex flex-wrap items-center gap-2 mt-2">
                   <span className="inline-flex items-center gap-1 text-[11px] font-black bg-amber-100 text-amber-800 px-2.5 py-0.5 rounded-full">
                     <Star className="h-3 w-3 fill-amber-500 text-amber-500" />
                     {profile?.currentStarsBalance || 0} Stars
                   </span>
-                  <span className="inline-flex items-center gap-1 text-[11px] font-bold bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full">
+                  {isUserSubscribedOrHasPass(profile) && (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-black bg-emerald-600 text-white px-2.5 py-0.5 rounded-full shadow-sm">
+                      <Crown className="h-3 w-3 fill-white" />
+                      Pass Illimité Actif
+                    </span>
+                  )}
+                  <span className="inline-flex items-center gap-1 text-[11px] font-bold bg-slate-100 text-slate-800 px-2.5 py-0.5 rounded-full">
                     <ShieldCheck className="h-3 w-3" />
                     Compte Vérifié
                   </span>
@@ -284,13 +292,15 @@ export default function ProfilPage() {
                   <span className="font-black text-amber-600">{profile?.currentStarsBalance || 0} ⭐</span>
                 </div>
                 <div className="flex justify-between py-1.5 border-b">
-                  <span className="text-muted-foreground font-medium">Stars cumulées gagnées</span>
-                  <span className="font-bold text-emerald-600">+{profile?.totalStarsEarned || 0} ⭐</span>
+                  <span className="text-muted-foreground font-medium">Pass Illimité</span>
+                  <span className={cn("font-bold", isUserSubscribedOrHasPass(profile) ? "text-emerald-600 font-black" : "text-slate-400")}>
+                    {isUserSubscribedOrHasPass(profile) ? "Actif 👑" : "Inactif"}
+                  </span>
                 </div>
                 <div className="pt-2">
-                  <Button asChild variant="outline" className="w-full rounded-xl font-bold text-xs gap-1.5">
+                  <Button asChild variant="outline" className="w-full rounded-xl font-bold text-xs gap-1.5 border-2 hover:bg-slate-50">
                     <Link href="/mes-stars">
-                      Accéder à mes Stars
+                      Recharger / Activer un Pass
                       <ArrowRight className="h-3.5 w-3.5" />
                     </Link>
                   </Button>

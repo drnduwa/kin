@@ -62,9 +62,9 @@ export function PhoneLogin() {
           consecutiveLoginDays: 0,
           isProfileComplete: true,
           isBlocked: false,
-          isCashSubscribed: true,
-          hasUsedFreeTrial: true,
-          cashSubscriptionExpiry: freeTrialExpiry,
+          isCashSubscribed: false,
+          hasActivePass: false,
+          hasUsedFreeTrial: false,
           createdAt: serverTimestamp() as any,
         };
 

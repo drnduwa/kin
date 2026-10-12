@@ -38,8 +38,8 @@ import { Logo } from './logo';
 import { NotificationPermission } from './notification-permission';
 import { useToast } from '@/hooks/use-toast';
 import { ToastAction } from '@/components/ui/toast';
-import { doc, collection, query, orderBy, limit } from 'firebase/firestore';
-import { UserProfile, AppNavigationSettings, AppSubscriptionSettings, AppNotification, EventReport } from '@/lib/types';
+import { doc, collection, query, orderBy, limit, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { UserProfile, AppNavigationSettings, AppSubscriptionSettings, AppNotification, EventReport, isUserSubscribedOrHasPass } from '@/lib/types';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { sendEmailVerification, signOut } from 'firebase/auth';
@@ -201,13 +201,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!profile || !subSettings) return;
-    const isIOS = typeof window !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
-    if (isIOS) return; // Mode 100% gratuit et civique sur iOS pour conformité Apple Guideline 3.1.1
+
+    // Si l'utilisateur possède un pass illimité ou un abonnement actif, accès total sans avertissement de solde
+    if (isUserSubscribedOrHasPass(profile)) return;
 
     if (subSettings.mode === 'stars') {
       if (profile.currentStarsBalance < 5 && pathname !== '/mes-stars' && !['/', '/privacy'].includes(pathname)) {
         toast({
-          title: 'Solde faible',
+          title: 'Solde de Stars faible',
+          description: `Il vous reste ${profile.currentStarsBalance || 0} Stars. Rechargez pour continuer sans coupure.`,
           variant: 'destructive',
           action: <ToastAction altText="Recharger" onClick={() => router.push('/mes-stars')}>Recharger</ToastAction>,
         });
@@ -223,6 +225,39 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       }
     }
   }, [profile, subSettings, pathname, toast, router]);
+
+  // Attribution automatique du cadeau de fidélité de 25 Stars pour les utilisateurs existants
+  useEffect(() => {
+    if (!user || !profile || !firestore) return;
+    if (!profile.hasReceivedRelanceGift && (profile.currentStarsBalance || 0) < 25) {
+      const userRef = doc(firestore, 'users', user.uid);
+      const transRef = doc(collection(userRef, 'star_transactions'));
+      const neededStars = 25 - (profile.currentStarsBalance || 0);
+
+      updateDoc(userRef, {
+        currentStarsBalance: 25,
+        totalStarsEarned: (profile.totalStarsEarned || 0) + neededStars,
+        hasReceivedRelanceGift: true,
+      }).then(() => {
+        setDoc(transRef, {
+          userId: user.uid,
+          type: 'earned',
+          starsChange: neededStars,
+          balanceAfterTransaction: 25,
+          description: "Cadeau de Fidélité : +25 Stars Offertes",
+          timestamp: serverTimestamp(),
+        }).catch(() => {});
+
+        toast({
+          title: "🎁 Cadeau de Fidélité : 25 Stars offertes !",
+          description: "Nous avons crédité votre compte pour vous faire découvrir le nouveau système FlexPay et vos fonctionnalités premium.",
+          className: "bg-primary text-white border-none",
+        });
+      }).catch(err => {
+        console.warn("[Relance Gift] Échec attribution automatique:", err);
+      });
+    }
+  }, [user, profile, firestore, toast]);
 
   const isAdmin = user?.email === 'drnduwa@gmail.com';
   const isPartnerAdmin = user?.email === 'contact.congonamotema@gmail.com' || isAdmin;

@@ -12,7 +12,7 @@ import { useUser, useFirebase, useDoc, useMemoFirebase } from '@/firebase';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { doc, runTransaction, serverTimestamp, collection } from 'firebase/firestore';
-import { STAR_COSTS, UserProfile } from '@/lib/types';
+import { STAR_COSTS, UserProfile, isUserSubscribedOrHasPass } from '@/lib/types';
 import { Badge } from './ui/badge';
 import { Switch } from './ui/switch';
 import { Label } from './ui/label';
@@ -88,12 +88,14 @@ export default function AssistantChat() {
     e.preventDefault();
     if (!input.trim() || !user || !profile) return;
 
-    if (profile.currentStarsBalance < STAR_COSTS.AI_MESSAGE) {
+    const hasPass = isUserSubscribedOrHasPass(profile);
+
+    if (!hasPass && profile.currentStarsBalance < STAR_COSTS.AI_MESSAGE) {
         toast({
             title: "Solde insuffisant",
-            description: `Un message coûte ${STAR_COSTS.AI_MESSAGE} stars.`,
+            description: `Un message coûte ${STAR_COSTS.AI_MESSAGE} stars. Rechargez votre compte ou activez un Pass Illimité.`,
             variant: "destructive",
-            action: <Button asChild variant="outline" size="sm"><Link href="/mes-stars">Recharger</Link></Button>
+            action: <Button asChild variant="outline" size="sm"><Link href="/mes-stars">Boutique</Link></Button>
         });
         return;
     }
@@ -105,26 +107,28 @@ export default function AssistantChat() {
     setIsLoading(true);
 
     try {
-      await runTransaction(firestore, async (transaction) => {
-          const userDoc = await transaction.get(userRef!);
-          const data = userDoc.data() as UserProfile;
-          const newBalance = data.currentStarsBalance - STAR_COSTS.AI_MESSAGE;
-          
-          transaction.update(userRef!, {
-              currentStarsBalance: newBalance,
-              totalStarsUsed: (data.totalStarsUsed || 0) + STAR_COSTS.AI_MESSAGE
-          });
+      if (!hasPass) {
+        await runTransaction(firestore, async (transaction) => {
+            const userDoc = await transaction.get(userRef!);
+            const data = userDoc.data() as UserProfile;
+            const newBalance = data.currentStarsBalance - STAR_COSTS.AI_MESSAGE;
+            
+            transaction.update(userRef!, {
+                currentStarsBalance: newBalance,
+                totalStarsUsed: (data.totalStarsUsed || 0) + STAR_COSTS.AI_MESSAGE
+            });
 
-          const starTransRef = doc(collection(userRef!, 'star_transactions'));
-          transaction.set(starTransRef, {
-              userId: user.uid,
-              type: 'spent',
-              starsChange: -STAR_COSTS.AI_MESSAGE,
-              balanceAfterTransaction: newBalance,
-              description: "Message Assistant Vocal",
-              timestamp: serverTimestamp(),
-          });
-      });
+            const starTransRef = doc(collection(userRef!, 'star_transactions'));
+            transaction.set(starTransRef, {
+                userId: user.uid,
+                type: 'spent',
+                starsChange: -STAR_COSTS.AI_MESSAGE,
+                balanceAfterTransaction: newBalance,
+                description: "Message Assistant Vocal",
+                timestamp: serverTimestamp(),
+            });
+        });
+      }
 
       const result = await askAssistantAction({ question: currentInput });
       const assistantMessage: Message = { role: 'assistant', content: result.answer };
@@ -313,8 +317,14 @@ export default function AssistantChat() {
             </div>
             <div className="flex items-center justify-between px-6 pt-3">
               <p className="text-[9px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-1.5">
-                  <Star className="h-3 w-3 fill-amber-500 text-amber-500" />
-                  - {STAR_COSTS.AI_MESSAGE} stars par étude
+                  {isUserSubscribedOrHasPass(profile) ? (
+                    <span className="text-emerald-600 font-black">👑 Pass Illimité Actif (0 décompte)</span>
+                  ) : (
+                    <>
+                      <Star className="h-3 w-3 fill-amber-500 text-amber-500" />
+                      - {STAR_COSTS.AI_MESSAGE} stars par étude
+                    </>
+                  )}
               </p>
               <div className="flex items-center gap-3">
                   <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">

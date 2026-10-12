@@ -94,32 +94,7 @@ export function ReportHazardDialog({ location }: { location: {lat: number, lng: 
         createdAt: serverTimestamp(),
       };
 
-      await runTransaction(firestore, async (transaction) => {
-        const userRef = doc(firestore, 'users', user.uid);
-        const userDoc = await transaction.get(userRef);
-        
-        if (userDoc.exists()) {
-          const profile = userDoc.data() as UserProfile;
-          const newBalance = (profile.currentStarsBalance || 0) + STAR_COSTS.REPORT_HAZARD_REWARD;
-          transaction.update(userRef, { 
-            currentStarsBalance: newBalance,
-            totalStarsEarned: (profile.totalStarsEarned || 0) + STAR_COSTS.REPORT_HAZARD_REWARD
-          });
-          
-          const starTransRef = doc(collection(userRef, 'star_transactions'));
-          transaction.set(starTransRef, {
-            userId: user.uid,
-            type: 'earned',
-            starsChange: STAR_COSTS.REPORT_HAZARD_REWARD,
-            balanceAfterTransaction: newBalance,
-            description: `Signalement Danger : ${data.type}`,
-            timestamp: serverTimestamp(),
-          });
-        }
-
-        const reportRef = doc(collection(firestore, 'road_condition_reports'));
-        transaction.set(reportRef, reportData);
-      });
+      await addDoc(collection(firestore, 'road_condition_reports'), reportData);
 
       // Notification BROADCAST par e-mail
       broadcastEmailAction({
@@ -131,8 +106,8 @@ export function ReportHazardDialog({ location }: { location: {lat: number, lng: 
       });
 
       toast({ 
-        title: `+${STAR_COSTS.REPORT_HAZARD_REWARD} Stars !`, 
-        description: "Merci pour votre contribution à la sécurité routière." 
+        title: "Alerte diffusée !", 
+        description: "Merci pour votre contribution à la sécurité routière kinoise." 
       });
       setOpen(false);
       form.reset();
@@ -214,17 +189,17 @@ export function ReportHazardDialog({ location }: { location: {lat: number, lng: 
                 </FormItem>
               )} />
 
-              <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100 flex items-center justify-between">
+              <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="bg-emerald-500 p-2 rounded-lg text-white">
+                  <div className="bg-blue-600 p-2 rounded-lg text-white">
                     <CheckCircle2 className="h-4 w-4" />
                   </div>
                   <div>
-                    <p className="text-[10px] font-black text-emerald-800 uppercase leading-none mb-1">Récompense Citoyenne</p>
-                    <p className="text-[9px] text-emerald-600 font-bold">Signalement vérifié par GPS</p>
+                    <p className="text-[10px] font-black text-blue-900 uppercase leading-none mb-1">Impact Communautaire</p>
+                    <p className="text-[9px] text-blue-700 font-bold">Signalement géolocalisé diffusé aux usagers</p>
                   </div>
                 </div>
-                <span className="text-xl font-black text-emerald-600">+{STAR_COSTS.REPORT_HAZARD_REWARD} ⭐</span>
+                <span className="text-xs font-black text-blue-600 bg-white px-2.5 py-1 rounded-full border border-blue-200">Live GPS</span>
               </div>
 
               <DialogFooter>

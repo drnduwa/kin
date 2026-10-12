@@ -10,12 +10,13 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Search, Star, ShieldAlert, UserX, UserCheck, Plus, ShieldCheck, Calendar, XCircle, CreditCard } from "lucide-react";
+import { Loader2, Search, Star, ShieldAlert, UserX, UserCheck, Plus, ShieldCheck, Calendar, XCircle, CreditCard, Sparkles } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { format, addMonths, addYears } from 'date-fns';
 import { fr } from 'date-fns/locale';
+import { sendRelanceGiftEmailAction } from "@/app/actions";
 
 export default function AdminStarsPage() {
   const { user } = useUser();
@@ -40,6 +41,89 @@ export default function AdminStarsPage() {
       (u.name && u.name.toLowerCase().includes(search.toLowerCase()))
     );
   }, [users, search]);
+
+  const [isBatchRunning, setIsBatchRunning] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ updated: number, total: number } | null>(null);
+
+  const handleCreditAllUsersAndSendEmail = async () => {
+    if (!isAdmin || !users || users.length === 0) return;
+    setIsBatchRunning(true);
+    let updatedCount = 0;
+    const recipientEmails: string[] = [];
+
+    try {
+      for (let i = 0; i < users.length; i++) {
+        const u = users[i];
+        if (u.email && u.email.includes('@')) {
+          recipientEmails.push(u.email);
+        }
+
+        const currentBalance = u.currentStarsBalance || 0;
+        // Option A: Offrir 25 Stars aux utilisateurs existants ayant moins de 25 Stars
+        if (currentBalance < 25 || !u.hasReceivedRelanceGift) {
+          const userRef = doc(firestore, 'users', u.id);
+          const transRef = doc(collection(userRef, 'star_transactions'));
+          const starsToAdd = Math.max(25, 25 - currentBalance);
+
+          await runTransaction(firestore, async (transaction) => {
+            const userDoc = await transaction.get(userRef);
+            if (!userDoc.exists()) return;
+            const currentData = userDoc.data() as UserProfile;
+            const newBal = (currentData.currentStarsBalance || 0) + 25;
+
+            transaction.update(userRef, {
+              currentStarsBalance: newBal,
+              totalStarsEarned: (currentData.totalStarsEarned || 0) + 25,
+              hasReceivedRelanceGift: true,
+            });
+
+            transaction.set(transRef, {
+              userId: u.id,
+              type: 'admin_adjustment',
+              starsChange: 25,
+              balanceAfterTransaction: newBal,
+              description: "Cadeau de Relance : +25 Stars Offertes",
+              timestamp: serverTimestamp(),
+            });
+          }).catch(e => console.warn(`Erreur crédit utilisateur ${u.id}:`, e));
+
+          updatedCount++;
+          setBatchProgress({ updated: updatedCount, total: users.length });
+        }
+      }
+
+      toast({
+        title: "Crédit terminé !",
+        description: `${updatedCount} utilisateurs ont été crédités de +25 Stars. Envoi de l'email de relance en cours...`,
+      });
+
+      // Envoi de l'email de notification groupé
+      const emailResult = await sendRelanceGiftEmailAction(recipientEmails);
+      if (emailResult.success) {
+        toast({
+          title: "Emails de notification diffusés ! 🚀",
+          description: `L'email de cadeau a été envoyé à ${emailResult.count} utilisateurs.`,
+          className: "bg-emerald-600 text-white",
+        });
+      } else {
+        toast({
+          title: "Notification email",
+          description: emailResult.error || "Une erreur est survenue lors de l'envoi SMTP.",
+          variant: "destructive",
+        });
+      }
+
+    } catch (err: any) {
+      toast({
+        title: "Erreur lors du traitement groupé",
+        description: err.message,
+        variant: "destructive",
+      });
+    } finally {
+      setIsBatchRunning(false);
+      setBatchProgress(null);
+    }
+  };
 
   const handleAdjustStars = async (targetUser: WithId<UserProfile>, amount: number, reason: string) => {
     if (!isAdmin) return;
@@ -179,6 +263,38 @@ export default function AdminStarsPage() {
             />
           </div>
         </div>
+
+        {/* Bannière d'Action Collective de Relance */}
+        <Card className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 text-white border-none shadow-xl rounded-3xl overflow-hidden p-6 sm:p-8">
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+            <div className="space-y-2">
+              <Badge className="bg-white/20 text-white font-black text-xs uppercase tracking-wider border-none">
+                Action de Relance Communautaire
+              </Badge>
+              <h2 className="text-xl sm:text-2xl font-black">Offrir +25 Stars & Diffuser l'E-mail aux Utilisateurs Inscrits</h2>
+              <p className="text-amber-100 text-xs sm:text-sm max-w-xl font-medium">
+                Crédite +25 Stars à tous les utilisateurs déjà inscrits ayant moins de 25 Stars, et envoie automatiquement l'e-mail de notification pour leur présenter le nouveau système FlexPay.
+              </p>
+            </div>
+            <Button
+              onClick={handleCreditAllUsersAndSendEmail}
+              disabled={isBatchRunning || isLoading || !users || users.length === 0}
+              className="bg-slate-900 hover:bg-slate-800 text-white font-black h-14 px-8 rounded-2xl shrink-0 shadow-lg text-xs uppercase tracking-wider"
+            >
+              {isBatchRunning ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  {batchProgress ? `${batchProgress.updated} crédités...` : 'Envoi en cours...'}
+                </span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <Sparkles className="h-5 w-5 fill-amber-400 text-amber-400" />
+                  Lancer le Crédit & E-mails ({users?.length || 0} membres)
+                </span>
+              )}
+            </Button>
+          </div>
+        </Card>
 
         <Card className="border-none shadow-sm overflow-hidden rounded-3xl">
           <CardHeader className="bg-slate-50/50">

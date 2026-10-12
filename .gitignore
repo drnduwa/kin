@@ -48,3 +48,5 @@ next-env.d.ts
 *.aab
 /Zola Podcast
 append.js
+flexpaie/
+firebase-debug.log

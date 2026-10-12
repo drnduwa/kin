@@ -76,11 +76,11 @@ const GUIDE_STEPS = [
   },
   {
     step: 5,
-    title: '5. Signaler les Incidents & Gagner des Stars',
+    title: '5. Signaler les Incidents en Direct',
     icon: Camera,
     color: 'bg-emerald-500 text-white',
-    desc: 'Vous voyez un accident, un nid-de-poule ou un bouchon ? En 1 seul clic, prenez une photo et partagez-la. Vous recevez immédiatement +10 Stars pour vous remercier.',
-    badge: '+10 ⭐ par Alerte',
+    desc: 'Vous voyez un accident, un nid-de-poule ou un bouchon ? En 1 seul clic, prenez une photo et partagez-la pour aider l\'ensemble des conducteurs kinois.',
+    badge: 'Alerte Live GPS',
     actionText: 'Signaler un Incident',
     actionLink: '/signaler-embouteillage'
   }
@@ -100,8 +100,8 @@ const FAQS = [
     a: 'Kinshasa Flow a été optimisé pour fonctionner avec un minimum de données mobiles (3G/4G légères) afin de garantir une navigation fluide partout dans la ville.'
   },
   {
-    q: 'À quoi servent les Stars ⭐ accumulées ?',
-    a: 'Les Stars récompensent votre contribution citoyenne. Elles débloquent des fonctionnalités avancées, des analyses exclusives et des badges de confiance sur votre profil.'
+    q: 'À quoi servent les Stars ⭐ ?',
+    a: 'Les Stars permettent d\'accéder aux services premium : l\'assistant vocal IA en Lingala/Français, l\'analyse prédictive d\'itinéraires et le guidage GPS K-Flow Nav. Vous recevez un pack de bienvenue à l\'inscription et pouvez recharger votre solde ou activer un Pass Illimité via Mobile Money (M-Pesa, Orange, Airtel, Afrimoney) ou Carte Bancaire.'
   },
   {
     q: 'Comment contacter l\'équipe ou signaler un problème ?',

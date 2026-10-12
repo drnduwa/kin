@@ -33,7 +33,7 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { STAR_COSTS, UserProfile } from '@/lib/types';
 import { useFirebase, useUser } from '@/firebase';
-import { collection, serverTimestamp, doc, runTransaction } from 'firebase/firestore';
+import { collection, serverTimestamp, doc, runTransaction, setDoc } from 'firebase/firestore';
 import { getStorage, ref as storageRef, uploadString, getDownloadURL } from 'firebase/storage';
 import { broadcastEmailAction } from '@/app/actions';
 import { cn } from '@/lib/utils';
@@ -222,24 +222,8 @@ export default function ReportTrafficForm() {
       };
 
       const eventsCollection = collection(firestore, 'events');
-      
-      // Credit Stars transaction
-      await runTransaction(firestore, async (transaction) => {
-        const userRef = doc(firestore, 'users', user.uid);
-        const userDoc = await transaction.get(userRef);
-        const profile = userDoc.data() as UserProfile;
-        
-        const reward = STAR_COSTS.REPORT_HAZARD_REWARD || 10;
-        const newBalance = (profile?.currentStarsBalance || 0) + reward;
-        
-        transaction.update(userRef, { 
-          currentStarsBalance: newBalance, 
-          totalStarsEarned: (profile?.totalStarsEarned || 0) + reward 
-        });
-        
-        const newEventRef = doc(eventsCollection);
-        transaction.set(newEventRef, eventData);
-      });
+      const newEventRef = doc(eventsCollection);
+      await setDoc(newEventRef, eventData);
 
       // Broadcast Email Alert in background
       try {
@@ -279,8 +263,8 @@ export default function ReportTrafficForm() {
           </div>
 
           <div className="space-y-2">
-            <Badge className="bg-amber-500 text-slate-950 font-black text-xs px-3 py-1 uppercase tracking-wider border-none">
-              +{STAR_COSTS.REPORT_HAZARD_REWARD || 10} Stars Créditées ⭐
+            <Badge className="bg-blue-600 text-white font-black text-xs px-3 py-1 uppercase tracking-wider border-none">
+              Alerte Citoyenne Transmise 📡
             </Badge>
             <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
               Signalement Diffusé en Direct !
@@ -349,9 +333,9 @@ export default function ReportTrafficForm() {
               )}
             </div>
 
-            <span className="text-xs font-black text-amber-300 bg-black/20 px-2.5 py-1 rounded-full flex items-center gap-1">
+            <span className="text-xs font-black text-white/90 bg-black/20 px-2.5 py-1 rounded-full flex items-center gap-1">
               <Sparkles className="h-3.5 w-3.5 fill-amber-300" />
-              +{STAR_COSTS.REPORT_HAZARD_REWARD || 10} Stars
+              Direct K-Flow
             </span>
           </div>
 

@@ -154,13 +154,13 @@ export default function GuidePage() {
               <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-black">
                 <Camera className="h-6 w-6" />
               </div>
-              <h3 className="text-base font-black text-slate-900">4. Signaler en 1 Clic & Gagner des Stars</h3>
+              <h3 className="text-base font-black text-slate-900">4. Signaler en 1 Clic pour la Communauté</h3>
               <p className="text-xs sm:text-sm text-slate-600 font-medium leading-relaxed">
-                Prenez une photo d'un incident en 1 clic pour prévenir la ville et recevez immédiatement +10 Stars ⭐ sur votre compte.
+                Prenez une photo d'un incident en 1 clic pour prévenir la communauté kinoise et fluidifier la circulation en direct.
               </p>
               <Button asChild size="sm" className="rounded-xl h-9 font-black text-xs bg-emerald-600 hover:bg-emerald-500 text-white gap-1.5">
                 <Link href="/signaler-embouteillage">
-                  <span>Signaler (+10 ⭐)</span>
+                  <span>Signaler un Incident</span>
                   <ArrowRight className="h-3.5 w-3.5" />
                 </Link>
               </Button>

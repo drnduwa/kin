@@ -79,9 +79,8 @@ export function SignupForm() {
                     consecutiveLoginDays: 0,
                     isProfileComplete: true,
                     isBlocked: false,
-                    isCashSubscribed: true,
-                    hasUsedFreeTrial: true,
-                    cashSubscriptionExpiry: freeTrialExpiry,
+                    isCashSubscribed: false,
+                    hasActivePass: false,
                     createdAt: serverTimestamp(),
                 };
 

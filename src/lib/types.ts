@@ -14,9 +14,9 @@ export const STAR_COSTS = {
   ROUTE_PLAN: 4,
   ALERTS_DAILY: 2,
   EXPORT_REPORT: 10,
-  SIGNUP_BONUS: 100,
+  SIGNUP_BONUS: 25,
   NAVIGATION_SESSION: 3,
-  REPORT_HAZARD_REWARD: 10,
+  REPORT_HAZARD_REWARD: 0,
 } as const;
 
 // App Navigation Features
@@ -149,10 +149,27 @@ export const userProfileSchema = z.object({
   isBlocked: z.boolean().default(false),
   isCashSubscribed: z.boolean().default(false),
   cashSubscriptionExpiry: z.any().optional(),
-  hasUsedFreeTrial: z.boolean().default(false),
+  hasActivePass: z.boolean().default(false),
+  passExpiresAt: z.any().optional(),
+  passType: z.enum(['weekly', 'monthly']).optional(),
+  hasUsedFreeTrial: z.boolean().default(false).optional(),
+  hasReceivedRelanceGift: z.boolean().default(false).optional(),
   createdAt: z.any().optional(),
 });
 export type UserProfile = z.infer<typeof userProfileSchema>;
+
+export function isUserSubscribedOrHasPass(profile?: UserProfile | null): boolean {
+  if (!profile) return false;
+  if (profile.hasActivePass && profile.passExpiresAt) {
+    const expires = profile.passExpiresAt?.toDate ? profile.passExpiresAt.toDate() : new Date(profile.passExpiresAt);
+    if (expires > new Date()) return true;
+  }
+  if (profile.isCashSubscribed && profile.cashSubscriptionExpiry) {
+    const expires = profile.cashSubscriptionExpiry?.toDate ? profile.cashSubscriptionExpiry.toDate() : new Date(profile.cashSubscriptionExpiry);
+    if (expires > new Date()) return true;
+  }
+  return false;
+}
 
 export type WithId<T> = T & { id: string };
 
@@ -241,6 +258,63 @@ export interface StarTransaction {
   relatedObjectId?: string;
   relatedObjectType?: string;
 }
+
+// FlexPay Payment Types
+export interface FlexPayPaymentRequest {
+  merchant: string;
+  type: "1" | "2"; // "1" for Mobile Money, "2" for Card
+  phone?: string;  // 243XXXXXXXXX
+  reference: string;
+  amount: number | string;
+  currency: "USD" | "CDF";
+  description?: string;
+  callback_url: string;
+  approve_url?: string;
+  cancel_url?: string;
+  decline_url?: string;
+}
+
+export interface FlexPayResponse {
+  code: string | number;
+  message?: string;
+  orderNumber?: string;
+  url?: string;
+  status?: string;
+}
+
+export interface FlexPayCheckResponse {
+  code: string | number;
+  message?: string;
+  transaction?: {
+    orderNumber?: string;
+    reference?: string;
+    status?: "0" | "1" | "2" | number | string; // 0: Success, 1: Failed, 2: Pending
+    amount?: string | number;
+    currency?: string;
+    channel?: string;
+    createdAt?: string;
+  };
+}
+
+export interface PaymentRecord {
+  id: string;
+  orderNumber: string;
+  reference: string;
+  userId: string;
+  itemType: 'pack' | 'pass';
+  itemId: string;
+  stars?: number;
+  passType?: 'weekly' | 'monthly';
+  amount: number;
+  currency: 'CDF' | 'USD';
+  channel: 'mobile_money' | 'card';
+  network?: string;
+  phone?: string;
+  status: 'pending' | 'success' | 'failed';
+  createdAt: any;
+  completedAt?: any;
+}
+
 
 // Car Rental
 export const carBookingFormSchema = z.object({
@@ -538,13 +612,13 @@ export interface TrafficHistorySnapshot {
 
 export interface HourlyForecast {
   time: string;
-  status: "EMBOUTEILLAGE" | "DENSE" | "MODÉRÉ" | "FLUIDE" | "INCONNU";
+  status: "EMBOUTEILLAGE" | "DENSE" | "MODï¿½Rï¿½" | "FLUIDE" | "INCONNU";
   delay: number;
 }
 
 export interface TrafficForecast {
   road: string;
-  currentStatus: "EMBOUTEILLAGE" | "DENSE" | "MODÉRÉ" | "FLUIDE" | "INCONNU";
+  currentStatus: "EMBOUTEILLAGE" | "DENSE" | "MODï¿½Rï¿½" | "FLUIDE" | "INCONNU";
   currentDelay: number;
   hourlyForecast: HourlyForecast[];
   alternatives: {

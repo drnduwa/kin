@@ -33,7 +33,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useUser, useFirebase, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, runTransaction, serverTimestamp, collection, query, orderBy, limit } from 'firebase/firestore';
-import { STAR_COSTS, UserProfile, EventReport } from '@/lib/types';
+import { STAR_COSTS, UserProfile, EventReport, isUserSubscribedOrHasPass } from '@/lib/types';
 import { generateSpeechAction, getGoogleTrafficStatusAction } from '@/app/actions';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
@@ -263,10 +263,12 @@ export default function KFlowNav() {
             return;
         }
 
-        if (profile.currentStarsBalance < STAR_COSTS.NAVIGATION_SESSION) {
+        const hasPass = isUserSubscribedOrHasPass(profile);
+
+        if (!hasPass && profile.currentStarsBalance < STAR_COSTS.NAVIGATION_SESSION) {
             toast({
                 title: "Solde insuffisant",
-                description: `L'analyse premium coûte ${STAR_COSTS.NAVIGATION_SESSION} stars.`,
+                description: `L'analyse premium coûte ${STAR_COSTS.NAVIGATION_SESSION} stars. Rechargez votre compte ou activez un Pass Illimité.`,
                 variant: "destructive",
                 action: <Button asChild variant="outline" size="sm"><Link href="/mes-stars">Boutique</Link></Button>
             });
@@ -382,21 +384,23 @@ export default function KFlowNav() {
                 }
             }
 
-            await runTransaction(firestore, async (transaction) => {
-                const userDoc = await transaction.get(userRef!);
-                const data = userDoc.data() as UserProfile;
-                const newBalance = data.currentStarsBalance - STAR_COSTS.NAVIGATION_SESSION;
-                transaction.update(userRef!, { currentStarsBalance: newBalance });
-                const starTransRef = doc(collection(userRef!, 'star_transactions'));
-                transaction.set(starTransRef, {
-                    userId: user.uid,
-                    type: 'spent',
-                    starsChange: -STAR_COSTS.NAVIGATION_SESSION,
-                    balanceAfterTransaction: newBalance,
-                    description: `Guidage GPS : ${destination}`,
-                    timestamp: serverTimestamp(),
+            if (!hasPass) {
+                await runTransaction(firestore, async (transaction) => {
+                    const userDoc = await transaction.get(userRef!);
+                    const data = userDoc.data() as UserProfile;
+                    const newBalance = data.currentStarsBalance - STAR_COSTS.NAVIGATION_SESSION;
+                    transaction.update(userRef!, { currentStarsBalance: newBalance });
+                    const starTransRef = doc(collection(userRef!, 'star_transactions'));
+                    transaction.set(starTransRef, {
+                        userId: user.uid,
+                        type: 'spent',
+                        starsChange: -STAR_COSTS.NAVIGATION_SESSION,
+                        balanceAfterTransaction: newBalance,
+                        description: `Guidage GPS : ${destination}`,
+                        timestamp: serverTimestamp(),
+                    });
                 });
-            });
+            }
 
             setSummaryData({
                 destination,
