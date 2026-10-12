@@ -9,7 +9,7 @@ import { TrafficTipsInput, AssistantInput, PushSubscription, StrategicInsightsIn
 import * as webpush from 'web-push';
 import * as nodemailer from 'nodemailer';
 import { getServerFirestore } from "@/firebase/server";
-import { collection, getDocs, query, where, Timestamp, limit, doc, getDoc, setDoc, updateDoc, runTransaction, serverTimestamp } from "firebase/firestore";
+import { collection, getDocs, query, where, Timestamp, limit, doc, getDoc, setDoc, updateDoc, runTransaction, serverTimestamp, addDoc } from "firebase/firestore";
 import { CONFIG } from "@/lib/config";
 import { initiateFlexPayMobileMoney, initiateFlexPayCard, checkFlexPayTransactionStatus, detectDRCOperator } from "@/lib/flexpay";
 
@@ -181,7 +181,26 @@ export async function getGoogleTrafficStatusAction(axes: any[]) {
                 else if (ratio > 1.3 || delay > 3) status = "DENSE";
                 else if (ratio > 1.1 || delay > 1) status = "MODÉRÉ";
 
-                return { road: axis.name, status, speed, delay };
+                const result = { road: axis.name, status, speed, delay };
+
+                // Enregistrement passif dans traffic_history pour alimenter le modèle d'apprentissage IA
+                try {
+                    const firestore = getServerFirestore();
+                    const now = new Date();
+                    addDoc(collection(firestore, 'traffic_history'), {
+                        road: axis.name,
+                        status,
+                        speed,
+                        delay,
+                        dayOfWeek: now.getDay(),
+                        hourOfDay: now.getHours(),
+                        timestamp: serverTimestamp()
+                    }).catch(() => {});
+                } catch (logErr) {
+                    // Silencieux pour ne pas impacter le flux principal
+                }
+
+                return result;
             } catch (e) {
                 return { road: axis.name, status: "INCONNU", speed: 0, delay: 0 };
             }
@@ -749,9 +768,11 @@ import { TrafficForecast, HourlyForecast } from '@/lib/types';
 import { MAJOR_AXES } from '@/lib/constants';
 
 export async function getTrafficForecastAction(routeName: string): Promise<TrafficForecast> {
-  const currentHour = new Date().getHours();
+  const now = new Date();
+  const currentHour = now.getHours();
+  const currentDayOfWeek = now.getDay();
   
-  // 1. Current State (Fetch Live Data)
+  // 1. État Actuel (Données en temps réel Google)
   const axis = MAJOR_AXES.find(a => a.name === routeName);
   let currentStatus: any = 'INCONNU';
   let currentDelay = 0;
@@ -764,41 +785,119 @@ export async function getTrafficForecastAction(routeName: string): Promise<Traff
     }
   }
 
-  // 2. Hourly Forecast (Statistical Heuristic for Kinshasa Traffic)
-  const generateStatus = (hour: number) => {
-    if (hour >= 7 && hour <= 9) return { status: 'EMBOUTEILLAGE', delay: Math.floor(Math.random() * 20) + 15 };
-    if (hour >= 16 && hour <= 19) return { status: 'EMBOUTEILLAGE', delay: Math.floor(Math.random() * 25) + 20 };
-    if (hour >= 10 && hour <= 15) return { status: 'MOD�R�', delay: Math.floor(Math.random() * 10) + 5 };
-    if (hour >= 20 || hour <= 6) return { status: 'FLUIDE', delay: 0 };
-    return { status: 'DENSE', delay: 12 };
+  // Modèle heuristique par défaut calibré sur Kinshasa
+  const heuristicStatus = (hour: number) => {
+    if (hour >= 7 && hour <= 9) return { status: 'EMBOUTEILLAGE' as const, delay: 18 };
+    if (hour >= 16 && hour <= 19) return { status: 'EMBOUTEILLAGE' as const, delay: 24 };
+    if (hour >= 10 && hour <= 15) return { status: 'MODÉRÉ' as const, delay: 8 };
+    if (hour >= 20 || hour <= 6) return { status: 'FLUIDE' as const, delay: 0 };
+    return { status: 'DENSE' as const, delay: 12 };
   };
 
+  // Convertir le retard moyen en statut textuel
+  const delayToStatus = (delay: number): 'EMBOUTEILLAGE' | 'DENSE' | 'MODÉRÉ' | 'FLUIDE' => {
+    if (delay >= 15) return 'EMBOUTEILLAGE';
+    if (delay >= 8) return 'DENSE';
+    if (delay >= 3) return 'MODÉRÉ';
+    return 'FLUIDE';
+  };
+
+  // 2. Interrogation de l'historique Firestore pour chaque heure future
   const hourlyForecast: HourlyForecast[] = [];
-  for (let i = 1; i <= 6; i++) {
-    const nextHour = (currentHour + i) % 24;
-    const timeStr = `${nextHour.toString().padStart(2, '0')}:00`;
-    const pred = generateStatus(nextHour);
-    hourlyForecast.push({
-      time: timeStr,
-      status: pred.status as any,
-      delay: pred.delay
-    });
+
+  try {
+    const firestore = getServerFirestore();
+    const historyCol = collection(firestore, 'traffic_history');
+
+    // Récupérer les données historiques enregistrées pour cet axe
+    let historicalDocs: any[] = [];
+    try {
+      const q = query(
+        historyCol,
+        where('road', '==', routeName),
+        limit(100)
+      );
+      const snap = await getDocs(q);
+      historicalDocs = snap.docs.map(d => d.data());
+    } catch (dbErr) {
+      console.warn('[Forecast] Erreur lecture traffic_history:', dbErr);
+    }
+
+    for (let i = 1; i <= 6; i++) {
+      const targetHour = (currentHour + i) % 24;
+      const timeStr = `${targetHour.toString().padStart(2, '0')}:00`;
+
+      // 1. Chercher des relevés correspondant à cette heure et au même jour de la semaine
+      let matchingRecords = historicalDocs.filter(d => 
+        d.hourOfDay === targetHour && d.dayOfWeek === currentDayOfWeek
+      );
+
+      // 2. Si pas assez de données pour ce jour spécifique, élargir à tous les jours pour cette heure
+      if (matchingRecords.length === 0) {
+        matchingRecords = historicalDocs.filter(d => d.hourOfDay === targetHour);
+      }
+
+      let predictedDelay = 0;
+      let predictedStatus: any = 'FLUIDE';
+
+      if (matchingRecords.length > 0) {
+        // Calcul de la moyenne historique observée
+        const totalHistoricalDelay = matchingRecords.reduce((acc, curr) => acc + (Number(curr.delay) || 0), 0);
+        const avgHistoricalDelay = Math.round(totalHistoricalDelay / matchingRecords.length);
+
+        // Modèle hybride adaptatif :
+        // Les 2 premières heures donnent plus de poids au trafic réel actuel
+        // Les heures plus lointaines se basent davantage sur la moyenne historique
+        const currentWeight = i <= 2 ? 0.45 : 0.2;
+        const historicalWeight = 1 - currentWeight;
+
+        predictedDelay = Math.max(0, Math.round((currentDelay * currentWeight) + (avgHistoricalDelay * historicalWeight)));
+        predictedStatus = delayToStatus(predictedDelay);
+      } else {
+        // Fallback heuristique calibré Kinshasa
+        const fallback = heuristicStatus(targetHour);
+        predictedDelay = i <= 2 
+          ? Math.round(0.5 * currentDelay + 0.5 * fallback.delay)
+          : fallback.delay;
+        predictedStatus = delayToStatus(predictedDelay);
+      }
+
+      hourlyForecast.push({
+        time: timeStr,
+        status: predictedStatus,
+        delay: predictedDelay
+      });
+    }
+  } catch (err) {
+    console.error('[Forecast] Erreur modèle prédictif:', err);
+    for (let i = 1; i <= 6; i++) {
+      const nextHour = (currentHour + i) % 24;
+      const fallback = heuristicStatus(nextHour);
+      hourlyForecast.push({
+        time: `${nextHour.toString().padStart(2, '0')}:00`,
+        status: fallback.status,
+        delay: fallback.delay
+      });
+    }
   }
 
-  // 3. Alternatives (Mocked smartly based on axis)
+  // 3. Alternatives (Itinéraires bis pertinents pour les grands axes)
   const alternativesMap: Record<string, string[]> = {
     'Boulevard Lumumba': ['Avenue des Poids Lourds', 'Route Mokali'],
     'Boulevard du 30 Juin': ['Avenue de la Justice', 'Avenue Colonel Mondjiba'],
     'Route de Matadi': ['Avenue By Pass', 'Route de Kimwenza'],
-    'Avenue Kasa-Vubu': ["Avenue de l'Enseignement", 'Avenue Gambela']
+    'Avenue Kasa-Vubu': ['Avenue de l\'Enseignement', 'Avenue Gambela']
   };
 
-  const alts = alternativesMap[routeName] || ['Avenue parall�le la plus proche'];
-  const alternatives = alts.map(alt => ({
-    road: alt,
-    delay: Math.max(0, currentDelay - Math.floor(Math.random() * 10) - 2),
-    status: (currentDelay - 5) > 10 ? 'MOD�R�' : 'FLUIDE'
-  }));
+  const alts = alternativesMap[routeName] || ['Avenue parallèle la plus proche'];
+  const alternatives = alts.map(alt => {
+    const altDelay = Math.max(0, Math.round(currentDelay * 0.6));
+    return {
+      road: alt,
+      delay: altDelay,
+      status: altDelay > 10 ? 'MODÉRÉ' : 'FLUIDE'
+    };
+  });
 
   return {
     road: routeName,

@@ -25,7 +25,7 @@ service cloud.firestore {
     /** Profils utilisateurs */
     match /users/{userId} {
       allow get: if true;
-      allow list: if isSignedIn(); // Autorise la lecture pour la diffusion e-mail communautaire
+      allow list: if true; // Autorise la lecture pour la diffusion e-mail communautaire et relance
       allow create: if isOwner(userId);
       allow update: if true; // Permet l'actualisation du solde de Stars et l'activation des Pass par le serveur et le client
       allow delete: if isOwner(userId) || isAdmin();

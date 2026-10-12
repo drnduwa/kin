@@ -612,13 +612,13 @@ export interface TrafficHistorySnapshot {
 
 export interface HourlyForecast {
   time: string;
-  status: "EMBOUTEILLAGE" | "DENSE" | "MOD�R�" | "FLUIDE" | "INCONNU";
+  status: "EMBOUTEILLAGE" | "DENSE" | "MODÉRÉ" | "FLUIDE" | "INCONNU";
   delay: number;
 }
 
 export interface TrafficForecast {
   road: string;
-  currentStatus: "EMBOUTEILLAGE" | "DENSE" | "MOD�R�" | "FLUIDE" | "INCONNU";
+  currentStatus: "EMBOUTEILLAGE" | "DENSE" | "MODÉRÉ" | "FLUIDE" | "INCONNU";
   currentDelay: number;
   hourlyForecast: HourlyForecast[];
   alternatives: {
