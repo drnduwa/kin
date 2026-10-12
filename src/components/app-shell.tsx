@@ -200,31 +200,42 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [events, notifs, pathname]);
 
   useEffect(() => {
-    if (!profile || !subSettings) return;
+    if (!profile) return;
 
-    // Si l'utilisateur possède un pass illimité ou un abonnement actif, accès total sans avertissement de solde
+    // 1. Si l'utilisateur possède un pass illimité ou un abonnement actif, accès total sans avertissement
     if (isUserSubscribedOrHasPass(profile)) return;
 
-    if (subSettings.mode === 'stars') {
-      if (profile.currentStarsBalance < 5 && pathname !== '/mes-stars' && !['/', '/privacy'].includes(pathname)) {
+    // 2. Si l'utilisateur a un solde suffisant de Stars (>= 5, ex: 125 Stars), compte parfaitement actif !
+    const stars = profile.currentStarsBalance ?? 0;
+    if (stars >= 5) {
+      return;
+    }
+
+    // 3. Si le solde est faible (entre 1 et 4 Stars)
+    if (stars > 0 && stars < 5) {
+      if (pathname !== '/mes-stars' && !['/', '/privacy'].includes(pathname)) {
         toast({
           title: 'Solde de Stars faible',
-          description: `Il vous reste ${profile.currentStarsBalance || 0} Stars. Rechargez pour continuer sans coupure.`,
+          description: `Il vous reste ${stars} Star${stars > 1 ? 's' : ''}. Rechargez pour continuer sans interruption.`,
           variant: 'destructive',
           action: <ToastAction altText="Recharger" onClick={() => router.push('/mes-stars')}>Recharger</ToastAction>,
         });
       }
-    } else {
-      const isExpired = profile.cashSubscriptionExpiry?.toDate?.() ? profile.cashSubscriptionExpiry.toDate() < new Date() : true;
-      if (isExpired && pathname !== '/mes-stars' && !['/', '/privacy'].includes(pathname)) {
+      return;
+    }
+
+    // 4. Si le solde est épuisé (0 Star)
+    if (stars <= 0) {
+      if (pathname !== '/mes-stars' && !['/', '/privacy'].includes(pathname)) {
         toast({
-          title: 'Abonnement expiré',
+          title: 'Solde de Stars épuisé',
+          description: 'Rechargez votre compte en Stars ou activez un Pass Illimité pour continuer.',
           variant: 'destructive',
-          action: <ToastAction altText="S'abonner" onClick={() => router.push('/mes-stars')}>S'abonner</ToastAction>,
+          action: <ToastAction altText="Recharger" onClick={() => router.push('/mes-stars')}>Recharger</ToastAction>,
         });
       }
     }
-  }, [profile, subSettings, pathname, toast, router]);
+  }, [profile, pathname, toast, router]);
 
   // Attribution automatique du cadeau de fidélité de 25 Stars pour les utilisateurs existants
   useEffect(() => {
