@@ -16,6 +16,7 @@ import {
   levelProgress, rankFor, RANKS, DAILY_MISSIONS, BADGES, COMMUNES, kinshasaDayKey, XP,
 } from '@/lib/game';
 import { DAILY_REWARD_CAP_CDF, REWARD_CDF } from '@/lib/pricing';
+import SpeedSharingToggle from '@/components/game/speed-sharing-toggle';
 
 export default function QuestsPage() {
   const { user } = useUser();
@@ -133,6 +134,8 @@ export default function QuestsPage() {
             (FC limités à {DAILY_REWARD_CAP_CDF.toLocaleString('fr-FR')} par jour). Premier geste du jour : +{XP.streakDay} XP de série.
           </p>
         </section>
+
+        <SpeedSharingToggle />
 
         {/* Badges */}
         <section className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-3">

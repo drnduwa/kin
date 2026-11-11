@@ -34,7 +34,9 @@ service cloud.firestore {
               'currentStarsBalance', 'totalStarsEarned', 'totalStarsPurchased', 'totalStarsUsed',
               'hasReceivedRelanceGift',
               // Jeu : XP, niveaux, séries, badges (écrits par le serveur seulement)
-              'xp', 'level', 'gameVotes', 'gameReports', 'streakDays', 'lastActiveDay', 'badges'];
+              'xp', 'level', 'gameVotes', 'gameReports', 'streakDays', 'lastActiveDay', 'badges',
+              // Programme Sentinelles (nommées par un admin)
+              'isSentinel', 'sentinelCorridor'];
     }
 
     // Création du profil à l'inscription : aucun argent, aucun Pass, bonus de bienvenue (25 Stars) au plus.
@@ -213,6 +215,15 @@ service cloud.firestore {
     match /traffic_events/{id} {
       allow read: if true;
       allow write: if isAdmin();
+    }
+
+    /** Phase 3 : sondes GPS agrégées, limites d'envoi et flottes partenaires (serveur / admin seulement). */
+    match /probe_buckets/{id} { allow read: if isAdmin(); allow write: if false; }
+    match /probe_limits/{id} { allow read, write: if false; }
+    match /fleet_partners/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
+      match /vehicles/{vehicleId} { allow read: if isAdmin(); allow write: if false; }
     }
 
     /** Anti-doublon et plafond journalier des récompenses : serveur uniquement. */

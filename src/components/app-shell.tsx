@@ -21,6 +21,7 @@ import {
   Target,
   Trophy
 } from 'lucide-react';
+import SpeedSharingAgent from '@/components/game/speed-sharing-agent';
 import {
   Sidebar,
   SidebarProvider,
@@ -291,6 +292,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       '/reports': 'Baromètre Trafic',
       '/e-wallet': 'K-Flow E-Wallet & Gains',
       '/quetes': 'Quêtes',
+      '/trajet': 'Mon trajet',
+      '/pro': 'Kin Flow Pro',
+      '/admin/croissance': 'Croissance',
       '/classement': 'Classement',
       '/live-traffic': 'Temps Réel',
       '/local-traffic': 'Trafic Local',
@@ -381,6 +385,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </SidebarMenuButton>
               </SidebarMenuItem>
 
+              {/* Trajet : coach de départ */}
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/trajet'} className={cn("h-11 rounded-xl px-4", pathname === '/trajet' && "bg-white/10")}>
+                  <Link href="/trajet" className="font-bold flex items-center gap-3 w-full">
+                    <Clock className="h-5 w-5 text-primary" />
+                    <span>Mon trajet : quand partir ?</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
               {/* 5. Jeu : Quêtes et Classement */}
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={pathname === '/quetes'} className={cn("h-11 rounded-xl px-4", pathname === '/quetes' && "bg-white/10")}>
@@ -396,6 +410,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     <Trophy className="h-5 w-5 text-amber-500" />
                     <span>Classement des communes</span>
                   </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              {/* Phase 3 : flottes et radios */}
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/pro'} className={cn("h-11 rounded-xl px-4", pathname === '/pro' && "bg-white/10")}>
+                  <Link href="/pro" className="font-bold flex items-center gap-3 w-full">
+                    <Bus className="h-5 w-5 text-primary" />
+                    <span>Kin Flow Pro (flottes)</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild className="h-11 rounded-xl px-4">
+                  <a href="/flash" target="_blank" rel="noopener noreferrer" className="font-bold flex items-center gap-3 w-full">
+                    <Megaphone className="h-5 w-5 text-primary" />
+                    <span>Flash radio (lingala)</span>
+                  </a>
                 </SidebarMenuButton>
               </SidebarMenuItem>
 
@@ -641,6 +673,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     </SidebarMenuButton>
                   </SidebarMenuItem>
 
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={pathname === '/admin/croissance'} className={cn(pathname === '/admin/croissance' && "bg-white/10")}>
+                      <Link href="/admin/croissance" className="font-medium flex items-center gap-3 h-11 px-4 rounded-xl">
+                        <BarChart3 className="text-destructive h-5 w-5" />
+                        <span>Croissance (événements, flottes)</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+
                   <div className="px-4 mt-4 mb-2 text-[10px] font-black uppercase text-destructive/60 tracking-widest">Services</div>
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild isActive={pathname === '/admin/car-rental'} className={cn(pathname === '/admin/car-rental' && "bg-white/10")}>
@@ -710,6 +751,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </header>
                 <main className="flex-1 min-h-0 p-2 sm:p-3 md:p-4 flex flex-col gap-2 md:gap-4 overflow-hidden bg-background">
                     <NotificationPermission />
+                    <SpeedSharingAgent />
                     <div className="flex-1 min-h-0 w-full flex flex-col overflow-hidden">
                         {isProtectedPage ? <ProtectedContent>{children}</ProtectedContent> : children}
                     </div>
@@ -732,16 +774,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     <span className="text-[9px] font-bold tracking-tight mt-0.5">Carte</span>
                   </Link>
 
-                  {/* 2. Itinéraire (GPS) */}
+                  {/* 2. Trajet : coach de départ */}
                   <Link
-                    href="/k-flow-nav"
+                    href="/trajet" 
                     className={cn(
                       "flex flex-col items-center justify-center flex-1 py-1 px-0.5 rounded-2xl transition-all",
-                      pathname === '/k-flow-nav' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
+                      pathname === '/trajet' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
                     )}
                   >
-                    <div className={cn("p-1 rounded-xl transition-all", pathname === '/k-flow-nav' && "bg-primary/10")}>
-                      <Navigation className={cn("h-5 w-5", pathname === '/k-flow-nav' ? "text-primary" : "text-slate-400")} />
+                    <div className={cn("p-1 rounded-xl transition-all", pathname === '/trajet' && "bg-primary/10")}>
+                      <Navigation className={cn("h-5 w-5", pathname === '/trajet' ? "text-primary" : "text-slate-400")} />
                     </div>
                     <span className="text-[9px] font-bold tracking-tight mt-0.5">Trajet</span>
                   </Link>

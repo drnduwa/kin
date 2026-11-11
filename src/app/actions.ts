@@ -16,6 +16,7 @@ import { adminDb, verifyCaller, verifyAdmin, AuthError } from "@/firebase/admin"
 import { FieldValue } from "firebase-admin/firestore";
 import { STAR_PACK_CATALOG, PASS_CATALOG, DATA_PACK_CATALOG, REWARD_CDF, DAILY_REWARD_CAP_CDF, MIN_CASHOUT_CDF, CDF_PER_USD } from "@/lib/pricing";
 import { fulfillVerifiedFlexPayPayment, markPaymentFailed } from "@/lib/payments-server";
+import { loadRecentProbeSpeeds, statusFromSpeed } from "@/lib/probes-server";
 import { XP, DAILY_MISSIONS, BADGES, COMMUNES, levelFromXp, rankFor, kinshasaDayKey, kinshasaWeekId, type MissionKind } from "@/lib/game";
 
 /** Identifiants SMTP lus dans l'environnement uniquement (les mots de passe ne doivent plus être dans le code). */
@@ -189,6 +190,10 @@ function buildWhy(node: any, ctx: { weather: { rainMmH: number; rainProbNext2h: 
         if (distanceKm(node.coords, e) <= e.radiusKm) {
             items.push({ icon: EVENT_ICON[e.type] || 'calendar', label: e.title, evidence: 'Calendrier des événements', weight: 3, confirmed: true });
         }
+    }
+    if (node.probe && node.probe.speedKmh < 15) {
+        const n = node.probe.contributors;
+        items.push({ icon: 'gps', label: `${n} conducteur${n > 1 ? 's' : ''} roule${n > 1 ? 'nt' : ''} à ${node.probe.speedKmh} km/h ici`, evidence: 'GPS anonyme · 15 dernières minutes', weight: n >= 3 ? 2 : 1, confirmed: n >= 3 });
     }
     const v = node.votes || { still: 0, clear: 0, lastAgeMin: null };
     if (v.still > v.clear && v.still > 0) {
@@ -1280,6 +1285,7 @@ export async function awardWalletContributionAction(params: {
         // Prénom seulement : le classement est visible par tous les usagers connectés.
         name: String(user.name || 'Kinois').trim().split(/\s+/)[0].slice(0, 20),
         commune: user.commune || null,
+        isSentinel: user.isSentinel === true,
         points: FieldValue.increment(gainedXp),
         updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
@@ -1689,7 +1695,26 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
     }
   }));
 
-  // Panneau « Pourquoi » : signalements, événements, votes et météo réels
+  // GPS anonyme des usagers volontaires et des flottes partenaires (15 dernières minutes).
+  // À partir de 3 contributeurs distincts, c'est une mesure en direct à part entière.
+  const probes = await loadRecentProbeSpeeds();
+  for (const b of bottlenecks as any[]) {
+    const p = probes[b.id];
+    if (!p) continue;
+    b.probe = p;
+    if (p.contributors >= 3) {
+      if (!b.isLive) {
+        b.status = statusFromSpeed(p.speedKmh);
+        b.speedKmh = p.speedKmh;
+        b.delayMin = null; // pas de temps « route vide » fiable pour calculer un retard
+        b.source = 'gps';
+        b.isLive = true;
+      }
+      b.confidence = Math.min(98, Math.max(b.confidence || 0, 60) + 15);
+    }
+  }
+
+  // Panneau « Pourquoi » : signalements, événements, votes, GPS et météo réels
   const [weather, trafficEvents] = await Promise.all([loadKinshasaWeather(), loadActiveTrafficEvents()]);
   for (const b of bottlenecks as any[]) b.why = buildWhy(b, { weather, events: trafficEvents });
 

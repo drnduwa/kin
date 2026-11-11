@@ -64,9 +64,9 @@ const STATUS_CONFIG = {
 
 /** Dit d'où vient un chiffre : mesure en direct, estimation horaire ou aucune donnée. */
 function SourceChip({ source, confidence }: { source?: string; confidence?: number }) {
-  const live = source === 'google';
+  const live = source === 'google' || source === 'gps';
   const estimate = source === 'estimate' || source === 'osrm';
-  const label = live ? 'Mesuré en direct' : estimate ? "Estimation selon l'heure" : 'Pas de données';
+  const label = source === 'gps' ? 'Mesuré en direct · GPS usagers' : live ? 'Mesuré en direct' : estimate ? "Estimation selon l'heure" : 'Pas de données';
   return (
     <span
       title={live ? 'Temps de trajet mesuré par Google Routes avec le trafic actuel' : estimate ? "Pas de mesure en direct : temps sur route vide multiplié par un facteur d'heure de pointe" : 'Aucune source disponible'}
@@ -853,7 +853,7 @@ export default function TrafficCommandDashboard() {
                           {cfg.label}
                         </Badge>
                         <div className="text-[10px] font-bold text-slate-500 mt-0.5">
-                          {typeof delay === 'number' ? `${node.isLive ? '' : '~'}+${delay} min • ${speed} km/h` : '—'}
+                          {typeof delay === 'number' ? `${node.isLive ? '' : '~'}+${delay} min • ${speed} km/h` : typeof speed === 'number' ? `${speed} km/h` : '—'}
                         </div>
                       </div>
                     </div>

@@ -35,6 +35,8 @@ export default function LeaderboardPage() {
   const { data: players, isLoading: loadingP } = useCollection<any>(playersQ);
   const meRef = useMemoFirebase(() => (user ? doc(firestore, 'leaderboards', week, 'players', user.uid) : null), [firestore, user, week]);
   const { data: me } = useDoc<any>(meRef);
+  const sponsorRef = useMemoFirebase(() => doc(firestore, 'app_settings', 'sponsor'), [firestore]);
+  const { data: sponsor } = useDoc<any>(sponsorRef);
 
   const top = communes || [];
   const leader = top[0], second = top[1];
@@ -66,6 +68,11 @@ export default function LeaderboardPage() {
             </>
           ) : (
             <p className="text-sm text-[#8EA8BD]">La semaine vient de commencer : aucune commune n'a encore de points. Votez sur un carrefour pour ouvrir le score de la vôtre.</p>
+          )}
+          {sponsor?.active && sponsor?.name && (
+            <p className="rounded-xl bg-[#FFD23F]/15 border border-[#FFD23F]/40 px-3 py-2 text-xs">
+              Prix de la semaine offert par <b>{sponsor.name}</b>{sponsor.prize ? ` : ${sponsor.prize}` : ''}
+            </p>
           )}
           {!profile?.commune && (
             <Link href="/quetes" className="block rounded-xl bg-[#11273A] border border-[#22425C] px-3 py-2 text-xs">
@@ -99,6 +106,7 @@ export default function LeaderboardPage() {
                       <span className="font-bold flex-1 truncate">
                         {tab === 'communes' ? r.commune : r.name}
                         {tab === 'players' && r.commune && <span className="font-normal text-xs text-slate-500"> · {r.commune}</span>}
+                        {tab === 'players' && r.isSentinel && <span className="ml-1 rounded bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300 px-1.5 py-0.5 text-[10px] font-black uppercase">Sentinelle</span>}
                         {isMe && <span className="text-xs font-black"> (vous)</span>}
                       </span>
                       <span className="font-black tabular-nums">{Number(r.points || 0).toLocaleString('fr-FR')}</span>
