@@ -232,7 +232,8 @@ export default function ReportTrafficForm() {
           message: combinedDescription,
           userName: user.displayName || "Un conducteur K-Flow",
           type: 'report',
-          location: finalLocation
+          location: finalLocation,
+          idToken: await user.getIdToken()
         });
       } catch (_) {}
 

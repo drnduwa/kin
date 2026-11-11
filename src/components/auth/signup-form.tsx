@@ -118,10 +118,11 @@ export function SignupForm() {
             await sendEmailVerification(firebaseUser);
             await initializeUserProfile(firebaseUser, data);
 
-            sendWelcomeEmailAction({ 
-                email: data.email, 
-                userName: data.name 
-            });
+            firebaseUser.getIdToken().then(idToken => sendWelcomeEmailAction({
+                email: data.email,
+                userName: data.name,
+                idToken
+            })).catch(() => {});
 
             toast({
                 title: 'Compte créé !',

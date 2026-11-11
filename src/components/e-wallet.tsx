@@ -46,7 +46,7 @@ import {
 import { useUser, useFirebase, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, query, orderBy, limit } from 'firebase/firestore';
 import { UserProfile, WalletTransaction } from '@/lib/types';
-import { awardWalletContributionAction, requestWalletCashoutAction, rechargeDataFromWalletAction, getWalletTransactionsAction } from '@/app/actions';
+import { requestWalletCashoutAction, rechargeDataFromWalletAction, getWalletTransactionsAction } from '@/app/actions';
 import { useToast } from '@/hooks/use-toast';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
@@ -67,7 +67,7 @@ export default function EWalletComponent() {
     if (!user) return;
     setIsTxLoading(true);
     try {
-      const res = await getWalletTransactionsAction(user.uid);
+      const res = await getWalletTransactionsAction(await user.getIdToken());
       if (res && res.success && res.transactions) {
         setLiveTransactions(res.transactions);
       }
@@ -94,13 +94,11 @@ export default function EWalletComponent() {
   const [selectedPack, setSelectedPack] = useState({ name: 'Pass Jour 500 Mo', cdf: 1500 });
   const [isDataSubmitting, setIsDataSubmitting] = useState(false);
 
-  // Simulation State
-  const [isSimulating, setIsSimulating] = useState(false);
-
-  const walletBalanceCDF = profile?.walletBalanceCDF ?? 850;
+  // Valeurs réelles du profil (plus de solde fictif de 850 FC affiché par défaut).
+  const walletBalanceCDF = profile?.walletBalanceCDF ?? 0;
   const walletBalanceUSD = profile?.walletBalanceUSD ?? (walletBalanceCDF / 2800);
-  const trustScore = profile?.trustScore ?? 96;
-  const totalContribs = profile?.totalContributionsCount ?? 4;
+  const trustScore = profile?.trustScore;
+  const totalContribs = profile?.totalContributionsCount ?? 0;
 
   const handleCashoutSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -126,7 +124,7 @@ export default function EWalletComponent() {
     setIsCashoutSubmitting(true);
     try {
       const res = await requestWalletCashoutAction({
-        userId: user.uid,
+        idToken: await user.getIdToken(),
         amountCDF: amount,
         phone: cashoutPhone,
         operator: cashoutOperator
@@ -134,11 +132,12 @@ export default function EWalletComponent() {
 
       if (res.success) {
         toast({
-          title: "Retrait Confirmé ! 💸",
+          title: "Demande de retrait envoyée",
           description: res.message,
           className: "bg-emerald-600 text-white font-bold"
         });
         setCashoutOpen(false);
+        loadTransactions();
       } else {
         toast({ title: "Erreur", description: res.error, variant: "destructive" });
       }
@@ -163,53 +162,18 @@ export default function EWalletComponent() {
     setIsDataSubmitting(true);
     try {
       const res = await rechargeDataFromWalletAction({
-        userId: user.uid,
-        amountCDF: selectedPack.cdf,
-        phone: profile?.phone || '089000000',
+        idToken: await user.getIdToken(),
+        phone: profile?.phone || '',
         dataPack: selectedPack.name
       });
 
       if (res.success) {
         toast({
-          title: "Forfait Activé ! 📶",
+          title: "Demande de forfait envoyée",
           description: res.message,
           className: "bg-blue-600 text-white font-bold"
         });
         setDataOpen(false);
-      } else {
-        toast({ title: "Erreur", description: res.error, variant: "destructive" });
-      }
-    } catch (err: any) {
-      toast({ title: "Erreur", description: err.message, variant: "destructive" });
-    } finally {
-      setIsDataSubmitting(false);
-    }
-  };
-
-  const handleSimulateEarning = async (type: 'incident_report' | 'upvote' | 'voice_memo' | 'telemetry') => {
-    if (!user) {
-      toast({
-        title: "Connexion requise",
-        description: "Connectez-vous pour commencer à accumuler des Francs Congolais.",
-        variant: "destructive"
-      });
-      return;
-    }
-    setIsSimulating(true);
-    try {
-      const res = await awardWalletContributionAction({
-        userId: user.uid,
-        type,
-        road: "Blvd Lumumba (Échangeur de Limete)",
-        note: "Validation automatique en direct"
-      });
-
-      if (res.success) {
-        toast({
-          title: "Récompense Immédiate ! 🎉",
-          description: res.message,
-          className: "bg-emerald-600 text-white font-black"
-        });
         loadTransactions();
       } else {
         toast({ title: "Erreur", description: res.error, variant: "destructive" });
@@ -217,7 +181,7 @@ export default function EWalletComponent() {
     } catch (err: any) {
       toast({ title: "Erreur", description: err.message, variant: "destructive" });
     } finally {
-      setIsSimulating(false);
+      setIsDataSubmitting(false);
     }
   };
 
@@ -246,7 +210,7 @@ export default function EWalletComponent() {
             <ShieldCheck className="h-4 w-4 text-emerald-600" />
             <div className="text-right sm:text-left">
               <div className="text-[10px] uppercase font-black text-slate-400 tracking-wider">Indice Sentinelle</div>
-              <div className="text-xs font-black text-slate-800">{trustScore}% Certifié</div>
+              <div className="text-xs font-black text-slate-800">{typeof trustScore === 'number' ? `${trustScore}% Certifié` : 'Nouveau'}</div>
             </div>
           </div>
         </div>
@@ -289,7 +253,7 @@ export default function EWalletComponent() {
                   <DialogHeader>
                     <DialogTitle className="text-xl font-black">Retrait Cash Mobile Money</DialogTitle>
                     <DialogDescription className="text-xs text-slate-500">
-                      Transférez instantanément vos gains K-Flow vers votre compte Mobile Money en RDC via la passerelle FlexPay.
+                      Votre demande est vérifiée par l'équipe Kinshasa Flow, puis payée sur votre compte Mobile Money.
                     </DialogDescription>
                   </DialogHeader>
                   <form onSubmit={handleCashoutSubmit} className="space-y-4 py-2">
@@ -342,7 +306,7 @@ export default function EWalletComponent() {
                         disabled={isCashoutSubmitting}
                         className="w-full h-12 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase tracking-wider text-xs shadow-lg shadow-emerald-600/30"
                       >
-                        {isCashoutSubmitting ? "Traitement FlexPay..." : `Recevoir ${parseInt(cashoutAmount || '0').toLocaleString()} FC`}
+                        {isCashoutSubmitting ? "Envoi..." : `Demander ${parseInt(cashoutAmount || '0').toLocaleString()} FC`}
                       </Button>
                     </DialogFooter>
                   </form>
@@ -361,7 +325,7 @@ export default function EWalletComponent() {
                   <DialogHeader>
                     <DialogTitle className="text-xl font-black">Recharger des Mégas Internet</DialogTitle>
                     <DialogDescription className="text-xs text-slate-500">
-                      Convertissez vos Francs Congolais directement en forfait data pour continuer à utiliser l'application sans toucher à votre crédit !
+                      Payez un forfait data avec votre solde. Il est activé sur votre numéro après traitement par l'équipe.
                     </DialogDescription>
                   </DialogHeader>
                   <div className="space-y-3 py-2">
@@ -395,7 +359,7 @@ export default function EWalletComponent() {
                       disabled={isDataSubmitting || walletBalanceCDF < selectedPack.cdf}
                       className="w-full h-12 rounded-2xl font-black uppercase tracking-wider text-xs"
                     >
-                      {isDataSubmitting ? "Activation en cours..." : `Activer pour ${selectedPack.cdf.toLocaleString()} FC`}
+                      {isDataSubmitting ? "Envoi..." : `Demander pour ${selectedPack.cdf.toLocaleString()} FC`}
                     </Button>
                   </DialogFooter>
                 </DialogContent>
@@ -410,9 +374,9 @@ export default function EWalletComponent() {
           <div className="flex justify-between items-center">
             <div>
               <h3 className="text-base font-black text-slate-900 tracking-tight">Barème des Gains Citoyens</h3>
-              <p className="text-xs text-slate-500">Chaque information utile validée augmente immédiatement votre portefeuille</p>
+              <p className="text-xs text-slate-500">Chaque contribution réelle est payée une fois, dans la limite de 1 000 FC par jour</p>
             </div>
-            <Badge className="bg-amber-500 text-slate-950 font-black text-[9px] uppercase">Paiement Garanti</Badge>
+            <Badge className="bg-amber-500 text-slate-950 font-black text-[9px] uppercase">Max 1 000 FC / jour</Badge>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -432,14 +396,8 @@ export default function EWalletComponent() {
                   <h4 className="font-bold text-sm text-slate-900">Signaler un Blocage</h4>
                   <p className="text-[11px] text-slate-500 leading-tight">Déclarer un camion en panne, un bouchon sévère ou un barrage de police.</p>
                 </div>
-                <Button 
-                  onClick={() => handleSimulateEarning('incident_report')}
-                  disabled={isSimulating}
-                  size="sm" 
-                  variant="outline" 
-                  className="w-full rounded-xl text-xs font-bold gap-1 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200"
-                >
-                  <Plus className="h-3.5 w-3.5" /> Tester le Gain (+200 FC)
+                <Button asChild size="sm" variant="outline" className="w-full rounded-xl text-xs font-bold gap-1 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200">
+                  <Link href="/hazard-map"><Plus className="h-3.5 w-3.5" /> Signaler sur la carte</Link>
                 </Button>
               </CardContent>
             </Card>
@@ -459,15 +417,7 @@ export default function EWalletComponent() {
                   <h4 className="font-bold text-sm text-slate-900">Note Vocale Lingala</h4>
                   <p className="text-[11px] text-slate-500 leading-tight">Envoyez 10 secondes d'audio expliquant la cause du ralentissement.</p>
                 </div>
-                <Button 
-                  onClick={() => handleSimulateEarning('voice_memo')}
-                  disabled={isSimulating}
-                  size="sm" 
-                  variant="outline" 
-                  className="w-full rounded-xl text-xs font-bold gap-1 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200"
-                >
-                  <Plus className="h-3.5 w-3.5" /> Tester le Gain (+100 FC)
-                </Button>
+                <Button size="sm" variant="outline" disabled className="w-full rounded-xl text-xs font-bold">Bientôt disponible</Button>
               </CardContent>
             </Card>
 
@@ -486,14 +436,8 @@ export default function EWalletComponent() {
                   <h4 className="font-bold text-sm text-slate-900">Confirmation 1-Tap</h4>
                   <p className="text-[11px] text-slate-500 leading-tight">Confirmer en 1 clic : "Le bouchon est-il toujours là ? Oui / Non".</p>
                 </div>
-                <Button 
-                  onClick={() => handleSimulateEarning('upvote')}
-                  disabled={isSimulating}
-                  size="sm" 
-                  variant="outline" 
-                  className="w-full rounded-xl text-xs font-bold gap-1 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200"
-                >
-                  <Plus className="h-3.5 w-3.5" /> Tester le Gain (+25 FC)
+                <Button asChild size="sm" variant="outline" className="w-full rounded-xl text-xs font-bold gap-1 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200">
+                  <Link href="/verifier-trafic"><Plus className="h-3.5 w-3.5" /> Voter sur un carrefour</Link>
                 </Button>
               </CardContent>
             </Card>
@@ -507,21 +451,13 @@ export default function EWalletComponent() {
                       <Zap className="h-4 w-4" />
                     </div>
                     <Badge className="bg-emerald-500/10 text-emerald-700 font-black text-xs border-none">
-                      +100 FC / 5km
+                      Bientôt
                     </Badge>
                   </div>
                   <h4 className="font-bold text-sm text-slate-900">Rouler avec l'App</h4>
                   <p className="text-[11px] text-slate-500 leading-tight">Gardez l'application ouverte en route pour transmettre la vitesse moyenne.</p>
                 </div>
-                <Button 
-                  onClick={() => handleSimulateEarning('telemetry')}
-                  disabled={isSimulating}
-                  size="sm" 
-                  variant="outline" 
-                  className="w-full rounded-xl text-xs font-bold gap-1 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200"
-                >
-                  <Plus className="h-3.5 w-3.5" /> Tester le Gain (+100 FC)
-                </Button>
+                <Button size="sm" variant="outline" disabled className="w-full rounded-xl text-xs font-bold">Bientôt disponible</Button>
               </CardContent>
             </Card>
 
@@ -580,14 +516,11 @@ export default function EWalletComponent() {
                 <div className="space-y-1">
                   <p className="font-bold text-sm text-slate-800">Votre portefeuille est prêt !</p>
                   <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                    Vous avez reçu 500 FC de bienvenue. Commencez à signaler ou confirmer des ralentissements à Kinshasa pour voir vos gains augmenter.
+                    Signalez un problème sur la carte ou votez sur un carrefour pour voir vos premiers gains ici.
                   </p>
                 </div>
-                <Button 
-                  onClick={() => handleSimulateEarning('incident_report')}
-                  className="rounded-xl font-black text-xs bg-emerald-600 hover:bg-emerald-500 text-white"
-                >
-                  Faire mon premier signalement (+200 FC)
+                <Button asChild className="rounded-xl font-black text-xs bg-emerald-600 hover:bg-emerald-500 text-white">
+                  <Link href="/hazard-map">Faire mon premier signalement (+200 FC)</Link>
                 </Button>
               </div>
             )}

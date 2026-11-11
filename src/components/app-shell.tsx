@@ -16,7 +16,8 @@ import {
   Lightbulb,
   HelpCircle,
   User,
-  Wallet
+  Wallet,
+  ChevronDown
 } from 'lucide-react';
 import {
   Sidebar,
@@ -180,6 +181,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [firestore, user]);
   const { data: events } = useCollection<EventReport>(eventsRef);
   const [unreadReports, setUnreadReports] = useState(0);
+
+  // Phase 1 : le menu se concentre sur « sortir du trafic ». Les anciens écrans trafic restent accessibles
+  // sous « Plus d'outils » (ouvert automatiquement si on se trouve sur l'un d'eux).
+  const SECONDARY_TOOLS = ['/reports', '/live-traffic', '/local-traffic', '/insights', '/flux-infrastructure', '/routes', '/hazard-map', '/map', '/assistant'];
+  const [showMoreTools, setShowMoreTools] = useState(false);
+  const moreToolsOpen = showMoreTools || SECONDARY_TOOLS.includes(pathname);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -360,20 +367,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </SidebarMenuItem>
               )}
 
-              {/* 4. Baromètre Trafic */}
-              {isEnabled('reports') && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={pathname === '/reports'} className={cn(pathname === '/reports' && "bg-white/10")}>
-                    <Link href="/reports" className="font-bold flex items-center justify-between w-full h-11 px-4 rounded-xl">
-                      <div className="flex items-center gap-3">
-                        <Compass className={cn("h-5 w-5", pathname === '/reports' ? "text-accent" : "text-primary")} />
-                        <span>Baromètre Trafic</span>
-                      </div>
-                      {unreadReports > 0 && <Badge variant="destructive" className="h-5 px-1.5 min-w-[20px] justify-center text-[10px] rounded-full font-black">{unreadReports}</Badge>}
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
+              {/* 4. Signaler (1 tap) */}
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/signaler-embouteillage'} className={cn("bg-red-500/10 mb-1 h-11 rounded-xl px-4 hover:bg-red-500/20", pathname === '/signaler-embouteillage' && "bg-red-500/20")}>
+                  <Link href="/signaler-embouteillage" className="font-bold flex items-center gap-3 w-full">
+                    <PlusCircle className="h-5 w-5 text-red-500" />
+                    <span>Signaler un problème</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
 
               {/* 5. Chat Direct (Communauté) */}
               {isEnabled('communityChat') && (
@@ -404,6 +406,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   </a>
                 </SidebarMenuButton>
               </SidebarMenuItem>
+
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  onClick={() => setShowMoreTools(v => !v)}
+                  aria-expanded={moreToolsOpen}
+                  className="h-11 px-4 rounded-xl font-bold flex items-center justify-between w-full text-slate-600 dark:text-slate-300"
+                >
+                  <span className="flex items-center gap-3"><LayoutGrid className="h-5 w-5 text-slate-500" />Plus d'outils trafic</span>
+                  <ChevronDown className={cn("h-4 w-4 transition-transform", moreToolsOpen && "rotate-180")} />
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              {moreToolsOpen && (
+                <>
+              {/* 4. Baromètre Trafic */}
+              {isEnabled('reports') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname === '/reports'} className={cn(pathname === '/reports' && "bg-white/10")}>
+                    <Link href="/reports" className="font-bold flex items-center justify-between w-full h-11 px-4 rounded-xl">
+                      <div className="flex items-center gap-3">
+                        <Compass className={cn("h-5 w-5", pathname === '/reports' ? "text-accent" : "text-primary")} />
+                        <span>Baromètre Trafic</span>
+                      </div>
+                      {unreadReports > 0 && <Badge variant="destructive" className="h-5 px-1.5 min-w-[20px] justify-center text-[10px] rounded-full font-black">{unreadReports}</Badge>}
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
 
               {isEnabled('liveTraffic') && (
                 <SidebarMenuItem>
@@ -494,6 +524,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
+              )}
+
+                </>
               )}
 
               {isEnabled('notifications') && (
@@ -674,41 +707,42 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       <Radar className={cn("h-5 w-5", pathname === '/verifier-trafic' ? "text-primary animate-spin" : "text-slate-400")} />
                       <span className="absolute -top-1 -right-1 flex h-2 w-2 rounded-full bg-red-500 animate-ping" />
                     </div>
-                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Contrôle</span>
+                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Trafic</span>
                   </Link>
 
-                  {/* 2. Chat Live */}
-                  <Link 
-                    href="/community-chat" 
+                  {/* 2. Itinéraire (GPS) */}
+                  <Link
+                    href="/k-flow-nav"
                     className={cn(
                       "flex flex-col items-center justify-center flex-1 py-1 px-0.5 rounded-2xl transition-all",
-                      pathname === '/community-chat' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
+                      pathname === '/k-flow-nav' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
                     )}
                   >
-                    <div className={cn("p-1 rounded-xl transition-all", pathname === '/community-chat' && "bg-primary/10")}>
-                      <MessagesSquare className={cn("h-5 w-5", pathname === '/community-chat' ? "text-primary" : "text-slate-400")} />
+                    <div className={cn("p-1 rounded-xl transition-all", pathname === '/k-flow-nav' && "bg-primary/10")}>
+                      <Navigation className={cn("h-5 w-5", pathname === '/k-flow-nav' ? "text-primary" : "text-slate-400")} />
                     </div>
-                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Chat Live</span>
+                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Itinéraire</span>
                   </Link>
 
-                  {/* 3. Center Highlight: K-Flow Nav GPS */}
-                  <Link 
-                    href="/k-flow-nav" 
+                  {/* 3. Bouton central : Signaler en 1 tap */}
+                  <Link
+                    href="/signaler-embouteillage"
+                    aria-label="Signaler un problème sur la route"
                     className="flex flex-col items-center justify-center -mt-4 relative z-10 group px-1"
                   >
                     <div className={cn(
                       "w-12 h-12 rounded-full flex items-center justify-center shadow-xl transition-all border-2 border-white dark:border-slate-900",
-                      pathname === '/k-flow-nav' 
-                        ? "bg-gradient-to-tr from-primary to-blue-600 text-white ring-4 ring-primary/20 scale-110 shadow-primary/40" 
-                        : "bg-primary hover:bg-primary/90 text-white shadow-primary/30"
+                      pathname === '/signaler-embouteillage'
+                        ? "bg-red-600 text-white ring-4 ring-red-500/20 scale-110 shadow-red-500/40"
+                        : "bg-red-500 hover:bg-red-600 text-white shadow-red-500/30"
                     )}>
-                      <Navigation className="h-5 w-5 fill-current animate-pulse" />
+                      <PlusCircle className="h-6 w-6" />
                     </div>
                     <span className={cn(
                       "text-[9px] font-black uppercase tracking-wider mt-0.5",
-                      pathname === '/k-flow-nav' ? "text-primary" : "text-slate-500"
+                      pathname === '/signaler-embouteillage' ? "text-red-600" : "text-slate-500"
                     )}>
-                      GPS Nav
+                      Signaler
                     </span>
                   </Link>
 
@@ -726,21 +760,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                         $
                       </span>
                     </div>
-                    <span className="text-[9px] font-bold tracking-tight mt-0.5">E-Wallet</span>
+                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Gains</span>
                   </Link>
 
-                  {/* 5. Assistant IA */}
-                  <Link 
-                    href="/assistant" 
+                  {/* 5. Chat Live */}
+                  <Link
+                    href="/community-chat"
                     className={cn(
                       "flex flex-col items-center justify-center flex-1 py-1 px-0.5 rounded-2xl transition-all",
-                      pathname === '/assistant' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
+                      pathname === '/community-chat' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
                     )}
                   >
-                    <div className={cn("p-1 rounded-xl transition-all", pathname === '/assistant' && "bg-primary/10")}>
-                      <Bot className={cn("h-5 w-5", pathname === '/assistant' ? "text-primary" : "text-slate-400")} />
+                    <div className={cn("p-1 rounded-xl transition-all", pathname === '/community-chat' && "bg-primary/10")}>
+                      <MessagesSquare className={cn("h-5 w-5", pathname === '/community-chat' ? "text-primary" : "text-slate-400")} />
                     </div>
-                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Assistant</span>
+                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Chat</span>
                   </Link>
                 </nav>
             </div>

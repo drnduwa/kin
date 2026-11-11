@@ -1,34 +1,41 @@
 import { NextResponse } from 'next/server';
-import { getServerFirestore } from '@/firebase/server';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { adminDb } from '@/firebase/admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import { getGoogleTrafficStatusAction } from '@/app/actions';
 import { MAJOR_AXES } from '@/lib/constants';
+import { kinshasaNow } from '@/lib/kinshasa-time';
 
 export async function GET(request: Request) {
+  // Pas de secret par défaut : sans CRON_SECRET configuré, la route reste fermée.
+  const secret = process.env.CRON_SECRET;
+  if (!secret) {
+    return NextResponse.json({ error: 'CRON_SECRET non configuré' }, { status: 503 });
+  }
   const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET || 'kinshasa-flow-secret'}`) {
+  if (authHeader !== `Bearer ${secret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
     const data = await getGoogleTrafficStatusAction(MAJOR_AXES);
     
-    const firestore = getServerFirestore();
-    const historyCol = collection(firestore, 'traffic_history');
+    // Écriture serveur (Admin SDK) : traffic_history n'est plus modifiable par les clients.
+    const historyCol = adminDb().collection('traffic_history');
 
-    const now = new Date();
-    const dayOfWeek = now.getDay();
-    const hourOfDay = now.getHours();
+    // Heure de Kinshasa, pas celle du serveur (UTC)
+    const { dayOfWeek, hour: hourOfDay, minute: minuteOfHour } = kinshasaNow();
 
     const saves = data.map(async (res) => {
-      await addDoc(historyCol, {
+      await historyCol.add({
         road: res.road,
         status: res.status,
         speed: res.speed,
         delay: res.delay,
-        timestamp: serverTimestamp(),
+        timestamp: FieldValue.serverTimestamp(),
         dayOfWeek,
-        hourOfDay
+        hourOfDay,
+        minuteOfHour,
+        tz: 'Africa/Kinshasa'
       });
     });
 

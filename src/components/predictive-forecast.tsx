@@ -120,7 +120,7 @@ export function PredictiveForecast() {
                   <h3 className="text-xl font-black text-emerald-900 mb-2">{alt.road}</h3>
                   <div className="flex items-center gap-2 text-emerald-700">
                     <Clock className="h-4 w-4" />
-                    <span className="font-semibold text-sm text-emerald-800">Trafic {alt.status.toLowerCase()} (+{alt.delay}m)</span>
+                    <span className="font-semibold text-sm text-emerald-800">{alt.delay === null ? "Pas de mesure en direct" : `Trafic ${alt.status.toLowerCase()} (+${alt.delay}m, mesuré)`}</span>
                   </div>
                 </CardContent>
               </Card>

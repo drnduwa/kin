@@ -39,14 +39,15 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { checkTrafficAction, getTrafficForecastAction, awardWalletContributionAction, getRealtimeCommandDashboardAction } from '@/app/actions';
+import { checkTrafficAction, awardWalletContributionAction, getRealtimeCommandDashboardAction, locateAxisAction } from '@/app/actions';
+import { voteSlot } from '@/lib/kinshasa-time';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import { CONFIG } from '@/lib/config';
 import { useUser, useFirebase, useDoc, useMemoFirebase } from '@/firebase';
-import { doc } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { UserProfile } from '@/lib/types';
 
 const STATUS_CONFIG = {
@@ -57,6 +58,28 @@ const STATUS_CONFIG = {
   INCONNU: { color: "bg-slate-400 text-white", border: "border-slate-300", icon: "⚪", label: "Pas de données", badgeBg: "bg-slate-400" },
   ERREUR: { color: "bg-red-900 text-white", border: "border-red-800", icon: "⚠️", label: "Erreur", badgeBg: "bg-red-900" },
 };
+
+/** Dit d'où vient un chiffre : mesure en direct, estimation horaire ou aucune donnée. */
+function SourceChip({ source, confidence }: { source?: string; confidence?: number }) {
+  const live = source === 'google';
+  const estimate = source === 'estimate' || source === 'osrm';
+  const label = live ? 'Mesuré en direct' : estimate ? "Estimation selon l'heure" : 'Pas de données';
+  return (
+    <span
+      title={live ? 'Temps de trajet mesuré par Google Routes avec le trafic actuel' : estimate ? "Pas de mesure en direct : temps sur route vide multiplié par un facteur d'heure de pointe" : 'Aucune source disponible'}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-wide border",
+        live ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30"
+          : estimate ? "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30"
+          : "bg-slate-500/10 text-slate-500 border-slate-400/30"
+      )}
+    >
+      <span className={cn("h-1.5 w-1.5 rounded-full", live ? "bg-emerald-500" : estimate ? "bg-amber-500" : "bg-slate-400")} />
+      {label}
+      {typeof confidence === 'number' && confidence > 0 && <span className="opacity-70">· confiance {confidence}%</span>}
+    </span>
+  );
+}
 
 // 8 Goulots d'étranglement stratégiques de Kinshasa (Plan 1)
 const STRATEGIC_BOTTLENECKS = [
@@ -215,25 +238,41 @@ export default function TrafficCommandDashboard() {
   const [activeAnalysis, setActiveAnalysis] = useState<any>(null);
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
-  const [confirmedNodes, setConfirmedNodes] = useState<Record<string, boolean>>({});
+  const [votedNodes, setVotedNodes] = useState<Record<string, 'still' | 'clear'>>({});
 
   // Données temps réel réactives (OSRM + Firestore, pas de mock data)
+  // Avant la première réponse serveur : noms et lieux seulement, aucun chiffre inventé.
   const [bottlenecks, setBottlenecks] = useState<any[]>(
     STRATEGIC_BOTTLENECKS.map(b => ({
-      ...b,
-      speedKmh: b.speed,
-      delayMin: b.delay,
-      status: b.initialStatus,
+      id: b.id,
+      name: b.name,
+      district: b.district,
+      coords: b.coords,
+      speedKmh: null,
+      delayMin: null,
+      status: "INCONNU",
+      source: "none",
+      confidence: 0,
+      cause: null,
+      typicalCause: b.cause,
+      certifiedAlt: b.certifiedAlt,
+      lingala: "Tozali kotala nzela…",
+      votes: { still: 0, clear: 0, lastAgeMin: null },
       activeIncidents: []
     }))
   );
-  const [commutes, setCommutes] = useState<any[]>(QUICK_COMMUTES);
+  const [commutes, setCommutes] = useState<any[]>(
+    QUICK_COMMUTES.map(c => ({ ...c, status: "INCONNU", delay: "…", delayText: "Chargement…", badgeColor: "bg-slate-400", source: "none" }))
+  );
   const [globalMetrics, setGlobalMetrics] = useState<{
     kinshasaHour: number;
     isPeakHour: boolean;
-    avgSpeed: number;
-    congestionIndex: number;
+    avgSpeed: number | null;
+    congestionIndex: number | null;
     activeIncidentsCount: number;
+    votesLastHour?: number;
+    liveCount?: number;
+    nodeCount?: number;
     telemetrySource?: string;
     updatedAt: string;
     audioFlashText: string;
@@ -241,7 +280,7 @@ export default function TrafficCommandDashboard() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string>('');
 
-  const walletBalanceCDF = profile?.walletBalanceCDF ?? 850;
+  const walletBalanceCDF = profile?.walletBalanceCDF ?? 0;
 
   // Récupération dynamique en direct (Google Routes Live + OSRM + Firestore)
   const fetchRealtimeTraffic = useCallback(async (showToast = false) => {
@@ -288,8 +327,7 @@ export default function TrafficCommandDashboard() {
     setActiveAnalysis(null);
     try {
       const data = await checkTrafficAction({ ...coords, address: name });
-      const fData = await getTrafficForecastAction(name);
-      setActiveAnalysis({ ...data, name, forecast: fData });
+      setActiveAnalysis({ ...data, name });
     } catch (e: any) {
       toast({ title: "Erreur", description: "Impossible d'analyser cet axe.", variant: "destructive" });
     } finally {
@@ -297,33 +335,63 @@ export default function TrafficCommandDashboard() {
     }
   };
 
-  // Confirmation rémunérée (+25 FC)
-  const handleRewardConfirm = async (nodeId: string, nodeName: string) => {
+  // Recherche d'une avenue : on localise d'abord l'avenue tapée, puis on l'analyse à cet endroit.
+  const handleSearch = async () => {
+    const q = search.trim();
+    if (!q) return;
+    setIsLoadingAnalysis(true);
+    try {
+      const loc = await locateAxisAction(q);
+      if (!loc.found) {
+        setIsLoadingAnalysis(false);
+        toast({ title: "Avenue introuvable", description: `Nous ne trouvons pas « ${q} » à Kinshasa. Essayez un nom plus court (ex. : Huileries, Poids Lourds).`, variant: "destructive" });
+        return;
+      }
+      await handleInspectAxis({ lat: loc.lat, lng: loc.lng }, loc.name);
+    } catch {
+      setIsLoadingAnalysis(false);
+      toast({ title: "Erreur", description: "Impossible de localiser cette avenue.", variant: "destructive" });
+    }
+  };
+
+  // Vote 1-tap « toujours bloqué / c'est dégagé ». Un vote par usager, par nœud, par créneau de 30 min
+  // (garanti par l'id du document et les règles Firestore). Le vote met à jour la carte de tout le monde.
+  const handleVote = async (nodeId: string, nodeName: string, vote: 'still' | 'clear') => {
     if (!user) {
-      toast({
-        title: "Connexion requise",
-        description: "Connectez-vous pour recevoir vos +25 FC sur votre E-Wallet.",
-        variant: "destructive"
-      });
+      toast({ title: "Connexion requise", description: "Connectez-vous pour voter et recevoir vos +25 FC.", variant: "destructive" });
       return;
     }
+    const slot = voteSlot();
+    const voteId = `${user.uid}_${nodeId}_${slot}`;
+    try {
+      await setDoc(doc(firestore, 'traffic_votes', voteId), {
+        userId: user.uid,
+        nodeId,
+        vote,
+        slot,
+        createdAt: serverTimestamp()
+      });
+    } catch {
+      // Document déjà créé pour ce créneau : les règles refusent la réécriture.
+      setVotedNodes(prev => ({ ...prev, [nodeId]: vote }));
+      toast({ title: "Déjà voté", description: "Vous avez déjà donné l'état de ce carrefour. Revenez dans 30 minutes." });
+      return;
+    }
+    setVotedNodes(prev => ({ ...prev, [nodeId]: vote }));
+    fetchRealtimeTraffic(true);
     try {
       const res = await awardWalletContributionAction({
-        userId: user.uid,
+        idToken: await user.getIdToken(),
         type: 'upvote',
+        refId: voteId,
         road: nodeName,
-        note: 'Validation 1-Tap depuis le Tableau de Bord'
       });
-      if (res.success) {
-        setConfirmedNodes(prev => ({ ...prev, [nodeId]: true }));
-        toast({
-          title: "Gain Immédiat ! 🎉 (+25 FC)",
-          description: `Merci ! Vos +25 FC ont été versés sur votre portefeuille. Solde actuel : ${res.newBalanceCDF} FC.`,
-          className: "bg-emerald-600 text-white font-bold"
-        });
-      }
-    } catch (err: any) {
-      toast({ title: "Erreur", description: err.message, variant: "destructive" });
+      toast({
+        title: "Merci, la carte est à jour",
+        description: res.success ? `+${res.rewardCDF} FC sur votre E-Wallet. Solde : ${res.newBalanceCDF} FC.` : (res.error || "Votre vote est compté."),
+      });
+    } catch {
+      toast({ title: "Merci, la carte est à jour", description: "Votre vote est compté." });
     }
   };
 
@@ -421,21 +489,36 @@ export default function TrafficCommandDashboard() {
                 </span>
                 <span className="font-bold text-slate-300">Télémétrie :</span>
                 <span className="font-extrabold text-emerald-400">
-                  {globalMetrics?.isPeakHour ? "Heure de Pointe" : "Heure Normale"} ({globalMetrics?.kinshasaHour ?? 17}h)
+                  {globalMetrics ? `${globalMetrics.isPeakHour ? "Heure de pointe" : "Heure normale"} (${globalMetrics.kinshasaHour}h)` : "Chargement…"}
                 </span>
               </div>
 
               <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700/80">
                 <Flame className="h-3.5 w-3.5 text-amber-400" />
                 <span className="font-bold text-slate-300">Congestion :</span>
-                <span className="font-extrabold text-amber-400">{globalMetrics?.congestionIndex ?? 50}%</span>
+                <span className="font-extrabold text-amber-400">{typeof globalMetrics?.congestionIndex === 'number' ? `${globalMetrics.congestionIndex}%` : '—'}</span>
               </div>
 
               <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700/80">
                 <Car className="h-3.5 w-3.5 text-blue-400" />
                 <span className="font-bold text-slate-300">Vitesse moy. :</span>
-                <span className="font-extrabold text-blue-400">{globalMetrics?.avgSpeed ?? 18} km/h</span>
+                <span className="font-extrabold text-blue-400">{typeof globalMetrics?.avgSpeed === 'number' ? `${globalMetrics.avgSpeed} km/h` : '—'}</span>
               </div>
+
+              {globalMetrics && typeof globalMetrics.liveCount === 'number' && (
+                <div className={cn("flex items-center gap-2 px-3 py-1.5 rounded-xl border", globalMetrics.liveCount > 0 ? "bg-emerald-950/50 border-emerald-800/80" : "bg-amber-950/50 border-amber-800/80")}>
+                  <span className={cn("font-bold", globalMetrics.liveCount > 0 ? "text-emerald-300" : "text-amber-300")}>
+                    {globalMetrics.liveCount}/{globalMetrics.nodeCount} nœuds mesurés en direct
+                  </span>
+                </div>
+              )}
+
+              {globalMetrics && (globalMetrics.votesLastHour ?? 0) > 0 && (
+                <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700/80">
+                  <ThumbsUp className="h-3.5 w-3.5 text-sky-400" />
+                  <span className="font-bold text-slate-300">{globalMetrics.votesLastHour} vote(s) Kinois cette heure</span>
+                </div>
+              )}
 
               {globalMetrics && globalMetrics.activeIncidentsCount > 0 && (
                 <div className="flex items-center gap-2 bg-red-950/60 px-3 py-1.5 rounded-xl border border-red-800/80">
@@ -473,16 +556,12 @@ export default function TrafficCommandDashboard() {
               placeholder="Rechercher une avenue (ex: Huileries, Poids Lourds, By-Pass...)"
               className="pl-10 h-11 rounded-xl border-slate-200 dark:border-slate-800 font-bold text-xs"
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && search) {
-                  handleInspectAxis({ lat: -4.3250, lng: 15.3100 }, search);
-                }
+                if (e.key === 'Enter') handleSearch();
               }}
             />
           </div>
           <Button
-            onClick={() => {
-              if (search) handleInspectAxis({ lat: -4.3250, lng: 15.3100 }, search);
-            }}
+            onClick={handleSearch}
             disabled={isLoadingAnalysis}
             className="h-11 px-5 rounded-xl font-bold text-xs gap-1.5 shrink-0"
           >
@@ -516,7 +595,7 @@ export default function TrafficCommandDashboard() {
             {commutes.map((commute) => (
               <Card
                 key={commute.id}
-                onClick={() => handleInspectAxis(commute.coords, commute.title.split('➔')[0].trim())}
+                onClick={() => handleInspectAxis(commute.coords, commute.via)}
                 className="rounded-2xl border-slate-200/80 dark:border-slate-800 hover:border-primary/50 transition-all cursor-pointer shadow-sm group hover:shadow-md bg-white dark:bg-slate-900"
               >
                 <CardContent className="p-4 space-y-2.5">
@@ -532,6 +611,7 @@ export default function TrafficCommandDashboard() {
                     <span>Via {commute.via}</span>
                     {commute.distKm && <span className="font-bold text-slate-500">{commute.distKm} km • ~{commute.durMin} min</span>}
                   </div>
+                  <SourceChip source={commute.source} confidence={commute.confidence} />
                   <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 flex items-start gap-1.5">
                     <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
                     <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 leading-tight">
@@ -579,28 +659,36 @@ export default function TrafficCommandDashboard() {
                   <div className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
                     <span>{STATUS_CONFIG[activeAnalysis.status as keyof typeof STATUS_CONFIG]?.icon}</span>
                     <span>{activeAnalysis.status}</span>
-                    {activeAnalysis.delay > 0 && <span className="text-red-600 text-xs">(+{activeAnalysis.delay} min)</span>}
+                    {activeAnalysis.delay > 0 && <span className="text-red-600 text-xs">({activeAnalysis.isLive ? '' : '~'}+{activeAnalysis.delay} min)</span>}
                   </div>
+                  <SourceChip source={activeAnalysis.source} confidence={activeAnalysis.confidence} />
                 </div>
 
                 {/* 2. Pourquoi l'embouteillage ? */}
                 <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 space-y-1">
                   <div className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-400 flex items-center gap-1">
-                    <ShieldAlert className="h-3 w-3" /> Cause du blocage
+                    <ShieldAlert className="h-3 w-3" /> {activeAnalysis.cause ? `Signalé il y a ${activeAnalysis.reportAgeMin ?? '?'} min` : "Cause habituelle (non confirmée)"}
                   </div>
                   <p className="text-xs font-semibold text-amber-900 dark:text-amber-200 leading-tight">
-                    {activeAnalysis.cause || "Affluence intense de minibus et goulot d'étranglement."}
+                    {activeAnalysis.cause || activeAnalysis.typicalCause || "Aucun signalement récent sur cet axe."}
                   </p>
                 </div>
 
                 {/* 3. Échappatoire Certifiée */}
                 <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 space-y-1">
                   <div className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
-                    <ShieldCheck className="h-3 w-3" /> Alternative Anti-Trou
+                    <ShieldCheck className="h-3 w-3" /> Alternative habituelle
                   </div>
                   <p className="text-xs font-bold text-emerald-900 dark:text-emerald-200 leading-tight">
-                    {activeAnalysis.certifiedAlternative || "Contourner par les voies secondaires."}
+                    {activeAnalysis.typicalAlternative || "Contourner par les voies secondaires."}
                   </p>
+                  {Array.isArray(activeAnalysis.alternatives) && activeAnalysis.alternatives.length > 0 && (
+                    <ul className="pt-1 space-y-0.5 text-[10px] text-emerald-800 dark:text-emerald-300">
+                      {activeAnalysis.alternatives.map((alt: any, i: number) => (
+                        <li key={i}>Mesuré : {alt.description} · {alt.duration}</li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               </div>
 
@@ -636,7 +724,8 @@ export default function TrafficCommandDashboard() {
             {bottlenecks.map((node) => {
               const statusKey = (node.status || node.initialStatus || "MODÉRÉ") as keyof typeof STATUS_CONFIG;
               const cfg = STATUS_CONFIG[statusKey] || STATUS_CONFIG.MODÉRÉ;
-              const isConfirmed = confirmedNodes[node.id];
+              const myVote = votedNodes[node.id];
+              const nodeVotes = node.votes as { still: number; clear: number; lastAgeMin: number | null } | undefined;
               const speed = node.speedKmh ?? node.speed;
               const delay = node.delayMin ?? node.delay;
 
@@ -673,19 +762,21 @@ export default function TrafficCommandDashboard() {
                           {cfg.label}
                         </Badge>
                         <div className="text-[10px] font-bold text-slate-500 mt-0.5">
-                          +{delay} min • {speed} km/h
+                          {typeof delay === 'number' ? `${node.isLive ? '' : '~'}+${delay} min • ${speed} km/h` : '—'}
                         </div>
                       </div>
                     </div>
+
+                    <div className="pl-6"><SourceChip source={node.source} confidence={node.confidence} /></div>
 
                     {/* Cause Box */}
                     <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-300/40 text-slate-800 dark:text-slate-200 space-y-1">
                       <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-amber-800 dark:text-amber-300">
                         <ShieldAlert className="h-3 w-3 text-amber-600" />
-                        <span>Pourquoi ça bloque ?</span>
+                        <span>{node.cause ? `Pourquoi ça bloque · signalé il y a ${node.causeAgeMin ?? '?'} min` : "Cause habituelle (non confirmée aujourd'hui)"}</span>
                       </div>
                       <p className="text-xs font-medium leading-relaxed pl-4 text-slate-700 dark:text-slate-300">
-                        {node.cause}
+                        {node.cause || node.typicalCause}
                       </p>
                     </div>
 
@@ -693,7 +784,7 @@ export default function TrafficCommandDashboard() {
                     <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-300/40 text-slate-800 dark:text-slate-200 space-y-1">
                       <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-emerald-800 dark:text-emerald-300">
                         <ShieldCheck className="h-3 w-3 text-emerald-600" />
-                        <span>Échappatoire Validée (Anti-Trou)</span>
+                        <span>Échappatoire habituelle</span>
                       </div>
                       <p className="text-xs font-bold leading-relaxed pl-4 text-emerald-800 dark:text-emerald-300">
                         {node.certifiedAlt}
@@ -710,23 +801,41 @@ export default function TrafficCommandDashboard() {
                   {/* Bottom Row Actions */}
                   <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
                     
-                    {/* Action 1: Confirmer & Gagner (+25 FC) */}
-                    {isConfirmed ? (
-                      <div className="flex items-center gap-1.5 text-emerald-600 text-xs font-bold">
-                        <CheckCircle2 className="h-4 w-4" />
-                        <span>+25 FC Crédités</span>
-                      </div>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleRewardConfirm(node.id, node.name)}
-                        className="rounded-xl text-[11px] font-black text-emerald-700 dark:text-emerald-400 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 gap-1.5 h-8"
-                      >
-                        <ThumbsUp className="h-3 w-3" />
-                        <span>Confirmer (+25 FC)</span>
-                      </Button>
-                    )}
+                    {/* Action 1 : vote 1-tap (sur place) */}
+                    <div className="flex flex-col gap-1 min-w-0">
+                      {myVote ? (
+                        <div className="flex items-center gap-1.5 text-emerald-600 text-xs font-bold">
+                          <CheckCircle2 className="h-4 w-4" />
+                          <span>{myVote === 'still' ? 'Vous : toujours bloqué' : "Vous : c'est dégagé"}</span>
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleVote(node.id, node.name, 'still')}
+                            className="rounded-xl text-[11px] font-black text-red-700 dark:text-red-400 border-red-300 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 gap-1 h-8 px-2.5"
+                          >
+                            <ThumbsDown className="h-3 w-3" />
+                            <span>Toujours bloqué</span>
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleVote(node.id, node.name, 'clear')}
+                            className="rounded-xl text-[11px] font-black text-emerald-700 dark:text-emerald-400 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 gap-1 h-8 px-2.5"
+                          >
+                            <ThumbsUp className="h-3 w-3" />
+                            <span>C'est dégagé</span>
+                          </Button>
+                        </div>
+                      )}
+                      {nodeVotes && (nodeVotes.still + nodeVotes.clear) > 0 && (
+                        <span className="text-[10px] text-slate-500 font-medium">
+                          {nodeVotes.still} bloqué · {nodeVotes.clear} dégagé{nodeVotes.lastAgeMin !== null ? ` · dernier vote il y a ${nodeVotes.lastAgeMin} min` : ''}
+                        </span>
+                      )}
+                    </div>
 
                     {/* Action 2: Itinéraire Bis */}
                     <Button
@@ -755,7 +864,7 @@ export default function TrafficCommandDashboard() {
               </Badge>
               <span className="text-xs text-emerald-100 font-bold">Portefeuille Citoyen K-Flow</span>
             </div>
-            <h3 className="text-xl font-black">Chaque bouchon signalé = de l'argent dans votre poche</h3>
+            <h3 className="text-xl font-black">Chaque vote sur place met la carte à jour pour tout Kinshasa</h3>
             <p className="text-xs text-emerald-100 max-w-xl">
               Retirez vos Francs Congolais instantanément par M-Pesa, Orange Money ou Airtel Money, ou rechargez des mégas internet gratuits !
             </p>

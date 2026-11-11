@@ -11,6 +11,23 @@ import * as nodemailer from 'nodemailer';
 import { getServerFirestore } from "@/firebase/server";
 import { collection, getDocs, query, where, Timestamp, limit, orderBy, doc, getDoc, setDoc, updateDoc, runTransaction, serverTimestamp, addDoc } from "firebase/firestore";
 import { CONFIG } from "@/lib/config";
+import { kinshasaNow, voteSlot } from "@/lib/kinshasa-time";
+import { adminDb, verifyCaller, verifyAdmin, AuthError } from "@/firebase/admin";
+import { FieldValue } from "firebase-admin/firestore";
+import { STAR_PACK_CATALOG, PASS_CATALOG, DATA_PACK_CATALOG, REWARD_CDF, DAILY_REWARD_CAP_CDF, MIN_CASHOUT_CDF, CDF_PER_USD } from "@/lib/pricing";
+import { fulfillVerifiedFlexPayPayment, markPaymentFailed } from "@/lib/payments-server";
+
+/** Identifiants SMTP lus dans l'environnement uniquement (les mots de passe ne doivent plus être dans le code). */
+function smtpCredentials() {
+    const smtpUser = process.env.SMTP_USER;
+    const smtpPass = (process.env.SMTP_PASS || '').replace(/"/g, '');
+    if (!smtpUser || !smtpPass) throw new Error("SMTP_USER / SMTP_PASS non configurés sur le serveur.");
+    return { smtpUser, smtpPass };
+}
+
+function authErrorMessage(err: any, fallback: string) {
+    return err instanceof AuthError ? err.message : (err?.message || fallback);
+}
 import { initiateFlexPayMobileMoney, initiateFlexPayCard, checkFlexPayTransactionStatus, detectDRCOperator } from "@/lib/flexpay";
 
 const GOOGLE_API_KEY = process.env.GOOGLE_ROUTES_API_KEY || CONFIG.GOOGLE_MAPS_API_KEY;
@@ -19,6 +36,85 @@ const GOOGLE_API_KEY = process.env.GOOGLE_ROUTES_API_KEY || CONFIG.GOOGLE_MAPS_A
  * Cache simple pour éviter les appels API redondants (90 secondes)
  */
 const trafficCache = new Map<string, { data: any, expires: number }>();
+
+/** Un signalement citoyen n'est plus considéré comme « en direct » après ce délai. */
+const REPORT_FRESH_MINUTES = 60;
+
+function tsToMillis(ts: any): number | null {
+    if (!ts) return null;
+    if (typeof ts.toMillis === 'function') return ts.toMillis();
+    if (typeof ts.seconds === 'number') return ts.seconds * 1000;
+    const n = new Date(ts).getTime();
+    return Number.isNaN(n) ? null : n;
+}
+
+/**
+ * Signalements récents (< REPORT_FRESH_MINUTES) et non expirés, sous forme d'objets simples
+ * (sérialisables par les Server Actions). Les vieux signalements restés « active » ne doivent
+ * plus colorer la carte ni servir de cause.
+ */
+async function loadFreshReports(): Promise<any[]> {
+    try {
+        const firestore = getServerFirestore();
+        const snap = await getDocs(query(collection(firestore, 'road_condition_reports'), orderBy('createdAt', 'desc'), limit(60)));
+        const nowMs = Date.now();
+        const cutoff = nowMs - REPORT_FRESH_MINUTES * 60 * 1000;
+        return snap.docs
+            .map(d => ({ id: d.id, ...(d.data() as any) }))
+            .filter(r => r.status !== 'expired' && r.coords && (tsToMillis(r.createdAt) ?? 0) >= cutoff)
+            .map(r => ({
+                id: r.id,
+                type: r.type ?? null,
+                description: r.description ?? '',
+                locationName: r.locationName ?? null,
+                coords: { lat: Number(r.coords.lat), lng: Number(r.coords.lng) },
+                ageMin: Math.max(0, Math.round((nowMs - (tsToMillis(r.createdAt) ?? nowMs)) / 60000)),
+            }));
+    } catch (err) {
+        console.warn('[Reports] lecture impossible:', err);
+        return [];
+    }
+}
+
+/** Votes 1-tap « toujours bloqué / c'est dégagé » des 30 à 60 dernières minutes, groupés par nœud. */
+async function loadRecentVotes(): Promise<Record<string, { still: number; clear: number; lastAgeMin: number | null }>> {
+    const out: Record<string, { still: number; clear: number; lastAtMs: number }> = {};
+    try {
+        const firestore = getServerFirestore();
+        const snap = await getDocs(query(collection(firestore, 'traffic_votes'), where('slot', '>=', voteSlot() - 1), limit(500)));
+        snap.docs.forEach(d => {
+            const v = d.data() as any;
+            if (!v.nodeId || (v.vote !== 'still' && v.vote !== 'clear')) return;
+            const agg = out[v.nodeId] ??= { still: 0, clear: 0, lastAtMs: 0 };
+            agg[v.vote as 'still' | 'clear']++;
+            agg.lastAtMs = Math.max(agg.lastAtMs, tsToMillis(v.createdAt) ?? 0);
+        });
+    } catch (err) {
+        console.warn('[Votes] lecture impossible:', err);
+    }
+    const nowMs = Date.now();
+    return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, {
+        still: v.still,
+        clear: v.clear,
+        lastAgeMin: v.lastAtMs ? Math.max(0, Math.round((nowMs - v.lastAtMs) / 60000)) : null,
+    }]));
+}
+
+/**
+ * Score de confiance 0–100 affiché à côté de chaque chiffre.
+ * Mesure en direct = base élevée ; estimation horaire = base basse. Les signalements et votes
+ * récents qui vont dans le même sens que le statut l'augmentent, les contradictions la baissent.
+ */
+function confidenceScore(isLive: boolean, congested: boolean, reports: number, votes?: { still: number; clear: number }) {
+    let c = isLive ? 70 : 25;
+    c += Math.min(20, reports * 10);
+    if (votes) {
+        const agree = congested ? votes.still : votes.clear;
+        const disagree = congested ? votes.clear : votes.still;
+        c += Math.min(20, agree * 5) - Math.min(30, disagree * 10);
+    }
+    return Math.max(5, Math.min(98, Math.round(c)));
+}
 
 export async function checkTrafficAction(input: { lat: number, lng: number, address?: string }) {
     const cacheKey = `${input.lat.toFixed(4)}-${input.lng.toFixed(4)}`;
@@ -30,17 +126,10 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
 
     try {
         // 1. Initialisation Firebase prudente sur le serveur
-        let localReport = null;
+        let localReport: any = null;
         try {
-            const firestore = getServerFirestore();
-            const reportsQuery = query(
-                collection(firestore, 'road_condition_reports'),
-                where('status', '==', 'active'),
-                limit(10)
-            );
-            const reportsSnap = await getDocs(reportsQuery);
-            const recentReports = reportsSnap.docs.map(d => d.data() as RoadConditionReport);
-            // Recherche de rapports dans un rayon de ~1.5km (Précision accrue)
+            const recentReports = await loadFreshReports();
+            // Signalement récent dans un rayon de ~1.5 km
             localReport = recentReports.find(r => 
                 Math.abs(r.coords.lat - input.lat) < 0.015 && 
                 Math.abs(r.coords.lng - input.lng) < 0.015
@@ -63,6 +152,8 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
 
         let data: any = null;
         let route: any = null;
+        // true quand la durée vient d'OSRM (route vide) × facteur horaire : c'est une estimation, pas une mesure.
+        let isEstimate = false;
 
         try {
             const res = await fetch(url, {
@@ -94,8 +185,7 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
                     const osrmData = await osrmRes.json();
                     if (osrmData.code === 'Ok' && osrmData.routes?.[0]) {
                         const r = osrmData.routes[0];
-                        const kinshasaHour = (new Date().getUTCHours() + 1) % 24;
-                        const isRush = (kinshasaHour >= 7 && kinshasaHour <= 9) || (kinshasaHour >= 16 && kinshasaHour <= 20);
+                        const { hour: kinshasaHour, isPeakHour: isRush } = kinshasaNow();
                         const rushMult = isRush ? (kinshasaHour >= 17 && kinshasaHour <= 19 ? 2.8 : 2.1) : 1.15;
                         const durSec = Math.round(r.duration * rushMult);
                         const staticSec = Math.round(r.duration);
@@ -106,6 +196,7 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
                             description: "Itinéraire via OSRM Live Telemetry"
                         };
                         data = { routes: [route] };
+                        isEstimate = true;
                     }
                 }
             } catch (osrmErr) {
@@ -119,7 +210,14 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
             lingala: "Tozali kotala nzela — keba na tamboli na yo.",
             delay: 0,
             ratio: 1,
-            alternatives: []
+            alternatives: [],
+            source: 'none',
+            isLive: false,
+            confidence: 0,
+            cause: null,
+            typicalCause: null,
+            typicalAlternative: null,
+            reportAgeMin: null
         };
 
         if (route) {
@@ -153,6 +251,12 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
 
             result.delay = delay;
             result.ratio = ratio;
+            result.source = isEstimate ? 'estimate' : 'google';
+            result.isLive = !isEstimate;
+            result.confidence = confidenceScore(!isEstimate, result.status !== 'FLUIDE', localReport ? 1 : 0);
+            if (isEstimate && !localReport) {
+                result.verdict = `Estimation selon l'heure, pas de mesure en direct pour l'instant. ${result.verdict}`;
+            }
 
             // Déduction contextuelle de la cause exacte du ralentissement (Hyper-local Kinshasa)
             const addrLower = (input.address || "").toLowerCase();
@@ -163,7 +267,7 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
                 cause = localReport.description;
             } else if (result.status === "BLOQUÉ" || result.status === "EMBOUTEILLÉ") {
                 if (addrLower.includes("lumumba") || addrLower.includes("limete") || addrLower.includes("pascal")) {
-                    cause = "Panne de minibus 207 sur voie de droite et goulot d\'étranglement de l\'Échangeur.";
+                    cause = "Goulot de l\'Échangeur et arrêts de minibus 207 sur la chaussée.";
                     certifiedAlternative = "Av. des Poids Lourds via Kingabwa (évite l\'Échangeur).";
                 } else if (addrLower.includes("magasin") || addrLower.includes("mondjiba") || addrLower.includes("kintambo")) {
                     cause = "Régulation manuelle intense des roulages et refoulement vers Ngaliema.";
@@ -178,7 +282,7 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
                     cause = "Forte affluence piétonne et embouteillage en nœud de papillon.";
                     certifiedAlternative = "Avenue de la Victoire vers Avenue du Stade.";
                 } else if (delay >= 6) {
-                    cause = "Véhicule lourd en panne ou obstacle non dégagé sur la chaussée.";
+                    cause = "Cause inconnue : aucun signalement récent sur cet axe.";
                     certifiedAlternative = "Contourner par la première ruelle carrossable à droite.";
                 } else {
                     cause = "Trafic dense en accordéon aux heures de pointe.";
@@ -192,11 +296,11 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
                 certifiedAlternative = "Itinéraire principal optimal.";
             }
 
-            result.cause = cause;
-            result.certifiedAlternative = certifiedAlternative;
-            result.bestDepartureTime = (result.status === "BLOQUÉ" || result.status === "EMBOUTEILLÉ")
-                ? "Départ conseillé dans 45 min pour économiser 35 min de blocage inutile."
-                : "Partez maintenant ! Conditions de circulation idéales.";
+            // Seul un signalement récent est une cause confirmée ; le reste est la cause habituelle de l'axe.
+            result.cause = localReport ? localReport.description : null;
+            result.reportAgeMin = localReport ? localReport.ageMin : null;
+            result.typicalCause = localReport ? null : cause;
+            result.typicalAlternative = certifiedAlternative;
 
             if (data.routes.length > 1) {
                 result.alternatives = data.routes.slice(1, 3).map((r: any) => ({
@@ -242,6 +346,7 @@ export async function getGoogleTrafficStatusAction(axes: any[]) {
                     body: JSON.stringify(body)
                 });
 
+                if (!res.ok) return { road: axis.name, status: "INCONNU", speed: 0, delay: 0 };
                 const data = await res.json();
                 const route = data?.routes?.[0];
                 
@@ -263,16 +368,18 @@ export async function getGoogleTrafficStatusAction(axes: any[]) {
 
                 // Enregistrement passif dans traffic_history pour alimenter le modèle d'apprentissage IA
                 try {
-                    const firestore = getServerFirestore();
-                    const now = new Date();
-                    addDoc(collection(firestore, 'traffic_history'), {
+                    const kin = kinshasaNow();
+                    // Écriture serveur (Admin SDK) : traffic_history n'est plus modifiable par les clients.
+                    adminDb().collection('traffic_history').add({
                         road: axis.name,
                         status,
                         speed,
                         delay,
-                        dayOfWeek: now.getDay(),
-                        hourOfDay: now.getHours(),
-                        timestamp: serverTimestamp()
+                        dayOfWeek: kin.dayOfWeek,
+                        hourOfDay: kin.hour,
+                        minuteOfHour: kin.minute,
+                        tz: 'Africa/Kinshasa',
+                        timestamp: FieldValue.serverTimestamp()
                     }).catch(() => {});
                 } catch (logErr) {
                     // Silencieux pour ne pas impacter le flux principal
@@ -351,9 +458,9 @@ export async function sendTestPushNotificationAction(subscription: PushSubscript
   }
 }
 
-export async function sendTestEmailAction() {
-  const smtpUser = "kinshasaflow@gmail.com";
-  const smtpPass = "dazr vpou tslb tsok"; 
+export async function sendTestEmailAction(idToken: string) {
+  try { await verifyAdmin(idToken); } catch (err: any) { return { success: false, error: authErrorMessage(err, 'Non autorisé.') }; }
+  const { smtpUser, smtpPass } = smtpCredentials();
 
   const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
@@ -390,10 +497,17 @@ export async function broadcastEmailAction(params: {
   userName: string,
   type: 'chat' | 'alert' | 'hazard' | 'report',
   location?: string,
-  recipientEmails?: string[]
+  recipientEmails?: string[],
+  idToken: string
 }) {
-  const smtpUser = "kinshasaflow@gmail.com";
-  const smtpPass = "dazr vpou tslb tsok"; 
+  // Appelable depuis le navigateur : on exige un compte connecté, et seuls les admins
+  // peuvent choisir les destinataires.
+  let caller;
+  try { caller = await verifyCaller(params.idToken); } catch (err: any) { return { success: false, error: authErrorMessage(err, 'Non autorisé.') }; }
+  if (params.recipientEmails?.length && !caller.isAdmin) {
+    return { success: false, error: 'Réservé aux administrateurs.' };
+  }
+  const { smtpUser, smtpPass } = smtpCredentials();
 
   // Initialisation dynamique des destinataires
   let recipientList: string[] = ['drnduwa@gmail.com']; 
@@ -402,9 +516,8 @@ export async function broadcastEmailAction(params: {
       recipientList = Array.from(new Set([...recipientList, ...params.recipientEmails]));
   } else {
       try {
-        const firestore = getServerFirestore();
-        const usersSnap = await getDocs(collection(firestore, 'users'));
-        
+        const usersSnap = await adminDb().collection('users').get();
+
         if (!usersSnap.empty) {
             const userEmails = usersSnap.docs
               .map(doc => doc.data().email)
@@ -473,9 +586,15 @@ export async function broadcastEmailAction(params: {
   }
 }
 
-export async function sendWelcomeEmailAction(params: { email: string, userName: string }) {
-  const smtpUser = "kinshasaflow@gmail.com";
-  const smtpPass = "dazr vpou tslb tsok"; 
+export async function sendWelcomeEmailAction(params: { email: string, userName: string, idToken: string }) {
+  // Uniquement vers l'adresse du compte qui vient de s'inscrire (sinon : envoi de spam vers n'importe qui).
+  try {
+    const caller = await verifyCaller(params.idToken);
+    if (!caller.email || caller.email.toLowerCase() !== String(params.email).toLowerCase()) {
+      return { success: false, error: 'Adresse non autorisée.' };
+    }
+  } catch (err: any) { return { success: false, error: authErrorMessage(err, 'Non autorisé.') }; }
+  const { smtpUser, smtpPass } = smtpCredentials();
 
   const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
@@ -524,19 +643,20 @@ export async function sendWelcomeEmailAction(params: { email: string, userName: 
   }
 }
 
-export async function sendAlertEmailAction(params: { type: string, location: string, userName: string }) {
+export async function sendAlertEmailAction(params: { type: string, location: string, userName: string, idToken: string }) {
   return broadcastEmailAction({
       title: params.type.toUpperCase(),
       message: `${params.type} signalé par ${params.userName}`,
       userName: params.userName,
       type: 'alert',
-      location: params.location
+      location: params.location,
+      idToken: params.idToken
   });
 }
 
-export async function sendRelanceGiftEmailAction(recipientEmails: string[]) {
-  const smtpUser = process.env.SMTP_USER || "kinshasaflow@gmail.com";
-  const smtpPass = (process.env.SMTP_PASS || "jrgl kgjl qlqj vmfc").replace(/"/g, '');
+export async function sendRelanceGiftEmailAction(idToken: string, recipientEmails: string[]) {
+  try { await verifyAdmin(idToken); } catch (err: any) { return { success: false, error: authErrorMessage(err, 'Non autorisé.') }; }
+  const { smtpUser, smtpPass } = smtpCredentials();
 
   if (!recipientEmails || recipientEmails.length === 0) {
     return { success: false, error: "Aucun email destinataire spécifié." };
@@ -621,107 +741,9 @@ export async function sendRelanceGiftEmailAction(recipientEmails: string[]) {
   }
 }
 
-export async function fulfillFlexPayPayment(orderNumber: string): Promise<{ success: boolean; error?: string }> {
-  try {
-    const firestore = getServerFirestore();
-    const paymentRef = doc(firestore, 'payments', orderNumber);
-    
-    let alreadySuccess = false;
-    await runTransaction(firestore, async (transaction) => {
-      const paymentSnap = await transaction.get(paymentRef);
-      if (!paymentSnap.exists()) {
-        throw new Error(`Paiement ${orderNumber} introuvable dans la base.`);
-      }
-
-      const paymentData = paymentSnap.data() as PaymentRecord;
-      if (paymentData.status === 'success') {
-        alreadySuccess = true;
-        return;
-      }
-
-      const userRef = doc(firestore, 'users', paymentData.userId);
-      const userSnap = await transaction.get(userRef);
-      if (!userSnap.exists()) {
-        throw new Error(`Utilisateur ${paymentData.userId} introuvable.`);
-      }
-
-      const userData = userSnap.data() as UserProfile;
-
-      // 1. Mettre à jour le statut du paiement
-      transaction.update(paymentRef, {
-        status: 'success',
-        completedAt: serverTimestamp(),
-      });
-
-      // 2. Créditer les Stars ou activer le Pass Illimité
-      if (paymentData.itemType === 'pack' && paymentData.stars) {
-        const addedStars = Number(paymentData.stars);
-        const newBalance = (userData.currentStarsBalance || 0) + addedStars;
-        const newPurchased = (userData.totalStarsPurchased || 0) + addedStars;
-
-        transaction.update(userRef, {
-          currentStarsBalance: newBalance,
-          totalStarsPurchased: newPurchased,
-        });
-
-        // Historique de transaction utilisateur
-        const starTransRef = doc(collection(userRef, 'star_transactions'));
-        transaction.set(starTransRef, {
-          userId: paymentData.userId,
-          type: 'purchase',
-          starsChange: addedStars,
-          balanceAfterTransaction: newBalance,
-          description: `Achat Pack ${addedStars} Stars FlexPay (${paymentData.amount} ${paymentData.currency})`,
-          relatedObjectId: orderNumber,
-          relatedObjectType: 'flexpay_pack',
-          timestamp: serverTimestamp(),
-        });
-      } else if (paymentData.itemType === 'pass' && paymentData.passType) {
-        const daysToAdd = paymentData.passType === 'weekly' ? 7 : 30;
-        let baseDate = new Date();
-        if (userData.hasActivePass && userData.passExpiresAt) {
-          const currentExpiry = userData.passExpiresAt.toDate ? userData.passExpiresAt.toDate() : new Date(userData.passExpiresAt);
-          if (currentExpiry > baseDate) {
-            baseDate = currentExpiry; // Prolonge l'abonnement en cours
-          }
-        }
-
-        const newExpiryDate = new Date(baseDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000);
-
-        transaction.update(userRef, {
-          hasActivePass: true,
-          passExpiresAt: Timestamp.fromDate(newExpiryDate),
-          passType: paymentData.passType,
-        });
-
-        const starTransRef = doc(collection(userRef, 'star_transactions'));
-        transaction.set(starTransRef, {
-          userId: paymentData.userId,
-          type: 'purchase',
-          starsChange: 0,
-          balanceAfterTransaction: userData.currentStarsBalance || 0,
-          description: `Activation Pass Illimité (${paymentData.passType === 'weekly' ? '7 Jours' : '30 Jours'})`,
-          relatedObjectId: orderNumber,
-          relatedObjectType: 'flexpay_pass',
-          timestamp: serverTimestamp(),
-        });
-      }
-    });
-
-    return { success: true };
-  } catch (err: any) {
-    console.error(`[FlexPay] Erreur lors du fulfillment ${orderNumber}:`, err);
-    return { success: false, error: err.message || 'Erreur lors du crédit de la commande.' };
-  }
-}
-
 export async function initiateFlexPayPaymentAction(params: {
-  userId: string;
-  itemType: 'pack' | 'pass';
+  idToken: string;
   itemId: string;
-  stars?: number;
-  passType?: 'weekly' | 'monthly';
-  amount: number;
   currency: 'CDF' | 'USD';
   channel: 'mobile_money' | 'card';
   phone?: string;
@@ -734,6 +756,18 @@ export async function initiateFlexPayPaymentAction(params: {
   error?: string;
 }> {
   try {
+    const { uid } = await verifyCaller(params.idToken);
+
+    // Prix, Stars et durée du Pass viennent du catalogue serveur, jamais du navigateur.
+    const pack = STAR_PACK_CATALOG[params.itemId];
+    const pass = PASS_CATALOG[params.itemId];
+    if (!pack && !pass) return { success: false, error: 'Article inconnu.' };
+    if (params.currency !== 'CDF' && params.currency !== 'USD') return { success: false, error: 'Devise non prise en charge.' };
+    const itemType: 'pack' | 'pass' = pack ? 'pack' : 'pass';
+    const amount = (pack ?? pass)!.prices[params.currency];
+    const stars = pack ? pack.stars : 0;
+    const passType = pass ? pass.passType : null;
+
     const reference = `KF_${Date.now()}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
     let result: { success: boolean; orderNumber?: string; url?: string; message?: string; error?: string };
@@ -744,18 +778,18 @@ export async function initiateFlexPayPaymentAction(params: {
       }
       result = await initiateFlexPayMobileMoney({
         phone: params.phone,
-        amount: params.amount,
+        amount,
         currency: params.currency,
         reference,
       });
     } else {
       result = await initiateFlexPayCard({
-        amount: params.amount,
+        amount,
         currency: params.currency,
         reference,
-        description: params.itemType === 'pass'
-          ? `Pass Illimité Kinshasa Flow (${params.passType})`
-          : `Pack ${params.stars} Stars Kinshasa Flow`,
+        description: itemType === 'pass'
+          ? `Pass Illimité Kinshasa Flow (${passType})`
+          : `Pack ${stars} Stars Kinshasa Flow`,
       });
     }
 
@@ -763,27 +797,23 @@ export async function initiateFlexPayPaymentAction(params: {
       return { success: false, error: result.error || 'Impossible d\'initier le paiement.' };
     }
 
-    // Sauvegarder dans Firestore
-    const firestore = getServerFirestore();
-    const paymentRef = doc(firestore, 'payments', result.orderNumber);
     const network = params.phone ? detectDRCOperator(params.phone) : undefined;
-
-    await setDoc(paymentRef, {
+    await adminDb().collection('payments').doc(result.orderNumber).set({
       id: result.orderNumber,
       orderNumber: result.orderNumber,
       reference,
-      userId: params.userId,
-      itemType: params.itemType,
+      userId: uid,
+      itemType,
       itemId: params.itemId,
-      stars: params.stars || 0,
-      passType: params.passType || null,
-      amount: params.amount,
+      stars,
+      passType,
+      amount,
       currency: params.currency,
       channel: params.channel,
       network: network || null,
       phone: params.phone || null,
       status: 'pending',
-      createdAt: serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
 
     return {
@@ -795,7 +825,7 @@ export async function initiateFlexPayPaymentAction(params: {
     };
   } catch (err: any) {
     console.error('[FlexPay] Exception in initiateFlexPayPaymentAction:', err);
-    return { success: false, error: err.message || 'Erreur lors de l\'initiation du paiement.' };
+    return { success: false, error: authErrorMessage(err, 'Erreur lors de l\'initiation du paiement.') };
   }
 }
 
@@ -813,7 +843,7 @@ export async function checkFlexPayStatusAction(orderNumber: string): Promise<{
     }
 
     if (checkRes.status === '0') {
-      const fulfillment = await fulfillFlexPayPayment(orderNumber);
+      const fulfillment = await fulfillVerifiedFlexPayPayment(orderNumber);
       return {
         success: true,
         status: '0',
@@ -821,9 +851,7 @@ export async function checkFlexPayStatusAction(orderNumber: string): Promise<{
         fulfilled: fulfillment.success,
       };
     } else if (checkRes.status === '1') {
-      const firestore = getServerFirestore();
-      const paymentRef = doc(firestore, 'payments', orderNumber);
-      await updateDoc(paymentRef, { status: 'failed', failedAt: serverTimestamp() }).catch(() => {});
+      await markPaymentFailed(orderNumber);
       return {
         success: true,
         status: '1',
@@ -846,9 +874,8 @@ import { TrafficForecast, HourlyForecast } from '@/lib/types';
 import { MAJOR_AXES } from '@/lib/constants';
 
 export async function getTrafficForecastAction(routeName: string): Promise<TrafficForecast> {
-  const now = new Date();
-  const currentHour = now.getHours();
-  const currentDayOfWeek = now.getDay();
+  // Heure et jour de Kinshasa (le serveur tourne en UTC)
+  const { hour: currentHour, dayOfWeek: currentDayOfWeek } = kinshasaNow();
   
   // 1. État Actuel (Données en temps réel Google)
   const axis = MAJOR_AXES.find(a => a.name === routeName);
@@ -893,10 +920,18 @@ export async function getTrafficForecastAction(routeName: string): Promise<Traff
       const q = query(
         historyCol,
         where('road', '==', routeName),
-        limit(100)
+        limit(500)
       );
       const snap = await getDocs(q);
-      historicalDocs = snap.docs.map(d => d.data());
+      // Les anciens relevés (sans champ `tz`) ont été enregistrés à l'heure UTC du serveur :
+      // on les recale sur l'heure de Kinshasa (UTC+1).
+      historicalDocs = snap.docs.map(d => {
+        const h = d.data() as any;
+        if (h.tz === 'Africa/Kinshasa' || typeof h.hourOfDay !== 'number') return h;
+        const hour = (h.hourOfDay + 1) % 24;
+        const dayOfWeek = hour === 0 && typeof h.dayOfWeek === 'number' ? (h.dayOfWeek + 1) % 7 : h.dayOfWeek;
+        return { ...h, hourOfDay: hour, dayOfWeek };
+      });
     } catch (dbErr) {
       console.warn('[Forecast] Erreur lecture traffic_history:', dbErr);
     }
@@ -959,23 +994,26 @@ export async function getTrafficForecastAction(routeName: string): Promise<Traff
     }
   }
 
-  // 3. Alternatives (Itinéraires bis pertinents pour les grands axes)
-  const alternativesMap: Record<string, string[]> = {
-    'Boulevard Lumumba': ['Avenue des Poids Lourds', 'Route Mokali'],
-    'Boulevard du 30 Juin': ['Avenue de la Justice', 'Avenue Colonel Mondjiba'],
-    'Route de Matadi': ['Avenue By Pass', 'Route de Kimwenza'],
-    'Avenue Kasa-Vubu': ['Avenue de l\'Enseignement', 'Avenue Gambela']
-  };
-
-  const alts = alternativesMap[routeName] || ['Avenue parallèle la plus proche'];
-  const alternatives = alts.map(alt => {
-    const altDelay = Math.max(0, Math.round(currentDelay * 0.6));
-    return {
-      road: alt,
-      delay: altDelay,
-      status: altDelay > 10 ? 'MODÉRÉ' : 'FLUIDE'
-    };
-  });
+  // 3. Alternatives : mesurées en direct quand l'axe est connu, sinon marquées « non mesuré ».
+  const alternativesMap: Array<[string, string[]]> = [
+    ['Lumumba', ['Poids Lourds', 'Ndjoku']],
+    ['30 Juin', ['Justice', 'Mondjiba']],
+    ['Matadi', ['Montagne', 'Tourisme']],
+    ['Kasa-Vubu', ['Enseignement', 'Gambela']],
+    ['Victoire', ['Enseignement', 'Gambela']],
+    ['Mondjiba', ['Tourisme', 'École']],
+    ['Université', ['Kapela', 'Kimwenza']],
+  ];
+  const altTerms = alternativesMap.find(([k]) => routeName.includes(k))?.[1] ?? [];
+  const altAxes = altTerms
+    .map(term => MAJOR_AXES.find(a => a.name.includes(term) && a.name !== routeName))
+    .filter((a): a is (typeof MAJOR_AXES)[number] => Boolean(a));
+  const measuredAlts = altAxes.length ? await getGoogleTrafficStatusAction(altAxes) : [];
+  const alternatives = measuredAlts.map(m => ({
+    road: m.road,
+    delay: m.status === 'INCONNU' ? null : m.delay,
+    status: m.status === 'INCONNU' ? 'NON MESURÉ' : m.status,
+  }));
 
   return {
     road: routeName,
@@ -992,19 +1030,18 @@ export async function getTrafficForecastAction(routeName: string): Promise<Traff
  * ============================================================================
  */
 
-export async function getWalletTransactionsAction(userId: string) {
+export async function getWalletTransactionsAction(idToken: string) {
   try {
-    const firestore = getServerFirestore();
-    const transRef = collection(firestore, 'users', userId, 'wallet_transactions');
-    const q = query(transRef, orderBy('timestamp', 'desc'), limit(15));
-    const snap = await getDocs(q);
+    const { uid } = await verifyCaller(idToken);
+    const snap = await adminDb().collection('users').doc(uid).collection('wallet_transactions')
+      .orderBy('timestamp', 'desc').limit(15).get();
     return {
       success: true,
       transactions: snap.docs.map(d => {
         const data = d.data();
         return {
           id: d.id,
-          userId: data.userId || userId,
+          userId: uid,
           type: data.type || 'earning',
           source: data.source || 'incident_report',
           amountCDF: data.amountCDF || 0,
@@ -1023,207 +1060,216 @@ export async function getWalletTransactionsAction(userId: string) {
   }
 }
 
+/**
+ * Récompense une contribution RÉELLE et vérifiée, une seule fois :
+ *  - 'upvote'         : refId = id du document traffic_votes créé par l'usager (vote 1-tap)
+ *  - 'incident_report': refId = id d'un road_condition_reports créé par l'usager il y a moins de 2 h
+ * Plafond : DAILY_REWARD_CAP_CDF par usager et par jour (heure de Kinshasa).
+ * Avant ce correctif, n'importe qui pouvait créditer n'importe quel compte, sans limite.
+ */
 export async function awardWalletContributionAction(params: {
-  userId: string;
-  type: 'incident_report' | 'upvote' | 'voice_memo' | 'telemetry';
+  idToken: string;
+  type: 'incident_report' | 'upvote';
+  refId: string;
   road?: string;
-  note?: string;
 }) {
   try {
-    const firestore = getServerFirestore();
-    const userRef = doc(firestore, 'users', params.userId);
-    const userSnap = await getDoc(userRef);
+    const { uid } = await verifyCaller(params.idToken);
+    const rewardCDF = REWARD_CDF[params.type];
+    if (!rewardCDF || !params.refId) return { success: false, error: "Contribution non reconnue." };
 
-    if (!userSnap.exists()) {
-      return { success: false, error: "Utilisateur introuvable." };
-    }
+    const db = adminDb();
+    const sourceRef = params.type === 'upvote'
+      ? db.collection('traffic_votes').doc(params.refId)
+      : db.collection('road_condition_reports').doc(params.refId);
+    const claimRef = db.collection('reward_claims').doc(`${params.type}_${params.refId}`);
+    const userRef = db.collection('users').doc(uid);
+    const dayKey = `${uid}_${new Date(Date.now() + 3600 * 1000).toISOString().slice(0, 10)}`;
+    const dailyRef = db.collection('reward_daily').doc(dayKey);
 
-    const userData = userSnap.data();
-    const currentCDF = userData.walletBalanceCDF || 0;
-    const currentContribs = userData.totalContributionsCount || 0;
-    const currentTrust = userData.trustScore || 95;
+    const outcome = await db.runTransaction(async (tx) => {
+      const [sourceSnap, claimSnap, userSnap, dailySnap] = await Promise.all([
+        tx.get(sourceRef), tx.get(claimRef), tx.get(userRef), tx.get(dailyRef),
+      ]);
+      if (!sourceSnap.exists) return { ok: false as const, error: "Contribution introuvable." };
+      const source = sourceSnap.data() as any;
+      if (source.userId !== uid) return { ok: false as const, error: "Cette contribution n'est pas la vôtre." };
+      const createdMs = source.createdAt?.toMillis ? source.createdAt.toMillis() : 0;
+      if (!createdMs || Date.now() - createdMs > 2 * 3600 * 1000) return { ok: false as const, error: "Contribution trop ancienne." };
+      if (claimSnap.exists) return { ok: false as const, error: "Déjà récompensé." };
+      if (!userSnap.exists) return { ok: false as const, error: "Utilisateur introuvable." };
+      const user = userSnap.data() as any;
+      if (user.isBlocked) return { ok: false as const, error: "Compte suspendu." };
 
-    // Barème des gains en Francs Congolais (CDF)
-    const REWARD_MAP: Record<string, number> = {
-      incident_report: 200,
-      voice_memo: 100,
-      upvote: 25,
-      telemetry: 100
-    };
+      const earnedToday = dailySnap.exists ? Number(dailySnap.data()!.amountCDF || 0) : 0;
+      if (earnedToday + rewardCDF > DAILY_REWARD_CAP_CDF) {
+        return { ok: false as const, error: `Plafond journalier atteint (${DAILY_REWARD_CAP_CDF} FC). Merci, vos votes comptent quand même pour la carte !` };
+      }
 
-    const rewardCDF = REWARD_MAP[params.type] || 25;
-    const newCDF = currentCDF + rewardCDF;
-    const newUSD = parseFloat((newCDF / 2800).toFixed(2));
-    const newContribs = currentContribs + 1;
-    const newTrust = Math.min(100, currentTrust + 1);
-
-    const descMap: Record<string, string> = {
-      incident_report: "Signalement trafic qualifié (" + (params.road || "Axe kinois") + ")",
-      voice_memo: "Note vocale info trafic (" + (params.road || "Kinshasa") + ")",
-      upvote: "Confirmation état de la route (" + (params.road || "Direct") + ")",
-      telemetry: "Télémétrie passive de vitesse aux heures de pointe"
-    };
-
-    // Transaction Firestore
-    await updateDoc(userRef, {
-      walletBalanceCDF: newCDF,
-      walletBalanceUSD: newUSD,
-      totalContributionsCount: newContribs,
-      trustScore: newTrust,
-      lastEarningTimestamp: serverTimestamp()
+      const newCDF = (user.walletBalanceCDF || 0) + rewardCDF;
+      const newUSD = parseFloat((newCDF / CDF_PER_USD).toFixed(2));
+      tx.create(claimRef, { userId: uid, type: params.type, refId: params.refId, amountCDF: rewardCDF, createdAt: FieldValue.serverTimestamp() });
+      tx.set(dailyRef, { userId: uid, amountCDF: earnedToday + rewardCDF, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      tx.update(userRef, {
+        walletBalanceCDF: newCDF,
+        walletBalanceUSD: newUSD,
+        totalContributionsCount: (user.totalContributionsCount || 0) + 1,
+        lastEarningTimestamp: FieldValue.serverTimestamp(),
+      });
+      tx.set(userRef.collection('wallet_transactions').doc(), {
+        userId: uid,
+        type: 'earning',
+        source: params.type,
+        amountCDF: rewardCDF,
+        amountUSD: parseFloat((rewardCDF / CDF_PER_USD).toFixed(3)),
+        description: params.type === 'upvote'
+          ? `Confirmation état de la route (${params.road || 'carrefour'})`
+          : `Signalement trafic (${params.road || 'Kinshasa'})`,
+        road: params.road || null,
+        refId: params.refId,
+        status: 'completed',
+        balanceAfterCDF: newCDF,
+        timestamp: FieldValue.serverTimestamp(),
+      });
+      return { ok: true as const, newCDF, newUSD };
     });
 
-    // Enregistrement dans l'historique du portefeuille
-    const transRef = collection(firestore, 'users', params.userId, 'wallet_transactions');
-    await addDoc(transRef, {
-      userId: params.userId,
-      type: 'earning',
-      source: params.type,
-      amountCDF: rewardCDF,
-      amountUSD: parseFloat((rewardCDF / 2800).toFixed(3)),
-      description: descMap[params.type] || "Contribution K-Flow",
-      road: params.road || null,
-      status: 'completed',
-      balanceAfterCDF: newCDF,
-      timestamp: serverTimestamp()
-    });
-
+    if (!outcome.ok) return { success: false, error: outcome.error };
     return {
       success: true,
       rewardCDF,
-      newBalanceCDF: newCDF,
-      newBalanceUSD: newUSD,
-      trustScore: newTrust,
+      newBalanceCDF: outcome.newCDF,
+      newBalanceUSD: outcome.newUSD,
       message: "Bravo ! +" + rewardCDF + " FC crédités sur votre E-Wallet K-Flow."
     };
   } catch (err: any) {
     console.error('[E-Wallet Earning Error]:', err);
-    return { success: false, error: err.message || "Erreur lors du versement de la récompense." };
+    return { success: false, error: authErrorMessage(err, "Erreur lors du versement de la récompense.") };
   }
 }
 
+/**
+ * Demande de retrait Mobile Money. Le solde est débité tout de suite (transaction), et la demande
+ * est enregistrée « en attente » : aucun virement automatique n'existe encore, l'équipe paie à la main.
+ * (Avant : le statut était « completed » et le message annonçait un virement qui n'avait jamais lieu.)
+ */
 export async function requestWalletCashoutAction(params: {
-  userId: string;
+  idToken: string;
   amountCDF: number;
   phone: string;
   operator: string;
 }) {
   try {
-    const MIN_CASHOUT_CDF = 1000;
-    if (params.amountCDF < MIN_CASHOUT_CDF) {
+    const { uid } = await verifyCaller(params.idToken);
+    const amount = Math.floor(Number(params.amountCDF));
+    if (!Number.isFinite(amount) || amount < MIN_CASHOUT_CDF) {
       return { success: false, error: "Le montant minimum de retrait est de " + MIN_CASHOUT_CDF + " FC." };
     }
+    const phone = String(params.phone || '').replace(/\s+/g, '');
+    if (!/^\+?\d{9,13}$/.test(phone)) return { success: false, error: "Numéro de téléphone invalide." };
 
-    const firestore = getServerFirestore();
-    const userRef = doc(firestore, 'users', params.userId);
-    const userSnap = await getDoc(userRef);
+    const db = adminDb();
+    const userRef = db.collection('users').doc(uid);
+    const requestRef = db.collection('cashout_requests').doc();
 
-    if (!userSnap.exists()) {
-      return { success: false, error: "Compte introuvable." };
-    }
-
-    const userData = userSnap.data();
-    const currentCDF = userData.walletBalanceCDF || 0;
-
-    if (currentCDF < params.amountCDF) {
-      return { success: false, error: "Solde insuffisant. Vous possédez " + currentCDF + " FC." };
-    }
-
-    const newCDF = currentCDF - params.amountCDF;
-    const newUSD = parseFloat((newCDF / 2800).toFixed(2));
-
-    await updateDoc(userRef, {
-      walletBalanceCDF: newCDF,
-      walletBalanceUSD: newUSD
+    const outcome = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(userRef);
+      if (!snap.exists) return { ok: false as const, error: "Compte introuvable." };
+      const user = snap.data() as any;
+      if (user.isBlocked) return { ok: false as const, error: "Compte suspendu." };
+      const current = user.walletBalanceCDF || 0;
+      if (current < amount) return { ok: false as const, error: "Solde insuffisant. Vous possédez " + current + " FC." };
+      const newCDF = current - amount;
+      tx.update(userRef, { walletBalanceCDF: newCDF, walletBalanceUSD: parseFloat((newCDF / CDF_PER_USD).toFixed(2)) });
+      tx.set(requestRef, {
+        userId: uid,
+        amountCDF: amount,
+        amountUSD: parseFloat((amount / CDF_PER_USD).toFixed(2)),
+        phone,
+        operator: String(params.operator || ''),
+        status: 'pending',
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      tx.set(userRef.collection('wallet_transactions').doc(), {
+        userId: uid,
+        type: 'cashout',
+        source: 'mobile_money_withdrawal',
+        amountCDF: -amount,
+        amountUSD: -parseFloat((amount / CDF_PER_USD).toFixed(3)),
+        description: "Retrait Mobile Money vers " + params.operator + " (" + phone + ")",
+        phone,
+        operator: params.operator,
+        requestId: requestRef.id,
+        status: 'pending',
+        balanceAfterCDF: newCDF,
+        timestamp: FieldValue.serverTimestamp(),
+      });
+      return { ok: true as const, newCDF };
     });
 
-    // Enregistrement de la demande de cashout Mobile Money (FlexPay Payout)
-    await addDoc(collection(firestore, 'cashout_requests'), {
-      userId: params.userId,
-      amountCDF: params.amountCDF,
-      amountUSD: parseFloat((params.amountCDF / 2800).toFixed(2)),
-      phone: params.phone,
-      operator: params.operator,
-      status: 'completed',
-      createdAt: serverTimestamp()
-    });
-
-    // Enregistrement dans l'historique du portefeuille
-    const transRef = collection(firestore, 'users', params.userId, 'wallet_transactions');
-    await addDoc(transRef, {
-      userId: params.userId,
-      type: 'cashout',
-      source: 'mobile_money_withdrawal',
-      amountCDF: -params.amountCDF,
-      amountUSD: -parseFloat((params.amountCDF / 2800).toFixed(3)),
-      description: "Retrait Mobile Money vers " + params.operator + " (" + params.phone + ")",
-      phone: params.phone,
-      operator: params.operator,
-      status: 'completed',
-      balanceAfterCDF: newCDF,
-      timestamp: serverTimestamp()
-    });
-
+    if (!outcome.ok) return { success: false, error: outcome.error };
     return {
       success: true,
-      newBalanceCDF: newCDF,
-      message: "Retrait de " + params.amountCDF + " FC validé vers " + params.operator + " (" + params.phone + "). Virement en cours via FlexPay !"
+      newBalanceCDF: outcome.newCDF,
+      message: "Demande de retrait de " + amount + " FC enregistrée vers " + params.operator + " (" + phone + "). Vous serez payé après vérification par l'équipe Kinshasa Flow."
     };
   } catch (err: any) {
     console.error('[Cashout Error]:', err);
-    return { success: false, error: err.message || "Erreur lors du retrait." };
+    return { success: false, error: authErrorMessage(err, "Erreur lors du retrait.") };
   }
 }
 
+/** Forfait data payé avec le solde E-Wallet : prix du catalogue serveur, demande « en attente » de traitement manuel. */
 export async function rechargeDataFromWalletAction(params: {
-  userId: string;
-  amountCDF: number;
+  idToken: string;
   phone: string;
   dataPack: string;
 }) {
   try {
-    const firestore = getServerFirestore();
-    const userRef = doc(firestore, 'users', params.userId);
-    const userSnap = await getDoc(userRef);
+    const { uid } = await verifyCaller(params.idToken);
+    const price = DATA_PACK_CATALOG[params.dataPack];
+    if (!price) return { success: false, error: "Forfait inconnu." };
+    const phone = String(params.phone || '').replace(/\s+/g, '');
+    if (!/^\+?\d{9,13}$/.test(phone)) return { success: false, error: "Ajoutez un numéro de téléphone valide à votre profil." };
 
-    if (!userSnap.exists()) {
-      return { success: false, error: "Compte introuvable." };
-    }
+    const db = adminDb();
+    const userRef = db.collection('users').doc(uid);
+    const requestRef = db.collection('data_recharge_requests').doc();
 
-    const userData = userSnap.data();
-    const currentCDF = userData.walletBalanceCDF || 0;
-
-    if (currentCDF < params.amountCDF) {
-      return { success: false, error: "Solde insuffisant pour ce forfait (" + params.amountCDF + " FC)." };
-    }
-
-    const newCDF = currentCDF - params.amountCDF;
-    await updateDoc(userRef, {
-      walletBalanceCDF: newCDF,
-      walletBalanceUSD: parseFloat((newCDF / 2800).toFixed(2))
+    const outcome = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(userRef);
+      if (!snap.exists) return { ok: false as const, error: "Compte introuvable." };
+      const user = snap.data() as any;
+      if (user.isBlocked) return { ok: false as const, error: "Compte suspendu." };
+      const current = user.walletBalanceCDF || 0;
+      if (current < price) return { ok: false as const, error: "Solde insuffisant pour ce forfait (" + price + " FC)." };
+      const newCDF = current - price;
+      tx.update(userRef, { walletBalanceCDF: newCDF, walletBalanceUSD: parseFloat((newCDF / CDF_PER_USD).toFixed(2)) });
+      tx.set(requestRef, { userId: uid, dataPack: params.dataPack, amountCDF: price, phone, status: 'pending', createdAt: FieldValue.serverTimestamp() });
+      tx.set(userRef.collection('wallet_transactions').doc(), {
+        userId: uid,
+        type: 'conversion',
+        source: 'data_recharge',
+        amountCDF: -price,
+        description: "Recharge Forfait Internet : " + params.dataPack + " pour " + phone,
+        phone,
+        requestId: requestRef.id,
+        status: 'pending',
+        balanceAfterCDF: newCDF,
+        timestamp: FieldValue.serverTimestamp(),
+      });
+      return { ok: true as const, newCDF };
     });
 
-    // Historique
-    await addDoc(collection(firestore, 'users', params.userId, 'wallet_transactions'), {
-      userId: params.userId,
-      type: 'conversion',
-      source: 'data_recharge',
-      amountCDF: -params.amountCDF,
-      description: "Recharge Forfait Internet : " + params.dataPack + " pour " + params.phone,
-      phone: params.phone,
-      status: 'completed',
-      balanceAfterCDF: newCDF,
-      timestamp: serverTimestamp()
-    });
-
+    if (!outcome.ok) return { success: false, error: outcome.error };
     return {
       success: true,
-      newBalanceCDF: newCDF,
-      message: "Forfait " + params.dataPack + " activé avec succès sur le numéro " + params.phone + " !"
+      newBalanceCDF: outcome.newCDF,
+      message: "Demande de forfait " + params.dataPack + " enregistrée pour le " + phone + ". Il sera activé après traitement par l'équipe."
     };
   } catch (err: any) {
     console.error('[Data Recharge Error]:', err);
-    return { success: false, error: err.message || "Erreur lors de la recharge de mégas." };
+    return { success: false, error: authErrorMessage(err, "Erreur lors de la recharge de mégas.") };
   }
 }
 
@@ -1293,7 +1339,8 @@ async function fetchSegmentTelemetry(
   const durationMin = Math.max(1, Math.round(baseDurationMin * multiplier));
   const delayMin = Math.max(0, durationMin - Math.round(baseDurationMin));
   const speedKmh = Math.max(4, Math.round(distKm / (durationMin / 60)));
-  return { distKm, durationMin, delayMin, speedKmh, ratio: multiplier, source: "osrm" as const };
+  // Pas de mesure de trafic : durée « route vide » OSRM × facteur horaire. C'est une estimation.
+  return { distKm, durationMin, delayMin, speedKmh, ratio: multiplier, source: "estimate" as const };
 }
 
 export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
@@ -1302,23 +1349,12 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
     return dashboardCache.data;
   }
 
-  const kinshasaHour = (new Date().getUTCHours() + 1) % 24;
-  const isPeakHour = (kinshasaHour >= 7 && kinshasaHour <= 9) || (kinshasaHour >= 16 && kinshasaHour <= 20);
+  const kin = kinshasaNow();
+  const kinshasaHour = kin.hour;
+  const isPeakHour = kin.isPeakHour;
 
-  // 1. Récupération des signalements actifs dans Firestore
-  let activeReports: any[] = [];
-  try {
-    const firestore = getServerFirestore();
-    const reportsQuery = query(
-      collection(firestore, 'road_condition_reports'),
-      where('status', '==', 'active'),
-      limit(20)
-    );
-    const snap = await getDocs(reportsQuery);
-    activeReports = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  } catch (dbErr) {
-    console.warn('[Dashboard] Firestore reports bypass:', dbErr);
-  }
+  // 1. Signalements récents (< 1 h) et votes 1-tap de la dernière heure
+  const [activeReports, votesByNode] = await Promise.all([loadFreshReports(), loadRecentVotes()]);
 
   // 2. Définition des 8 goulots stratégiques avec coordonnées exactes
   const BOTTLENECK_NODES = [
@@ -1412,58 +1448,73 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
     }
   ];
 
-  // Calcul télémétrique live en parallèle pour les 8 goulots
+  // Calcul télémétrique en parallèle pour les 8 goulots
   const bottlenecks = await Promise.all(BOTTLENECK_NODES.map(async (node) => {
+    const activeIncidents = activeReports.filter(rep =>
+      Math.abs(rep.coords.lat - node.origin.lat) < 0.025 &&
+      Math.abs(rep.coords.lng - node.origin.lng) < 0.025
+    );
+    const matchingReport = activeIncidents[0];
+    const votes = votesByNode[node.id] ?? { still: 0, clear: 0, lastAgeMin: null };
+    const base = {
+      id: node.id,
+      name: node.name,
+      district: node.district,
+      coords: node.origin,
+      activeIncidents,
+      votes,
+      // Cause confirmée seulement si un signalement récent existe ; sinon on affiche la cause habituelle, marquée comme telle.
+      cause: matchingReport ? matchingReport.description : null,
+      causeAgeMin: matchingReport ? matchingReport.ageMin : null,
+      typicalCause: node.defaultCause,
+      certifiedAlt: node.escape,
+      lingala: node.lingala
+    };
+
     try {
       const seg = await fetchSegmentTelemetry(node.origin, node.dest, node.baseRushFactor, isPeakHour);
-
-      // Recherche des rapports citoyens réels proches de ce carrefour (<2.5 km)
-      const activeIncidents = activeReports.filter(rep =>
-        rep.coords &&
-        Math.abs(rep.coords.lat - node.origin.lat) < 0.025 &&
-        Math.abs(rep.coords.lng - node.origin.lng) < 0.025
-      );
-      const matchingReport = activeIncidents[0];
+      const isLive = seg.source === "google";
 
       let status = "FLUIDE";
-      if (matchingReport || seg.delayMin >= 20 || seg.ratio >= 2.2) status = "BLOQUÉ";
+      if (seg.delayMin >= 20 || seg.ratio >= 2.2) status = "BLOQUÉ";
       else if (seg.delayMin >= 8 || seg.ratio >= 1.6) status = "EMBOUTEILLAGE";
       else if (seg.delayMin >= 3 || seg.ratio >= 1.2) status = "MODÉRÉ";
 
-      const cause = matchingReport ? `Signalement citoyen direct : ${matchingReport.description}` : node.defaultCause;
+      // Un signalement de blocage récent l'emporte sur une mesure fluide.
+      if (matchingReport && matchingReport.type === 'blockage' && (status === "FLUIDE" || status === "MODÉRÉ")) status = "EMBOUTEILLAGE";
 
+      // Sans mesure en direct, les votes récents des usagers sur place (≥ 2) décident du statut.
+      if (!isLive && votes.still + votes.clear >= 2) {
+        if (votes.clear > votes.still) status = "FLUIDE";
+        else if (votes.still > votes.clear && (status === "FLUIDE" || status === "MODÉRÉ")) status = "EMBOUTEILLAGE";
+      }
+
+      const congested = status === "BLOQUÉ" || status === "EMBOUTEILLAGE";
       return {
-        id: node.id,
-        name: node.name,
-        district: node.district,
-        coords: node.origin,
+        ...base,
+        // La phrase en lingala du nœud décrit un blocage : on ne la dit que si c'est bloqué.
+        lingala: congested ? node.lingala : "Nzela efungwami awa, kende malamu.",
         distKm: seg.distKm,
         durationMin: seg.durationMin,
         delayMin: seg.delayMin,
         speedKmh: seg.speedKmh,
         source: seg.source,
-        activeIncidents,
-        status,
-        cause,
-        certifiedAlt: node.escape,
-        lingala: node.lingala
+        isLive,
+        confidence: confidenceScore(isLive, congested, activeIncidents.length, votes),
+        status
       };
     } catch (err) {
+      // Aucune source disponible : on le dit, au lieu d'inventer un « modéré +10 min ».
       return {
-        id: node.id,
-        name: node.name,
-        district: node.district,
-        coords: node.origin,
-        distKm: 5.0,
-        durationMin: 20,
-        delayMin: 10,
-        speedKmh: 15,
-        source: "fallback",
-        activeIncidents: [],
-        status: "MODÉRÉ",
-        cause: node.defaultCause,
-        certifiedAlt: node.escape,
-        lingala: node.lingala
+        ...base,
+        distKm: null,
+        durationMin: null,
+        delayMin: null,
+        speedKmh: null,
+        source: "none",
+        isLive: false,
+        confidence: 0,
+        status: "INCONNU"
       };
     }
   }));
@@ -1511,6 +1562,7 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
   const commutes = await Promise.all(COMMUTE_NODES.map(async (c) => {
     try {
       const seg = await fetchSegmentTelemetry(c.origin, c.dest, c.rushMult, isPeakHour);
+      const isLive = seg.source === "google";
 
       let status = "FLUIDE";
       let badgeColor = "bg-emerald-500";
@@ -1533,10 +1585,12 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
         distKm: seg.distKm,
         durMin: seg.durationMin,
         delayMin: seg.delayMin,
-        delayText: seg.delayMin > 0 ? `+${seg.delayMin} min` : "Fluide",
+        delayText: seg.delayMin > 0 ? `${isLive ? '' : '~'}+${seg.delayMin} min` : "Fluide",
         status,
         badgeColor,
         source: seg.source,
+        isLive,
+        confidence: confidenceScore(isLive, status === "BLOQUÉ" || status === "EMBOUTEILLAGE", 0),
         escape: c.escape
       };
     } catch {
@@ -1545,28 +1599,46 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
         title: c.title,
         via: c.via,
         coords: c.origin,
-        distKm: 12.0,
-        durMin: 45,
-        delayMin: 20,
-        delayText: "+20 min",
-        status: "EMBOUTEILLAGE",
-        badgeColor: "bg-red-500",
-        source: "fallback",
+        distKm: null,
+        durMin: null,
+        delayMin: null,
+        delayText: "Pas de données",
+        status: "INCONNU",
+        badgeColor: "bg-slate-400",
+        source: "none",
+        isLive: false,
+        confidence: 0,
         escape: c.escape
       };
     }
   }));
 
-  // 4. Synthèse globale de la ville
-  const speeds = bottlenecks.map(b => b.speedKmh);
-  const avgSpeed = Math.round(speeds.reduce((a, b) => a + b, 0) / speeds.length);
-  const blockedCount = bottlenecks.filter(b => b.status === "BLOQUÉ" || b.status === "EMBOUTEILLAGE").length;
-  const congestionIndex = Math.round((blockedCount / bottlenecks.length) * 100);
-  const liveGoogleCount = bottlenecks.filter(b => b.source === "google").length;
+  // 4. Synthèse globale de la ville (uniquement sur les nœuds qui ont une donnée)
+  const known = bottlenecks.filter(b => b.status !== "INCONNU" && typeof b.speedKmh === "number");
+  const avgSpeed = known.length ? Math.round(known.reduce((a, b) => a + (b.speedKmh as number), 0) / known.length) : null;
+  const blockedCount = known.filter(b => b.status === "BLOQUÉ" || b.status === "EMBOUTEILLAGE").length;
+  const congestionIndex = known.length ? Math.round((blockedCount / known.length) * 100) : null;
+  const liveCount = bottlenecks.filter(b => b.isLive).length;
+  const totalVotes = Object.values(votesByNode).reduce((a, v) => a + v.still + v.clear, 0);
 
-  // Génération dynamique du flash vocal audio d'après la situation réelle
-  const worstNode = bottlenecks.find(b => b.status === "BLOQUÉ") || bottlenecks.find(b => b.status === "EMBOUTEILLAGE") || bottlenecks[0];
-  const audioFlashText = `Flash Info Kinshasa Flow en direct. À ${kinshasaHour} heures, ${worstNode.name} est ${worstNode.status.toLowerCase()} avec ${worstNode.delayMin} minutes de retard causé par : ${worstNode.cause}. Alternative conseillée : ${worstNode.certifiedAlt}. ${worstNode.lingala}`;
+  const telemetrySource = liveCount === bottlenecks.length
+    ? `Mesure en direct Google Routes (${liveCount}/${bottlenecks.length})`
+    : liveCount > 0
+      ? `Mesure en direct sur ${liveCount}/${bottlenecks.length} nœuds, estimations ailleurs`
+      : "Estimations selon l'heure : mesure en direct indisponible";
+
+  // Flash vocal : ne dit « cause » que si elle est confirmée par un signalement récent.
+  const worstNode = known.find(b => b.status === "BLOQUÉ") || known.find(b => b.status === "EMBOUTEILLAGE") || known[0] || bottlenecks[0];
+  const causeText = worstNode.cause
+    ? `Cause signalée il y a ${worstNode.causeAgeMin} minutes : ${worstNode.cause}.`
+    : `Aucune cause signalée pour l'instant ; d'habitude : ${worstNode.typicalCause}`;
+  const delayText = typeof worstNode.delayMin === "number"
+    ? `${worstNode.isLive ? '' : 'environ '}${worstNode.delayMin} minutes de retard`
+    : "pas de mesure disponible";
+  const worstCongested = worstNode.status === "BLOQUÉ" || worstNode.status === "EMBOUTEILLAGE";
+  const audioFlashText = worstCongested
+    ? `Flash Info Kinshasa Flow. À ${kinshasaHour} heures, ${worstNode.name} est ${worstNode.status.toLowerCase()}, ${delayText}. ${causeText} Alternative conseillée : ${worstNode.certifiedAlt}. ${worstNode.lingala}`
+    : `Flash Info Kinshasa Flow. À ${kinshasaHour} heures, aucun des ${bottlenecks.length} grands carrefours suivis n'est embouteillé. ${liveCount} sur ${bottlenecks.length} sont mesurés en direct. Nzela efungwami, kende malamu.`;
 
   const payload = {
     success: true,
@@ -1578,12 +1650,62 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
       avgSpeed,
       congestionIndex,
       activeIncidentsCount: activeReports.length,
-      telemetrySource: liveGoogleCount > 0 ? "Google Routes Live + Firestore" : "OSRM Live + Firestore",
-      updatedAt: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      votesLastHour: totalVotes,
+      liveCount,
+      nodeCount: bottlenecks.length,
+      telemetrySource,
+      updatedAt: kin.timeLabel,
       audioFlashText
     }
   };
 
   dashboardCache = { data: payload, expires: Date.now() + 90 * 1000 };
   return payload;
+}
+
+/**
+ * Trouve les coordonnées d'une avenue tapée par l'usager.
+ * 1) référentiel interne MAJOR_AXES (sans accents ni casse) ; 2) Google Geocoding limité à Kinshasa.
+ * Avant ce correctif, toute recherche analysait le même point fixe (-4.325, 15.31).
+ */
+export async function locateAxisAction(rawQuery: string): Promise<
+  { found: true; name: string; lat: number; lng: number; source: 'référentiel' | 'google' } | { found: false }
+> {
+  const norm = (t: string) => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const q = norm(rawQuery || '');
+  if (q.length < 2) return { found: false };
+
+  const words = q.split(' ').filter(w => w.length > 2 && !['avenue', 'boulevard', 'blvd', 'route', 'rue'].includes(w));
+  const scored = MAJOR_AXES
+    .map(a => {
+      const n = norm(`${a.name} ${a.district}`);
+      const score = n.includes(q) ? 100 : words.filter(w => n.includes(w)).length;
+      return { a, score };
+    })
+    .filter(x => x.score > 0)
+    // À score égal, le nom le plus court est le plus précis (« Av. des Poids Lourds » avant « Blvd Lumumba (Poids Lourds Junction) »).
+    .sort((x, y) => y.score - x.score || x.a.name.length - y.a.name.length);
+  if (scored.length) {
+    const a = scored[0].a;
+    return { found: true, name: a.name, lat: a.origin.lat, lng: a.origin.lng, source: 'référentiel' };
+  }
+
+  try {
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(rawQuery + ', Kinshasa')}` +
+      `&bounds=-4.55,15.15|-4.25,15.60&region=cd&language=fr&key=${GOOGLE_API_KEY}`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      const hit = data?.results?.[0];
+      const loc = hit?.geometry?.location;
+      // On refuse un résultat hors de Kinshasa, ou la ville entière (réponse de Google quand il ne trouve pas la rue).
+      const tooVague = (hit?.types || []).some((t: string) => ['locality', 'political', 'administrative_area_level_1', 'administrative_area_level_2', 'country'].includes(t));
+      if (loc && !tooVague && loc.lat < -4.25 && loc.lat > -4.6 && loc.lng > 15.1 && loc.lng < 15.65) {
+        return { found: true, name: hit.formatted_address?.split(',')[0] || rawQuery, lat: loc.lat, lng: loc.lng, source: 'google' };
+      }
+    }
+  } catch (err) {
+    console.warn('[locateAxis] géocodage indisponible:', err);
+  }
+  return { found: false };
 }

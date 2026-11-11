@@ -76,7 +76,8 @@ export function NotificationSender() {
         title: formData.title,
         message: formData.message,
         userName: user?.displayName || "Administrateur K-Flow",
-        type: 'alert'
+        type: 'alert',
+        idToken: (await user?.getIdToken()) ?? ''
       });
 
       if (result.success) {
@@ -95,7 +96,7 @@ export function NotificationSender() {
   const handleTestEmail = async () => {
     setIsTestingEmail(true);
     try {
-      const result = await sendTestEmailAction();
+      const result = await sendTestEmailAction((await user?.getIdToken()) ?? '');
       if (result.success) {
         toast({ title: "E-mail de test envoyé !", description: "Vérifiez la boîte drnduwa@gmail.com." });
       } else {

@@ -98,7 +98,7 @@ export default function AdminStarsPage() {
       });
 
       // Envoi de l'email de notification groupé
-      const emailResult = await sendRelanceGiftEmailAction(recipientEmails);
+      const emailResult = await sendRelanceGiftEmailAction((await user?.getIdToken()) ?? '', recipientEmails);
       if (emailResult.success) {
         toast({
           title: "Emails de notification diffusés ! 🚀",

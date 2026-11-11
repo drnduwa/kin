@@ -93,10 +93,14 @@ export function PhoneLogin() {
       });
 
       // Email welcome if it's a real email or fallback
-      sendWelcomeEmailAction({
-          email: user.email || `${user.phoneNumber}@kinshasaflow.online`,
-          userName: user.displayName || `Kinois ${user.phoneNumber?.slice(-4)}`
-      });
+      // Seulement si le compte a une vraie adresse e-mail (le serveur vérifie qu'elle est la sienne).
+      if (user.email) {
+        user.getIdToken().then(idToken => sendWelcomeEmailAction({
+            email: user.email!,
+            userName: user.displayName || `Kinois ${user.phoneNumber?.slice(-4)}`,
+            idToken
+        })).catch(() => {});
+      }
     }
   }
 
