@@ -3,6 +3,7 @@ import { getServerFirestore } from '@/firebase/server';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { getGoogleTrafficStatusAction } from '@/app/actions';
 import { MAJOR_AXES } from '@/lib/constants';
+import { getKinshasaTimeParts } from '@/lib/kinshasa-time';
 
 export async function GET(request: Request) {
   const authHeader = request.headers.get('authorization');
@@ -16,9 +17,7 @@ export async function GET(request: Request) {
     const firestore = getServerFirestore();
     const historyCol = collection(firestore, 'traffic_history');
 
-    const now = new Date();
-    const dayOfWeek = now.getDay();
-    const hourOfDay = now.getHours();
+    const { dayOfWeek, hourOfDay } = getKinshasaTimeParts();
 
     const saves = data.map(async (res) => {
       await addDoc(historyCol, {
@@ -28,7 +27,8 @@ export async function GET(request: Request) {
         delay: res.delay,
         timestamp: serverTimestamp(),
         dayOfWeek,
-        hourOfDay
+        hourOfDay,
+        timezone: 'Africa/Kinshasa',
       });
     });
 

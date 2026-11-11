@@ -52,155 +52,49 @@ import { UserProfile } from '@/lib/types';
 const STATUS_CONFIG = {
   BLOQUÉ: { color: "bg-purple-600 text-white", border: "border-purple-300", icon: "🔴", label: "Bloqué", badgeBg: "bg-purple-600" },
   EMBOUTEILLAGE: { color: "bg-red-600 text-white", border: "border-red-300", icon: "🔴", label: "Embouteillé", badgeBg: "bg-red-600" },
+  EMBOUTEILLÉ: { color: "bg-red-600 text-white", border: "border-red-300", icon: "🔴", label: "Embouteillé", badgeBg: "bg-red-600" },
   MODÉRÉ: { color: "bg-amber-500 text-slate-950", border: "border-amber-300", icon: "🟡", label: "Modéré", badgeBg: "bg-amber-500" },
   FLUIDE: { color: "bg-emerald-500 text-white", border: "border-emerald-300", icon: "🟢", label: "Fluide", badgeBg: "bg-emerald-500" },
-  INCONNU: { color: "bg-slate-400 text-white", border: "border-slate-300", icon: "⚪", label: "Pas de données", badgeBg: "bg-slate-400" },
+  INCONNU: { color: "bg-slate-400 text-white", border: "border-slate-300", icon: "⏳", label: "Mesure...", badgeBg: "bg-slate-400" },
   ERREUR: { color: "bg-red-900 text-white", border: "border-red-800", icon: "⚠️", label: "Erreur", badgeBg: "bg-red-900" },
 };
 
-// 8 Goulots d'étranglement stratégiques de Kinshasa (Plan 1)
-const STRATEGIC_BOTTLENECKS = [
-  {
-    id: "limete-echangeur",
-    name: "Échangeur de Limete",
-    district: "Limete / Nœud Est",
-    coords: { lat: -4.3570, lng: 15.3580 },
-    initialStatus: "BLOQUÉ",
-    delay: 35,
-    speed: 8,
-    cause: "Panne de minibus 207 sur voie de droite et rétrécissement vers le pont.",
-    certifiedAlt: "Av. des Poids Lourds via Kingabwa (dégagée).",
-    lingala: "Echangeur eza bloqué makasi, loba na chauffeur aleka na Kingabwa."
-  },
-  {
-    id: "kintambo-magasin",
-    name: "Kintambo Magasin",
-    district: "Ngaliema / Nœud Ouest",
-    coords: { lat: -4.3270, lng: 15.2740 },
-    initialStatus: "EMBOUTEILLAGE",
-    delay: 25,
-    speed: 12,
-    cause: "Régulation manuelle intense des roulages et refoulement vers Mondjiba.",
-    certifiedAlt: "Av. du Tourisme le long des berges du fleuve.",
-    lingala: "Magasin eza pasi na ba roulages, leka na Tourisme."
-  },
-  {
-    id: "matadi-upn",
-    name: "Route de Matadi (UPN)",
-    district: "Ngaliema / Sortie Ouest",
-    coords: { lat: -4.3800, lng: 15.2580 },
-    initialStatus: "EMBOUTEILLAGE",
-    delay: 30,
-    speed: 10,
-    cause: "Chaussée dégradée, nids-de-poule et stationnement sauvage de wewas.",
-    certifiedAlt: "Avenue de la Montagne vers Météo.",
-    lingala: "UPN nzela ebeba, mituka ezali kotambola malembe."
-  },
-  {
-    id: "lumumba-pascal",
-    name: "Boulevard Lumumba (Pascal)",
-    district: "Masina / Tchangu",
-    coords: { lat: -4.3850, lng: 15.4200 },
-    initialStatus: "BLOQUÉ",
-    delay: 45,
-    speed: 6,
-    cause: "Déversement du marché de rue et bus 207 en double file.",
-    certifiedAlt: "Route Mokali vers Kimbanseke ou rail Transco.",
-    lingala: "Pascal eza tcha, wewa to marche à pied nde nzela."
-  },
-  {
-    id: "bypass-triangle",
-    name: "Avenue By-Pass (Triangle)",
-    district: "Lemba / Mont-Ngafula",
-    coords: { lat: -4.4100, lng: 15.3150 },
-    initialStatus: "MODÉRÉ",
-    delay: 15,
-    speed: 22,
-    cause: "Ralentissement au rond-point, chargements anarchiques.",
-    certifiedAlt: "Avenue Elengesa (nouvellement asphaltée et fluide).",
-    lingala: "Triangle eza mwa bien, kotambola eza te pasi mingi."
-  },
-  {
-    id: "mandela-30juin",
-    name: "Rond-point Mandela (Blvd 30 Juin)",
-    district: "Gombe / Cœur de ville",
-    coords: { lat: -4.3120, lng: 15.2980 },
-    initialStatus: "MODÉRÉ",
-    delay: 12,
-    speed: 25,
-    cause: "Sorties des ministères et flux vers Batetela.",
-    certifiedAlt: "Avenue de la Justice ou Avenue de la Science.",
-    lingala: "30 Juin eza modéré, banzela ya pembeni eza liboso."
-  },
-  {
-    id: "kalamu-victoire",
-    name: "Avenue Kasa-Vubu (Victoire)",
-    district: "Kalamu / Centre",
-    coords: { lat: -4.3430, lng: 15.3120 },
-    initialStatus: "EMBOUTEILLAGE",
-    delay: 20,
-    speed: 14,
-    cause: "Forte affluence piétonne et commerces de rue.",
-    certifiedAlt: "Avenue de l'Enseignement vers Stade des Martyrs.",
-    lingala: "Victoire bato baza mingi na nzela, keba na ralentissement."
-  },
-  {
-    id: "universite-pontgabu",
-    name: "Av. de l'Université (Pont Gabu)",
-    district: "Kalamu / Limete",
-    coords: { lat: -4.3550, lng: 15.3180 },
-    initialStatus: "FLUIDE",
-    delay: 3,
-    speed: 40,
-    cause: "Circulation fluide, aucun incident signalé sur le pont.",
-    certifiedAlt: "Axe direct praticable.",
-    lingala: "Pont Gabu eza kitoko, kende na yo esika olingi."
-  }
-];
+// Squelettes initiaux sans valeurs fictives — remplacés immédiatement par la télémétrie serveur
+const INITIAL_BOTTLENECKS = [
+  { id: "limete-echangeur", name: "Échangeur de Limete", district: "Limete / Nœud Est", coords: { lat: -4.3570, lng: 15.3580 }, lingala: "Leka na Poids Lourds soki Echangeur ekangami." },
+  { id: "kintambo-magasin", name: "Kintambo Magasin", district: "Ngaliema / Nœud Ouest", coords: { lat: -4.3270, lng: 15.2740 }, lingala: "Tala nzela ya Berges soki Magasin eza pasi." },
+  { id: "matadi-upn", name: "Route de Matadi (UPN)", district: "Ngaliema / Sortie Ouest", coords: { lat: -4.3800, lng: 15.2580 }, lingala: "Keba na Route de Matadi, tala nzela ya Montagne." },
+  { id: "lumumba-pascal", name: "Boulevard Lumumba (Pascal)", district: "Masina / Tchangu", coords: { lat: -4.3850, lng: 15.4200 }, lingala: "Boulevard Lumumba na Pascal ezali na ba mesures ya sika." },
+  { id: "bypass-triangle", name: "Avenue By-Pass (Triangle)", district: "Lemba / Mont-Ngafula", coords: { lat: -4.4100, lng: 15.3150 }, lingala: "Tala trafic ya Triangle liboso ya kobima." },
+  { id: "mandela-30juin", name: "Rond-point Mandela (Blvd 30 Juin)", district: "Gombe / Cœur de ville", coords: { lat: -4.3120, lng: 15.2980 }, lingala: "Banzela ya Gombe (Justice) ekoki kosalisa soki 30 Juin ekangami." },
+  { id: "kalamu-victoire", name: "Avenue Kasa-Vubu (Victoire)", district: "Kalamu / Centre", coords: { lat: -4.3430, lng: 15.3120 }, lingala: "Tala soki Enseignement ezali polele liboso ya kokende Victoire." },
+  { id: "universite-pontgabu", name: "Av. de l'Université (Pont Gabu)", district: "Kalamu / Limete", coords: { lat: -4.3550, lng: 15.3180 }, lingala: "Pont Gabu ezali na ba mesures ya sika." }
+].map(b => ({
+  ...b,
+  speedKmh: 0,
+  delayMin: 0,
+  status: "INCONNU",
+  source: "loading",
+  isEstimated: true,
+  cause: "Synchronisation des mesures en cours...",
+  certifiedAlt: "Vérification de la déviation en cours...",
+  activeIncidents: [] as any[],
+}));
 
-// Trajets quotidiens prédéfinis 1-Tap (Plan 1)
-const QUICK_COMMUTES = [
-  {
-    id: "upn-gombe",
-    title: "UPN ➔ Gombe (Centre-Ville)",
-    via: "Route de Matadi & 30 Juin",
-    coords: { lat: -4.3800, lng: 15.2580 },
-    status: "EMBOUTEILLAGE",
-    delay: "+35 min",
-    badgeColor: "bg-red-500",
-    escape: "Prendre Av. du Tourisme via les Berges du Fleuve"
-  },
-  {
-    id: "masina-gombe",
-    title: "Masina / Tchangu ➔ Gombe",
-    via: "Boulevard Lumumba & Limete",
-    coords: { lat: -4.3850, lng: 15.4200 },
-    status: "BLOQUÉ",
-    delay: "+50 min",
-    badgeColor: "bg-purple-600",
-    escape: "Bifurquer vers Poids Lourds à Kingabwa"
-  },
-  {
-    id: "lemba-gombe",
-    title: "Lemba / Triangle ➔ Gombe",
-    via: "By-Pass & Av. Université",
-    coords: { lat: -4.4100, lng: 15.3150 },
-    status: "MODÉRÉ",
-    delay: "+15 min",
-    badgeColor: "bg-amber-500",
-    escape: "Emprunter la nouvelle Avenue Elengesa"
-  },
-  {
-    id: "kintambo-gombe",
-    title: "Kintambo Magasin ➔ Gombe",
-    via: "Avenue Mondjiba",
-    coords: { lat: -4.3270, lng: 15.2740 },
-    status: "EMBOUTEILLAGE",
-    delay: "+25 min",
-    badgeColor: "bg-red-500",
-    escape: "Prendre l'Avenue de l'OUA ou Av. du Port"
-  }
-];
+const INITIAL_COMMUTES = [
+  { id: "upn-gombe", title: "UPN ➔ Gombe (Centre-Ville)", via: "Route de Matadi & 30 Juin", coords: { lat: -4.3800, lng: 15.2580 } },
+  { id: "masina-gombe", title: "Masina / Tchangu ➔ Gombe", via: "Boulevard Lumumba & Limete", coords: { lat: -4.3850, lng: 15.4200 } },
+  { id: "lemba-gombe", title: "Lemba / Triangle ➔ Gombe", via: "By-Pass & Av. Université", coords: { lat: -4.4100, lng: 15.3150 } },
+  { id: "kintambo-gombe", title: "Kintambo Magasin ➔ Gombe", via: "Avenue Mondjiba", coords: { lat: -4.3270, lng: 15.2740 } }
+].map(c => ({
+  ...c,
+  status: "INCONNU",
+  delayText: "Mesure...",
+  badgeColor: "bg-slate-400",
+  source: "loading",
+  isEstimated: true,
+  escape: "Vérification de l'itinéraire bis...",
+}));
 
 export default function TrafficCommandDashboard() {
   const { user } = useUser();
@@ -211,29 +105,23 @@ export default function TrafficCommandDashboard() {
   const { data: profile } = useDoc<UserProfile>(userRef);
 
   const [search, setSearch] = useState('');
-  const [selectedHotspot, setSelectedHotspot] = useState<any>(STRATEGIC_BOTTLENECKS[0]);
   const [activeAnalysis, setActiveAnalysis] = useState<any>(null);
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [confirmedNodes, setConfirmedNodes] = useState<Record<string, boolean>>({});
 
-  // Données temps réel réactives (OSRM + Firestore, pas de mock data)
-  const [bottlenecks, setBottlenecks] = useState<any[]>(
-    STRATEGIC_BOTTLENECKS.map(b => ({
-      ...b,
-      speedKmh: b.speed,
-      delayMin: b.delay,
-      status: b.initialStatus,
-      activeIncidents: []
-    }))
-  );
-  const [commutes, setCommutes] = useState<any[]>(QUICK_COMMUTES);
+  // Données temps réel transparentes (distinction claire entre Google Live et Estimation)
+  const [bottlenecks, setBottlenecks] = useState<any[]>(INITIAL_BOTTLENECKS);
+  const [commutes, setCommutes] = useState<any[]>(INITIAL_COMMUTES);
   const [globalMetrics, setGlobalMetrics] = useState<{
     kinshasaHour: number;
     isPeakHour: boolean;
     avgSpeed: number;
     congestionIndex: number;
     activeIncidentsCount: number;
+    liveGoogleCount?: number;
+    totalNodes?: number;
+    weather?: { isRaining: boolean; rainMm: number; weatherLabel: string } | null;
     telemetrySource?: string;
     updatedAt: string;
     audioFlashText: string;
@@ -419,23 +307,35 @@ export default function TrafficCommandDashboard() {
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                 </span>
-                <span className="font-bold text-slate-300">Télémétrie :</span>
+                <span className="font-bold text-slate-300">Kinshasa :</span>
                 <span className="font-extrabold text-emerald-400">
-                  {globalMetrics?.isPeakHour ? "Heure de Pointe" : "Heure Normale"} ({globalMetrics?.kinshasaHour ?? 17}h)
+                  {globalMetrics
+                    ? `${globalMetrics.isPeakHour ? "Heure de Pointe" : "Heure Normale"} (${globalMetrics.kinshasaHour}h)`
+                    : "Chargement..."}
                 </span>
               </div>
 
               <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700/80">
                 <Flame className="h-3.5 w-3.5 text-amber-400" />
                 <span className="font-bold text-slate-300">Congestion :</span>
-                <span className="font-extrabold text-amber-400">{globalMetrics?.congestionIndex ?? 50}%</span>
+                <span className="font-extrabold text-amber-400">
+                  {globalMetrics ? `${globalMetrics.congestionIndex}%` : "--"}
+                </span>
               </div>
 
               <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700/80">
                 <Car className="h-3.5 w-3.5 text-blue-400" />
                 <span className="font-bold text-slate-300">Vitesse moy. :</span>
-                <span className="font-extrabold text-blue-400">{globalMetrics?.avgSpeed ?? 18} km/h</span>
+                <span className="font-extrabold text-blue-400">
+                  {globalMetrics ? `${globalMetrics.avgSpeed} km/h` : "--"}
+                </span>
               </div>
+
+              {globalMetrics?.weather?.weatherLabel && (
+                <div className="flex items-center gap-2 bg-sky-950/60 px-3 py-1.5 rounded-xl border border-sky-800/80">
+                  <span className="font-bold text-sky-300">{globalMetrics.weather.weatherLabel}</span>
+                </div>
+              )}
 
               {globalMetrics && globalMetrics.activeIncidentsCount > 0 && (
                 <div className="flex items-center gap-2 bg-red-950/60 px-3 py-1.5 rounded-xl border border-red-800/80">
@@ -447,7 +347,9 @@ export default function TrafficCommandDashboard() {
 
             <div className="flex items-center gap-2">
               <span className="text-[11px] text-slate-400">
-                {lastRefreshedAt ? `${globalMetrics?.telemetrySource || 'Live'} • ${lastRefreshedAt}` : "Synchronisation en direct..."}
+                {lastRefreshedAt
+                  ? `${globalMetrics?.telemetrySource || "Source inconnue"} • ${lastRefreshedAt}`
+                  : "Synchronisation en direct..."}
               </span>
               <Button
                 size="sm"
@@ -524,13 +426,25 @@ export default function TrafficCommandDashboard() {
                     <span className="font-black text-xs text-slate-900 dark:text-white group-hover:text-primary transition-colors leading-tight">
                       {commute.title}
                     </span>
-                    <Badge className={cn("text-white font-black text-[9px] shrink-0", commute.badgeColor)}>
-                      {commute.delayText || commute.delay}
-                    </Badge>
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      <Badge className={cn("text-white font-black text-[9px]", commute.badgeColor)}>
+                        {commute.delayText || commute.delay}
+                      </Badge>
+                      {commute.source && commute.source !== "loading" && (
+                        <span className={cn(
+                          "text-[9px] font-bold px-1.5 py-0.5 rounded",
+                          commute.source === "google"
+                            ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                            : "bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                        )}>
+                          {commute.source === "google" ? "Google Live" : "Estimation"}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="text-[10px] text-slate-400 font-medium truncate flex items-center justify-between">
                     <span>Via {commute.via}</span>
-                    {commute.distKm && <span className="font-bold text-slate-500">{commute.distKm} km • ~{commute.durMin} min</span>}
+                    {commute.distKm > 0 && <span className="font-bold text-slate-500">{commute.distKm} km • ~{commute.durMin} min</span>}
                   </div>
                   <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 flex items-start gap-1.5">
                     <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
@@ -559,9 +473,19 @@ export default function TrafficCommandDashboard() {
                     <MapPin className="h-5 w-5" />
                   </div>
                   <div>
-                    <Badge className="bg-primary/20 text-primary font-black text-[9px] uppercase border-none mb-1">
-                      Diagnostic Express
-                    </Badge>
+                    <div className="flex items-center gap-2 mb-1">
+                      <Badge className="bg-primary/20 text-primary font-black text-[9px] uppercase border-none">
+                        Diagnostic Express
+                      </Badge>
+                      <Badge className={cn(
+                        "font-black text-[9px] uppercase border-none",
+                        activeAnalysis.source === "google"
+                          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+                          : "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                      )}>
+                        {activeAnalysis.source === "google" ? "Google Live" : "Estimation horaire"}
+                      </Badge>
+                    </div>
                     <h3 className="text-lg font-black text-slate-900 dark:text-white leading-tight">
                       {activeAnalysis.name}
                     </h3>
@@ -583,23 +507,29 @@ export default function TrafficCommandDashboard() {
                   </div>
                 </div>
 
-                {/* 2. Pourquoi l'embouteillage ? */}
+                {/* 2. Pourquoi l'embouteillage ? (uniquement signaux observés) */}
                 <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 space-y-1">
                   <div className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-400 flex items-center gap-1">
-                    <ShieldAlert className="h-3 w-3" /> Cause du blocage
+                    <ShieldAlert className="h-3 w-3" /> Cause observée
                   </div>
                   <p className="text-xs font-semibold text-amber-900 dark:text-amber-200 leading-tight">
-                    {activeAnalysis.cause || "Affluence intense de minibus et goulot d'étranglement."}
+                    {activeAnalysis.cause || activeAnalysis.message}
                   </p>
                 </div>
 
-                {/* 3. Échappatoire Certifiée */}
+                {/* 3. Itinéraires Alternatifs Vérifiés */}
                 <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 space-y-1">
                   <div className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
-                    <ShieldCheck className="h-3 w-3" /> Alternative Anti-Trou
+                    <ShieldCheck className="h-3 w-3" /> Détours Vérifiés
                   </div>
                   <p className="text-xs font-bold text-emerald-900 dark:text-emerald-200 leading-tight">
-                    {activeAnalysis.certifiedAlternative || "Contourner par les voies secondaires."}
+                    {activeAnalysis.forecast?.alternatives?.length
+                      ? activeAnalysis.forecast.alternatives
+                          .map((alt: any) => `${alt.name} (+${alt.estimatedDelay} min, ${alt.source === "google" ? "Live" : "Est."})`)
+                          .join(" • ")
+                      : activeAnalysis.alternativeRoutes?.length
+                        ? activeAnalysis.alternativeRoutes.map((r: any) => `${r.summary} (+${r.delayMinutes} min)`).join(" • ")
+                        : "Aucune déviation vérifiée plus rapide pour le moment."}
                   </p>
                 </div>
               </div>
@@ -634,11 +564,12 @@ export default function TrafficCommandDashboard() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
             {bottlenecks.map((node) => {
-              const statusKey = (node.status || node.initialStatus || "MODÉRÉ") as keyof typeof STATUS_CONFIG;
-              const cfg = STATUS_CONFIG[statusKey] || STATUS_CONFIG.MODÉRÉ;
+              const statusKey = (node.status || "INCONNU") as keyof typeof STATUS_CONFIG;
+              const cfg = STATUS_CONFIG[statusKey] || STATUS_CONFIG.INCONNU;
               const isConfirmed = confirmedNodes[node.id];
-              const speed = node.speedKmh ?? node.speed;
-              const delay = node.delayMin ?? node.delay;
+              const speed = node.speedKmh ?? 0;
+              const delay = node.delayMin ?? 0;
+              const isGoogle = node.source === "google";
 
               return (
                 <div
@@ -656,9 +587,21 @@ export default function TrafficCommandDashboard() {
                             {node.name}
                           </h3>
                         </div>
-                        <span className="text-[10px] font-semibold text-slate-400 pl-6">
-                          {node.district}
-                        </span>
+                        <div className="pl-6 flex items-center gap-2 mt-0.5">
+                          <span className="text-[10px] font-semibold text-slate-400">
+                            {node.district}
+                          </span>
+                          {node.source && node.source !== "loading" && (
+                            <span className={cn(
+                              "text-[9px] font-black px-1.5 py-0.5 rounded uppercase",
+                              isGoogle
+                                ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+                                : "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                            )}>
+                              {isGoogle ? "Google Live" : "Estimation"}
+                            </span>
+                          )}
+                        </div>
                         {node.activeIncidents && node.activeIncidents.length > 0 && (
                           <div className="pl-6 mt-1 flex items-center gap-1.5">
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-black bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30">
@@ -673,7 +616,7 @@ export default function TrafficCommandDashboard() {
                           {cfg.label}
                         </Badge>
                         <div className="text-[10px] font-bold text-slate-500 mt-0.5">
-                          +{delay} min • {speed} km/h
+                          {node.source === "loading" ? "Analyse..." : `+${delay} min • ${speed} km/h`}
                         </div>
                       </div>
                     </div>
@@ -689,13 +632,39 @@ export default function TrafficCommandDashboard() {
                       </p>
                     </div>
 
-                    {/* Escape Route */}
-                    <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-300/40 text-slate-800 dark:text-slate-200 space-y-1">
-                      <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-emerald-800 dark:text-emerald-300">
-                        <ShieldCheck className="h-3 w-3 text-emerald-600" />
-                        <span>Échappatoire Validée (Anti-Trou)</span>
+                    {/* Checked Escape Route */}
+                    <div className={cn(
+                      "p-3 rounded-2xl border space-y-1",
+                      node.altIsBetter === false
+                        ? "bg-amber-500/10 border-amber-300/40 text-slate-800 dark:text-slate-200"
+                        : "bg-emerald-500/10 border-emerald-300/40 text-slate-800 dark:text-slate-200"
+                    )}>
+                      <div className={cn(
+                        "flex items-center justify-between gap-1.5 text-[10px] font-black uppercase",
+                        node.altIsBetter === false
+                          ? "text-amber-800 dark:text-amber-300"
+                          : "text-emerald-800 dark:text-emerald-300"
+                      )}>
+                        <div className="flex items-center gap-1.5">
+                          <ShieldCheck className={cn("h-3 w-3", node.altIsBetter === false ? "text-amber-600" : "text-emerald-600")} />
+                          <span>
+                            {node.altIsBetter === false
+                              ? "Détour aussi chargé"
+                              : "Échappatoire Vérifiée (Anti-Trou)"}
+                          </span>
+                        </div>
+                        {typeof node.altDelayMin === "number" && node.source !== "loading" && (
+                          <span className="text-[9px] font-bold">
+                            +{node.altDelayMin} min • {node.altSpeedKmh} km/h ({node.altSource === "google" ? "Live" : "Est."})
+                          </span>
+                        )}
                       </div>
-                      <p className="text-xs font-bold leading-relaxed pl-4 text-emerald-800 dark:text-emerald-300">
+                      <p className={cn(
+                        "text-xs font-bold leading-relaxed pl-4",
+                        node.altIsBetter === false
+                          ? "text-amber-800 dark:text-amber-300"
+                          : "text-emerald-800 dark:text-emerald-300"
+                      )}>
                         {node.certifiedAlt}
                       </p>
                     </div>

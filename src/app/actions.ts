@@ -12,6 +12,7 @@ import { getServerFirestore } from "@/firebase/server";
 import { collection, getDocs, query, where, Timestamp, limit, orderBy, doc, getDoc, setDoc, updateDoc, runTransaction, serverTimestamp, addDoc } from "firebase/firestore";
 import { CONFIG } from "@/lib/config";
 import { initiateFlexPayMobileMoney, initiateFlexPayCard, checkFlexPayTransactionStatus, detectDRCOperator } from "@/lib/flexpay";
+import { getKinshasaTimeParts } from "@/lib/kinshasa-time";
 
 const GOOGLE_API_KEY = process.env.GOOGLE_ROUTES_API_KEY || CONFIG.GOOGLE_MAPS_API_KEY;
 
@@ -19,6 +20,98 @@ const GOOGLE_API_KEY = process.env.GOOGLE_ROUTES_API_KEY || CONFIG.GOOGLE_MAPS_A
  * Cache simple pour éviter les appels API redondants (90 secondes)
  */
 const trafficCache = new Map<string, { data: any, expires: number }>();
+
+let weatherCache: { data: { isRaining: boolean; rainMm: number; weatherLabel: string } | null; expires: number } | null = null;
+let incidentsCache: { data: { roadReports: any[]; events: any[]; policeReports: any[] }; expires: number } | null = null;
+
+/**
+ * Météo temps réel de Kinshasa via Open-Meteo (sans clé API, cache 5 min).
+ */
+async function fetchKinshasaWeather(): Promise<{ isRaining: boolean; rainMm: number; weatherLabel: string } | null> {
+  const now = Date.now();
+  if (weatherCache && weatherCache.expires > now) return weatherCache.data;
+
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 2500);
+    const res = await fetch(
+      "https://api.open-meteo.com/v1/forecast?latitude=-4.33&longitude=15.31&current=precipitation,rain,weather_code&timezone=Africa%2FKinshasa",
+      { signal: ctrl.signal }
+    );
+    clearTimeout(t);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const cur = json?.current;
+    if (!cur) return null;
+
+    const rainMm = Number(cur.rain || cur.precipitation || 0);
+    const code = Number(cur.weather_code || 0);
+    const isRaining = rainMm > 0 || (code >= 51 && code <= 99);
+    let weatherLabel = "Temps sec";
+    if (code >= 95) weatherLabel = `Orage actif à Kinshasa (${rainMm} mm/h)`;
+    else if (isRaining) weatherLabel = `Pluie en cours à Kinshasa (${rainMm} mm/h)`;
+    else if (code >= 1 && code <= 3) weatherLabel = "Ciel nuageux";
+
+    const data = { isRaining, rainMm, weatherLabel };
+    weatherCache = { data, expires: now + 5 * 60 * 1000 };
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Récupère les incidents récents (accidents, travaux, coupures, police, nids-de-poule) depuis Firestore (cache 45s).
+ */
+async function fetchLiveIncidentsContext() {
+  const now = Date.now();
+  if (incidentsCache && incidentsCache.expires > now) return incidentsCache.data;
+
+  const data = { roadReports: [] as any[], events: [] as any[], policeReports: [] as any[] };
+  try {
+    const firestore = getServerFirestore();
+    const sixHoursAgo = Timestamp.fromDate(new Date(now - 6 * 3600 * 1000));
+    const threeHoursAgo = Timestamp.fromDate(new Date(now - 3 * 3600 * 1000));
+
+    const [repSnap, evtSnap, polSnap] = await Promise.all([
+      getDocs(query(collection(firestore, 'road_condition_reports'), where('status', '==', 'active'), limit(30))).catch(() => null),
+      getDocs(query(collection(firestore, 'events'), where('createdAt', '>=', sixHoursAgo), orderBy('createdAt', 'desc'), limit(30))).catch(() => null),
+      getDocs(query(collection(firestore, 'police_reports'), where('timestamp', '>=', threeHoursAgo), orderBy('timestamp', 'desc'), limit(20))).catch(() => null),
+    ]);
+
+    if (repSnap) data.roadReports = repSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (evtSnap) data.events = evtSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (polSnap) data.policeReports = polSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    incidentsCache = { data, expires: now + 45 * 1000 };
+  } catch (err) {
+    console.warn('[LiveIncidents] Firestore bypass:', err);
+  }
+  return data;
+}
+
+function matchLocalIncidents(
+  coords: { lat: number; lng: number },
+  keywords: string[],
+  ctx: { roadReports: any[]; events: any[]; policeReports: any[] }
+) {
+  const norm = (s: string) => (s || '').toLowerCase();
+  const hasKeyword = (text: string) => {
+    const t = norm(text);
+    return keywords.some(k => k && t.includes(k.toLowerCase()));
+  };
+
+  const roadReports = ctx.roadReports.filter(
+    r =>
+      (r.coords && Math.abs(r.coords.lat - coords.lat) < 0.02 && Math.abs(r.coords.lng - coords.lng) < 0.02) ||
+      hasKeyword(r.locationName) ||
+      hasKeyword(r.description)
+  );
+  const events = ctx.events.filter(e => hasKeyword(e.location) || hasKeyword(e.description));
+  const police = ctx.policeReports.filter(p => hasKeyword(p.location) || hasKeyword(p.note));
+
+  return { roadReports, events, police };
+}
 
 export async function checkTrafficAction(input: { lat: number, lng: number, address?: string }) {
     const cacheKey = `${input.lat.toFixed(4)}-${input.lng.toFixed(4)}`;
@@ -29,28 +122,17 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
     }
 
     try {
-        // 1. Initialisation Firebase prudente sur le serveur
-        let localReport = null;
-        try {
-            const firestore = getServerFirestore();
-            const reportsQuery = query(
-                collection(firestore, 'road_condition_reports'),
-                where('status', '==', 'active'),
-                limit(10)
-            );
-            const reportsSnap = await getDocs(reportsQuery);
-            const recentReports = reportsSnap.docs.map(d => d.data() as RoadConditionReport);
-            // Recherche de rapports dans un rayon de ~1.5km (Précision accrue)
-            localReport = recentReports.find(r => 
-                Math.abs(r.coords.lat - input.lat) < 0.015 && 
-                Math.abs(r.coords.lng - input.lng) < 0.015
-            );
-        } catch (dbError) {
-            console.warn("[TrafficCheck] Firestore bypass:", dbError);
-        }
+        const [incidentsCtx, weather] = await Promise.all([
+            fetchLiveIncidentsContext(),
+            fetchKinshasaWeather()
+        ]);
+        const addrWords = (input.address || "").split(/[\s,()/➔-]+/).filter(w => w.length >= 4);
+        const matched = matchLocalIncidents({ lat: input.lat, lng: input.lng }, addrWords, incidentsCtx);
+        const localReport = matched.roadReports[0] || null;
+        const localEvent = matched.events[0] || null;
+        const localPolice = matched.police[0] || null;
 
-        // 2. Appel à Google Routes API v2
-        // Sondage de ~1.5km pour une portion de route significative
+        // Appel à Google Routes API v2
         const url = "https://routes.googleapis.com/directions/v2:computeRoutes";
         const body = {
             origin: { location: { latLng: { latitude: input.lat, longitude: input.lng } } },
@@ -63,6 +145,7 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
 
         let data: any = null;
         let route: any = null;
+        let isEstimated = false;
 
         try {
             const res = await fetch(url, {
@@ -83,8 +166,9 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
             console.warn('[checkTrafficAction] Google Routes call bypassed:', apiErr);
         }
 
-        // Live OSRM Real-Time Telemetry Fallback if Google was blocked
+        // Estimation OSRM uniquement si Google Routes n'a pas répondu (marquée explicitement isEstimated = true)
         if (!route) {
+            isEstimated = true;
             try {
                 const destLat = input.lat + 0.015;
                 const destLng = input.lng + 0.015;
@@ -94,16 +178,16 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
                     const osrmData = await osrmRes.json();
                     if (osrmData.code === 'Ok' && osrmData.routes?.[0]) {
                         const r = osrmData.routes[0];
-                        const kinshasaHour = (new Date().getUTCHours() + 1) % 24;
+                        const { hourOfDay: kinshasaHour } = getKinshasaTimeParts();
                         const isRush = (kinshasaHour >= 7 && kinshasaHour <= 9) || (kinshasaHour >= 16 && kinshasaHour <= 20);
-                        const rushMult = isRush ? (kinshasaHour >= 17 && kinshasaHour <= 19 ? 2.8 : 2.1) : 1.15;
+                        const rushMult = isRush ? (kinshasaHour >= 17 && kinshasaHour <= 19 ? 2.4 : 1.9) : 1.15;
                         const durSec = Math.round(r.duration * rushMult);
                         const staticSec = Math.round(r.duration);
                         route = {
                             distanceMeters: r.distance,
                             duration: `${durSec}s`,
                             staticDuration: `${staticSec}s`,
-                            description: "Itinéraire via OSRM Live Telemetry"
+                            description: "Estimation horaire (Google Routes indisponible)"
                         };
                         data = { routes: [route] };
                     }
@@ -112,10 +196,12 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
                 console.warn('[checkTrafficAction] OSRM fallback error:', osrmErr);
             }
         }
-        
+
         let result: any = {
             status: "INCONNU",
-            verdict: "Analyse en cours — soyez prudent sur cet axe.",
+            source: isEstimated ? "estimate" : "google",
+            isEstimated,
+            verdict: "Données temps réel indisponibles — soyez prudent sur cet axe.",
             lingala: "Tozali kotala nzela — keba na tamboli na yo.",
             delay: 0,
             ratio: 1,
@@ -128,25 +214,27 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
             const ratio = dur / statDur;
             const delay = Math.round(Math.max(0, dur - statDur) / 60);
 
-            // Ajustement des seuils de sensibilité pour Kinshasa (Précision accrue)
-            // Un ratio > 1.6 ou un retard de 5 min sur une courte distance indique souvent un blocage
             if (ratio > 1.6 || delay >= 5) result.status = "BLOQUÉ";
             else if (ratio > 1.25 || delay >= 2) result.status = "EMBOUTEILLÉ";
             else if (ratio > 1.1 || delay >= 1) result.status = "MODÉRÉ";
             else result.status = "FLUIDE";
 
-            if (localReport) {
-                result.verdict = `Signalement communautaire : ${localReport.description}`;
+            const prefix = isEstimated ? "[Estimation] " : "";
+            if (localEvent) {
+                result.verdict = `${prefix}Signalement récent : ${localEvent.description}`;
+                result.lingala = "Bato balobi incident ezali na nzela, keba mingi.";
+            } else if (localReport) {
+                result.verdict = `${prefix}Signalement voirie : ${localReport.description}`;
                 result.lingala = "Bato balobi nzela eza pasi, keba mingi.";
             } else {
                 if (result.status === "FLUIDE") {
-                    result.verdict = "Axe fluide : Circulation libre constatée.";
+                    result.verdict = `${prefix}Axe fluide mesuré (${delay} min de retard).`;
                     result.lingala = "Nzela eza kitoko, kotambola eza pasi te.";
                 } else if (result.status === "MODÉRÉ") {
-                    result.verdict = `Trafic modéré : Prévoyez un ralentissement de ${delay || 1} min.`;
+                    result.verdict = `${prefix}Trafic modéré : ralentissement de +${delay || 1} min.`;
                     result.lingala = "Nzela eza pasi moke, zela mwa moke.";
                 } else {
-                    result.verdict = `${input.address || 'Cet axe'} est actuellement ${result.status.toLowerCase()} (Retard estimé : ${delay} min).`;
+                    result.verdict = `${prefix}${input.address || 'Cet axe'} est ${result.status.toLowerCase()} (+${delay} min).`;
                     result.lingala = "Nzela eza bloqué, luka nzela mosusu soki likoki eza.";
                 }
             }
@@ -154,56 +242,45 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
             result.delay = delay;
             result.ratio = ratio;
 
-            // Déduction contextuelle de la cause exacte du ralentissement (Hyper-local Kinshasa)
-            const addrLower = (input.address || "").toLowerCase();
-            let cause = "Ralentissement habituel de forte affluence.";
-            let certifiedAlternative = "Avenue secondaire parallèle recommandée.";
+            // Construction honnête de la cause observée (sans texte inventé)
+            const reasons: string[] = [];
+            if (localEvent) reasons.push(`Incident usager : ${localEvent.description}`);
+            if (localReport) reasons.push(`État chaussée : ${localReport.description}`);
+            if (localPolice) reasons.push(`Contrôle / roulage signalé : ${localPolice.note || localPolice.location}`);
+            if (weather?.isRaining) reasons.push(weather.weatherLabel);
 
-            if (localReport) {
-                cause = localReport.description;
-            } else if (result.status === "BLOQUÉ" || result.status === "EMBOUTEILLÉ") {
-                if (addrLower.includes("lumumba") || addrLower.includes("limete") || addrLower.includes("pascal")) {
-                    cause = "Panne de minibus 207 sur voie de droite et goulot d\'étranglement de l\'Échangeur.";
-                    certifiedAlternative = "Av. des Poids Lourds via Kingabwa (évite l\'Échangeur).";
-                } else if (addrLower.includes("magasin") || addrLower.includes("mondjiba") || addrLower.includes("kintambo")) {
-                    cause = "Régulation manuelle intense des roulages et refoulement vers Ngaliema.";
-                    certifiedAlternative = "Av. du Tourisme le long des berges du fleuve.";
-                } else if (addrLower.includes("matadi") || addrLower.includes("upn") || addrLower.includes("pompage")) {
-                    cause = "Chaussée rétrécie par nids-de-poule et stationnement anarchique de taxis-motos.";
-                    certifiedAlternative = "Avenue de la Montagne ou déviation vers Météo.";
-                } else if (addrLower.includes("by-pass") || addrLower.includes("triangle") || addrLower.includes("lemba")) {
-                    cause = "Déversement de marché de rue et bus en arrêt sauvage au Rond-Point.";
-                    certifiedAlternative = "Avenue Elengesa (nouvelle voie asphaltée fluide).";
-                } else if (addrLower.includes("victoire") || addrLower.includes("kasa-vubu") || addrLower.includes("kalamu")) {
-                    cause = "Forte affluence piétonne et embouteillage en nœud de papillon.";
-                    certifiedAlternative = "Avenue de la Victoire vers Avenue du Stade.";
-                } else if (delay >= 6) {
-                    cause = "Véhicule lourd en panne ou obstacle non dégagé sur la chaussée.";
-                    certifiedAlternative = "Contourner par la première ruelle carrossable à droite.";
-                } else {
-                    cause = "Trafic dense en accordéon aux heures de pointe.";
-                    certifiedAlternative = "Consultez les itinéraires bis sur le GPS K-Flow.";
-                }
-            } else if (result.status === "MODÉRÉ") {
-                cause = "Ralentissement passager, circulation en accordéon.";
-                certifiedAlternative = "Cet axe reste praticable, restez sur la voie du milieu.";
+            if (reasons.length > 0) {
+                result.cause = reasons.join(" • ");
+            } else if (isEstimated) {
+                result.cause = "Estimation selon l'heure locale de Kinshasa (Google Routes indisponible, aucun incident signalé).";
+            } else if (result.status === "FLUIDE") {
+                result.cause = "Circulation fluide mesurée en direct par Google Routes. Aucun incident signalé.";
             } else {
-                cause = "Voie totalement dégagée, aucun obstacle signalé.";
-                certifiedAlternative = "Itinéraire principal optimal.";
+                result.cause = `Ralentissement mesuré en direct (+${delay} min vs trafic fluide). Aucun incident spécifique signalé par les usagers.`;
             }
 
-            result.cause = cause;
-            result.certifiedAlternative = certifiedAlternative;
-            result.bestDepartureTime = (result.status === "BLOQUÉ" || result.status === "EMBOUTEILLÉ")
-                ? "Départ conseillé dans 45 min pour économiser 35 min de blocage inutile."
-                : "Partez maintenant ! Conditions de circulation idéales.";
-
-            if (data.routes.length > 1) {
-                result.alternatives = data.routes.slice(1, 3).map((r: any) => ({
-                    description: r.description || "Itinéraire bis",
-                    duration: Math.round(parseInt((r.duration || "0s").replace('s', '')) / 60) + " min"
-                }));
+            if (data?.routes?.length > 1) {
+                const altRoutes = data.routes.slice(1, 3).map((r: any) => {
+                    const aDur = parseInt((r.duration || "0s").replace('s', '')) || 0;
+                    const aStat = parseInt((r.staticDuration || r.duration || "0s").replace('s', '')) || aDur;
+                    const aDelay = Math.max(0, Math.round((aDur - aStat) / 60));
+                    return {
+                        description: r.description || "Itinéraire bis Google Routes",
+                        duration: Math.round(aDur / 60) + " min",
+                        delay: aDelay
+                    };
+                });
+                result.alternatives = altRoutes;
+                result.certifiedAlternative = `${altRoutes[0].description} (${altRoutes[0].duration}, +${altRoutes[0].delay} min mesuré en direct)`;
+            } else {
+                result.certifiedAlternative = isEstimated
+                    ? "Aucune alternative vérifiée en direct (Google Routes indisponible)."
+                    : "Aucune déviation plus rapide détectée sur Google Routes pour ce tronçon.";
             }
+
+            result.bestDepartureTime = result.status === "FLUIDE"
+                ? "Circulation fluide actuellement — vous pouvez partir maintenant."
+                : `Congestion actuelle (+${delay} min). Consultez les prévisions horaires ci-dessous avant de partir.`;
         }
 
         trafficCache.set(cacheKey, { data: result, expires: now + 90000 });
@@ -212,7 +289,9 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
     } catch (e: any) {
         console.error("Critical Traffic Check Error:", e);
         return { 
-            status: "ERREUR", 
+            status: "ERREUR",
+            source: "error",
+            isEstimated: true,
             verdict: `Erreur d'analyse : ${e.message || "Service indisponible."}`,
             lingala: "Pasi mwa moke na machine, zela moke."
         };
@@ -264,14 +343,15 @@ export async function getGoogleTrafficStatusAction(axes: any[]) {
                 // Enregistrement passif dans traffic_history pour alimenter le modèle d'apprentissage IA
                 try {
                     const firestore = getServerFirestore();
-                    const now = new Date();
+                    const { dayOfWeek, hourOfDay } = getKinshasaTimeParts();
                     addDoc(collection(firestore, 'traffic_history'), {
                         road: axis.name,
                         status,
                         speed,
                         delay,
-                        dayOfWeek: now.getDay(),
-                        hourOfDay: now.getHours(),
+                        dayOfWeek,
+                        hourOfDay,
+                        timezone: 'Africa/Kinshasa',
                         timestamp: serverTimestamp()
                     }).catch(() => {});
                 } catch (logErr) {
@@ -846,9 +926,7 @@ import { TrafficForecast, HourlyForecast } from '@/lib/types';
 import { MAJOR_AXES } from '@/lib/constants';
 
 export async function getTrafficForecastAction(routeName: string): Promise<TrafficForecast> {
-  const now = new Date();
-  const currentHour = now.getHours();
-  const currentDayOfWeek = now.getDay();
+  const { hourOfDay: currentHour, dayOfWeek: currentDayOfWeek } = getKinshasaTimeParts();
   
   // 1. État Actuel (Données en temps réel Google)
   const axis = MAJOR_AXES.find(a => a.name === routeName);
@@ -959,23 +1037,57 @@ export async function getTrafficForecastAction(routeName: string): Promise<Traff
     }
   }
 
-  // 3. Alternatives (Itinéraires bis pertinents pour les grands axes)
-  const alternativesMap: Record<string, string[]> = {
-    'Boulevard Lumumba': ['Avenue des Poids Lourds', 'Route Mokali'],
-    'Boulevard du 30 Juin': ['Avenue de la Justice', 'Avenue Colonel Mondjiba'],
-    'Route de Matadi': ['Avenue By Pass', 'Route de Kimwenza'],
-    'Avenue Kasa-Vubu': ['Avenue de l\'Enseignement', 'Avenue Gambela']
+  // 3. Vérification RÉELLE des itinéraires bis (plus d'estimation à 60%)
+  const DETOUR_SEGMENTS: Record<string, Array<{ road: string; origin: { lat: number; lng: number }; dest: { lat: number; lng: number } }>> = {
+    'Boulevard Lumumba': [
+      { road: 'Avenue des Poids Lourds', origin: { lat: -4.3150, lng: 15.3400 }, dest: { lat: -4.3350, lng: 15.3550 } },
+      { road: 'Av. Ndjoku (Masina)', origin: { lat: -4.3750, lng: 15.4100 }, dest: { lat: -4.3900, lng: 15.4300 } }
+    ],
+    'Boulevard du 30 Juin': [
+      { road: 'Avenue de la Justice', origin: { lat: -4.3030, lng: 15.2940 }, dest: { lat: -4.3070, lng: 15.3020 } },
+      { road: 'Avenue de la Science', origin: { lat: -4.3140, lng: 15.3020 }, dest: { lat: -4.3180, lng: 15.3060 } }
+    ],
+    'Route de Matadi': [
+      { road: 'Avenue By Pass', origin: { lat: -4.4100, lng: 15.3150 }, dest: { lat: -4.4250, lng: 15.3250 } },
+      { road: 'Avenue de la Montagne', origin: { lat: -4.3450, lng: 15.2650 }, dest: { lat: -4.3300, lng: 15.2600 } }
+    ],
+    'Avenue Kasa-Vubu': [
+      { road: "Avenue de l'Enseignement", origin: { lat: -4.3400, lng: 15.3050 }, dest: { lat: -4.3480, lng: 15.3150 } },
+      { road: 'Avenue Gambela', origin: { lat: -4.3450, lng: 15.3080 }, dest: { lat: -4.3350, lng: 15.3020 } }
+    ]
   };
 
-  const alts = alternativesMap[routeName] || ['Avenue parallèle la plus proche'];
-  const alternatives = alts.map(alt => {
-    const altDelay = Math.max(0, Math.round(currentDelay * 0.6));
-    return {
-      road: alt,
-      delay: altDelay,
-      status: altDelay > 10 ? 'MODÉRÉ' : 'FLUIDE'
-    };
-  });
+  const matchedAxis = MAJOR_AXES.find(a => a.name === routeName);
+  const candidateDetours = DETOUR_SEGMENTS[routeName] || (
+    matchedAxis
+      ? MAJOR_AXES.filter(a => a.district === matchedAxis.district && a.name !== matchedAxis.name)
+          .slice(0, 2)
+          .map(a => ({ road: a.name, origin: a.origin, dest: a.destination }))
+      : [
+          { road: 'Avenue des Poids Lourds (Kingabwa)', origin: { lat: -4.3150, lng: 15.3400 }, dest: { lat: -4.3350, lng: 15.3550 } },
+          { road: 'Avenue de la Justice', origin: { lat: -4.3030, lng: 15.2940 }, dest: { lat: -4.3070, lng: 15.3020 } }
+        ]
+  );
+
+  const isPeak = (currentHour >= 7 && currentHour <= 9) || (currentHour >= 16 && currentHour <= 20);
+  const alternatives = await Promise.all(
+    candidateDetours.map(async (alt) => {
+      try {
+        const seg = await fetchSegmentTelemetry(alt.origin, alt.dest, 1.5, isPeak);
+        return {
+          road: seg.source === 'google' ? alt.road : `${alt.road} (Estimation)`,
+          delay: seg.delayMin,
+          status: delayToStatus(seg.delayMin)
+        };
+      } catch {
+        return {
+          road: `${alt.road} (Non vérifié)`,
+          delay: currentDelay,
+          status: 'DENSE' as const
+        };
+      }
+    })
+  );
 
   return {
     road: routeName,
@@ -1237,7 +1349,9 @@ export async function rechargeDataFromWalletAction(params: {
 let dashboardCache: { data: any; expires: number } | null = null;
 
 /**
- * Récupère la télémétrie routière temps réel d'un segment (Google Routes API v2 en priorité, fallback OSRM).
+ * Récupère la télémétrie routière d'un segment :
+ * - Google Routes API v2 (TRAFFIC_AWARE_OPTIMAL) -> source: 'google', isEstimated: false
+ * - Fallback OSRM + facteur horaire -> source: 'estimate', isEstimated: true (jamais présenté comme live)
  */
 async function fetchSegmentTelemetry(
   origin: { lat: number; lng: number },
@@ -1274,11 +1388,11 @@ async function fetchSegmentTelemetry(
           const delayMin = Math.max(0, Math.round((liveSec - baseSec) / 60));
           const speedKmh = Math.max(4, Math.round(distKm / (liveSec / 3600)));
           const ratio = baseSec > 0 ? liveSec / baseSec : 1;
-          return { distKm, durationMin, delayMin, speedKmh, ratio, source: "google" as const };
+          return { distKm, durationMin, delayMin, speedKmh, ratio, source: "google" as const, isEstimated: false };
         }
       }
     } catch (err) {
-      console.warn("[Dashboard] Google Routes bypass -> OSRM:", err);
+      console.warn("[Dashboard] Google Routes bypass -> OSRM estimate:", err);
     }
   }
 
@@ -1293,7 +1407,7 @@ async function fetchSegmentTelemetry(
   const durationMin = Math.max(1, Math.round(baseDurationMin * multiplier));
   const delayMin = Math.max(0, durationMin - Math.round(baseDurationMin));
   const speedKmh = Math.max(4, Math.round(distKm / (durationMin / 60)));
-  return { distKm, durationMin, delayMin, speedKmh, ratio: multiplier, source: "osrm" as const };
+  return { distKm, durationMin, delayMin, speedKmh, ratio: multiplier, source: "estimate" as const, isEstimated: true };
 }
 
 export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
@@ -1302,135 +1416,167 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
     return dashboardCache.data;
   }
 
-  const kinshasaHour = (new Date().getUTCHours() + 1) % 24;
+  const { hourOfDay: kinshasaHour, formattedTime } = getKinshasaTimeParts();
   const isPeakHour = (kinshasaHour >= 7 && kinshasaHour <= 9) || (kinshasaHour >= 16 && kinshasaHour <= 20);
 
-  // 1. Récupération des signalements actifs dans Firestore
-  let activeReports: any[] = [];
-  try {
-    const firestore = getServerFirestore();
-    const reportsQuery = query(
-      collection(firestore, 'road_condition_reports'),
-      where('status', '==', 'active'),
-      limit(20)
-    );
-    const snap = await getDocs(reportsQuery);
-    activeReports = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  } catch (dbErr) {
-    console.warn('[Dashboard] Firestore reports bypass:', dbErr);
-  }
+  // 1. Chargement parallèle : Incidents Firestore (reports, events, police) + Météo Kinshasa live
+  const [incidentsCtx, weather] = await Promise.all([
+    fetchLiveIncidentsContext(),
+    fetchKinshasaWeather(),
+  ]);
 
-  // 2. Définition des 8 goulots stratégiques avec coordonnées exactes
+  // 2. 8 nœuds stratégiques avec coordonnées réelles + coordonnées réelles de leur itinéraire de contournement
   const BOTTLENECK_NODES = [
     {
       id: "limete-echangeur",
       name: "Échangeur de Limete",
       district: "Limete / Nœud Est",
+      keywords: ["limete", "echangeur", "échangeur", "lumumba"],
       origin: { lat: -4.3570, lng: 15.3580 },
       dest: { lat: -4.3350, lng: 15.3350 },
-      baseRushFactor: 2.9,
-      escape: "Av. des Poids Lourds via Kingabwa (dégagée)",
-      defaultCause: "Ralentissement important causé par la manœuvre de minibus et rétrécissement du pont.",
-      lingala: "Echangeur eza bloqué, leka na Kingabwa soki likoki eza."
+      baseRushFactor: 2.6,
+      altName: "Av. des Poids Lourds via Kingabwa",
+      altOrigin: { lat: -4.3150, lng: 15.3400 },
+      altDest: { lat: -4.3350, lng: 15.3550 },
+      lingala: "Leka na Poids Lourds soki Echangeur ekangami."
     },
     {
       id: "kintambo-magasin",
       name: "Kintambo Magasin",
       district: "Ngaliema / Nœud Ouest",
+      keywords: ["kintambo", "magasin", "mondjiba"],
       origin: { lat: -4.3270, lng: 15.2740 },
       dest: { lat: -4.3120, lng: 15.2980 },
-      baseRushFactor: 2.5,
-      escape: "Av. du Tourisme le long des berges du fleuve",
-      defaultCause: "Régulation manuelle intense des roulages et refoulement vers Mondjiba.",
-      lingala: "Magasin eza pasi na ba roulages, leka na Berges."
+      baseRushFactor: 2.3,
+      altName: "Av. du Tourisme (Berges du fleuve)",
+      altOrigin: { lat: -4.3310, lng: 15.2420 },
+      altDest: { lat: -4.3250, lng: 15.2650 },
+      lingala: "Tala nzela ya Berges soki Magasin eza pasi."
     },
     {
       id: "matadi-upn",
       name: "Route de Matadi (UPN)",
       district: "Ngaliema / Sortie Ouest",
+      keywords: ["upn", "matadi", "binza"],
       origin: { lat: -4.3800, lng: 15.2580 },
       dest: { lat: -4.3400, lng: 15.2680 },
-      baseRushFactor: 2.6,
-      escape: "Avenue de la Montagne vers Météo",
-      defaultCause: "Chaussée dégradée, nids-de-poule et stationnements anarchiques de motards.",
-      lingala: "UPN nzela ebeba, mituka ezali kotambola malembe."
+      baseRushFactor: 2.4,
+      altName: "Avenue de la Montagne (Météo)",
+      altOrigin: { lat: -4.3450, lng: 15.2650 },
+      altDest: { lat: -4.3300, lng: 15.2600 },
+      lingala: "Keba na Route de Matadi, tala nzela ya Montagne."
     },
     {
       id: "lumumba-pascal",
       name: "Boulevard Lumumba (Pascal)",
       district: "Masina / Tchangu",
+      keywords: ["pascal", "masina", "tchangu", "lumumba"],
       origin: { lat: -4.3850, lng: 15.4200 },
       dest: { lat: -4.3570, lng: 15.3580 },
-      baseRushFactor: 3.1,
-      escape: "Route Mokali vers Kimbanseke ou rail Transco",
-      defaultCause: "Déversement du marché de rue et arrêts de minibus 207 en double file.",
-      lingala: "Pascal eza tcha, mituka etelemi mobimba."
+      baseRushFactor: 2.8,
+      altName: "Av. Ndjoku (Masina)",
+      altOrigin: { lat: -4.3750, lng: 15.4100 },
+      altDest: { lat: -4.3900, lng: 15.4300 },
+      lingala: "Boulevard Lumumba na Pascal ezali na ba mesures ya sika."
     },
     {
       id: "bypass-triangle",
       name: "Avenue By-Pass (Triangle)",
       district: "Lemba / Mont-Ngafula",
+      keywords: ["bypass", "by-pass", "triangle", "lemba"],
       origin: { lat: -4.4100, lng: 15.3150 },
       dest: { lat: -4.3550, lng: 15.3180 },
       baseRushFactor: 2.0,
-      escape: "Avenue Elengesa (récemment asphaltée et fluide)",
-      defaultCause: "Affluence piétonne marchande et taxis en stationnement sauvage.",
-      lingala: "Triangle eza modéré, leka na Elengesa soki okomi."
+      altName: "Av. Kimwenza / Elengesa",
+      altOrigin: { lat: -4.3520, lng: 15.3200 },
+      altDest: { lat: -4.3600, lng: 15.3350 },
+      lingala: "Tala trafic ya Triangle liboso ya kobima."
     },
     {
       id: "mandela-30juin",
       name: "Rond-point Mandela (Blvd 30 Juin)",
       district: "Gombe / Cœur de ville",
+      keywords: ["mandela", "30 juin", "gombe", "batetela"],
       origin: { lat: -4.3120, lng: 15.2980 },
       dest: { lat: -4.3042, lng: 15.3150 },
       baseRushFactor: 1.9,
-      escape: "Avenue de la Justice ou Avenue de la Science",
-      defaultCause: "Sorties des ministères et flux vers Batetela.",
-      lingala: "30 Juin eza mwa pasi moke, banzela ya pembeni eza liboso."
+      altName: "Avenue de la Justice",
+      altOrigin: { lat: -4.3030, lng: 15.2940 },
+      altDest: { lat: -4.3070, lng: 15.3020 },
+      lingala: "Banzela ya Gombe (Justice) ekoki kosalisa soki 30 Juin ekangami."
     },
     {
       id: "kalamu-victoire",
       name: "Avenue Kasa-Vubu (Victoire)",
       district: "Kalamu / Centre",
+      keywords: ["victoire", "kasa-vubu", "kalamu"],
       origin: { lat: -4.3430, lng: 15.3120 },
       dest: { lat: -4.3140, lng: 15.3020 },
-      baseRushFactor: 2.2,
-      escape: "Avenue de l'Enseignement vers Stade des Martyrs",
-      defaultCause: "Forte affluence piétonne et commerces de rue aux abords du carrefour.",
-      lingala: "Victoire bato baza mingi na nzela, zela moke."
+      baseRushFactor: 2.1,
+      altName: "Avenue de l'Enseignement",
+      altOrigin: { lat: -4.3400, lng: 15.3050 },
+      altDest: { lat: -4.3480, lng: 15.3150 },
+      lingala: "Tala soki Enseignement ezali polele liboso ya kokende Victoire."
     },
     {
       id: "universite-pontgabu",
       name: "Av. de l'Université (Pont Gabu)",
       district: "Kalamu / Limete",
+      keywords: ["université", "universite", "gabu", "pont"],
       origin: { lat: -4.3550, lng: 15.3180 },
       dest: { lat: -4.3400, lng: 15.3350 },
-      baseRushFactor: 1.4,
-      escape: "Axe direct praticable",
-      defaultCause: "Circulation libre à modérée, aucun incident majeur signalé sur le pont.",
-      lingala: "Pont Gabu eza kitoko lelo, nzela efungwami."
+      baseRushFactor: 1.5,
+      altName: "Av. Kapela",
+      altOrigin: { lat: -4.3500, lng: 15.3100 },
+      altDest: { lat: -4.3650, lng: 15.3150 },
+      lingala: "Pont Gabu ezali na ba mesures ya sika."
     }
   ];
 
-  // Calcul télémétrique live en parallèle pour les 8 goulots
+  // Calcul télémétrique live en parallèle pour les 8 goulots + leurs 8 déviations vérifiées
   const bottlenecks = await Promise.all(BOTTLENECK_NODES.map(async (node) => {
     try {
-      const seg = await fetchSegmentTelemetry(node.origin, node.dest, node.baseRushFactor, isPeakHour);
+      const [seg, altSeg] = await Promise.all([
+        fetchSegmentTelemetry(node.origin, node.dest, node.baseRushFactor, isPeakHour),
+        fetchSegmentTelemetry(node.altOrigin, node.altDest, Math.max(1.2, node.baseRushFactor * 0.7), isPeakHour)
+      ]);
 
-      // Recherche des rapports citoyens réels proches de ce carrefour (<2.5 km)
-      const activeIncidents = activeReports.filter(rep =>
-        rep.coords &&
-        Math.abs(rep.coords.lat - node.origin.lat) < 0.025 &&
-        Math.abs(rep.coords.lng - node.origin.lng) < 0.025
-      );
-      const matchingReport = activeIncidents[0];
+      const matched = matchLocalIncidents(node.origin, node.keywords, incidentsCtx);
+      const activeIncidents = [
+        ...matched.events.map((e: any) => ({ id: e.id, kind: 'event', label: e.description })),
+        ...matched.roadReports.map((r: any) => ({ id: r.id, kind: 'report', label: r.description })),
+        ...matched.police.map((p: any) => ({ id: p.id, kind: 'police', label: p.note || 'Contrôle / roulage' })),
+      ];
 
       let status = "FLUIDE";
-      if (matchingReport || seg.delayMin >= 20 || seg.ratio >= 2.2) status = "BLOQUÉ";
-      else if (seg.delayMin >= 8 || seg.ratio >= 1.6) status = "EMBOUTEILLAGE";
-      else if (seg.delayMin >= 3 || seg.ratio >= 1.2) status = "MODÉRÉ";
+      if (seg.delayMin >= 15 || seg.ratio >= 2.0) status = "BLOQUÉ";
+      else if (seg.delayMin >= 6 || seg.ratio >= 1.45 || activeIncidents.length > 0) status = "EMBOUTEILLAGE";
+      else if (seg.delayMin >= 2 || seg.ratio >= 1.15) status = "MODÉRÉ";
 
-      const cause = matchingReport ? `Signalement citoyen direct : ${matchingReport.description}` : node.defaultCause;
+      // Cause HONNÊTE basée uniquement sur des faits observés (jamais un texte inventé)
+      const causes: string[] = [];
+      if (matched.events[0]) causes.push(`Incident usager : ${matched.events[0].description}`);
+      if (matched.roadReports[0]) causes.push(`Voirie signalée : ${matched.roadReports[0].description}`);
+      if (matched.police[0]) causes.push(`Roulage/contrôle signalé : ${matched.police[0].note || matched.police[0].location}`);
+      if (weather?.isRaining) causes.push(weather.weatherLabel);
+
+      let cause: string;
+      if (causes.length > 0) {
+        cause = causes.join(" • ");
+      } else if (seg.isEstimated) {
+        cause = `Estimation horaire (${kinshasaHour}h Kinshasa) — Google Routes indisponible, aucun incident signalé.`;
+      } else if (status === "FLUIDE") {
+        cause = `Circulation fluide mesurée en direct (${seg.speedKmh} km/h). Aucun incident signalé.`;
+      } else {
+        cause = `Ralentissement mesuré en direct par Google Routes (+${seg.delayMin} min, ${seg.speedKmh} km/h). Aucun incident spécifique signalé par les usagers.`;
+      }
+
+      const altIsBetter = altSeg.delayMin < seg.delayMin && altSeg.speedKmh > seg.speedKmh;
+      const altStatusLabel = altSeg.isEstimated
+        ? `${node.altName} : +${altSeg.delayMin} min • ${altSeg.speedKmh} km/h (Estimation)`
+        : altIsBetter
+          ? `${node.altName} : vérifiée plus rapide (+${altSeg.delayMin} min • ${altSeg.speedKmh} km/h)`
+          : `${node.altName} : également chargée (+${altSeg.delayMin} min • ${altSeg.speedKmh} km/h)`;
 
       return {
         id: node.id,
@@ -1442,33 +1588,43 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
         delayMin: seg.delayMin,
         speedKmh: seg.speedKmh,
         source: seg.source,
+        isEstimated: seg.isEstimated,
         activeIncidents,
         status,
         cause,
-        certifiedAlt: node.escape,
+        certifiedAlt: altStatusLabel,
+        altDelayMin: altSeg.delayMin,
+        altSpeedKmh: altSeg.speedKmh,
+        altSource: altSeg.source,
+        altIsBetter,
         lingala: node.lingala
       };
-    } catch (err) {
+    } catch {
       return {
         id: node.id,
         name: node.name,
         district: node.district,
         coords: node.origin,
         distKm: 5.0,
-        durationMin: 20,
-        delayMin: 10,
-        speedKmh: 15,
-        source: "fallback",
+        durationMin: 0,
+        delayMin: 0,
+        speedKmh: 0,
+        source: "unavailable",
+        isEstimated: true,
         activeIncidents: [],
-        status: "MODÉRÉ",
-        cause: node.defaultCause,
-        certifiedAlt: node.escape,
+        status: "INCONNU",
+        cause: "Mesure indisponible pour ce nœud actuellement.",
+        certifiedAlt: `${node.altName} (non vérifiée)`,
+        altDelayMin: 0,
+        altSpeedKmh: 0,
+        altSource: "unavailable",
+        altIsBetter: false,
         lingala: node.lingala
       };
     }
   }));
 
-  // 3. Calcul des 4 trajets quotidiens (1-Tap Commutes) en télémétrie live
+  // 3. Calcul des 4 trajets quotidiens (1-Tap Commutes) + comparaison avec déviation réelle
   const COMMUTE_NODES = [
     {
       id: "upn-gombe",
@@ -1476,8 +1632,10 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
       via: "Route de Matadi & 30 Juin",
       origin: { lat: -4.3800, lng: 15.2580 },
       dest: { lat: -4.3042, lng: 15.3150 },
-      rushMult: 2.7,
-      escape: "Prendre Av. du Tourisme via les Berges du Fleuve"
+      rushMult: 2.5,
+      altOrigin: { lat: -4.3310, lng: 15.2420 },
+      altDest: { lat: -4.3042, lng: 15.3150 },
+      escapeName: "Av. du Tourisme via les Berges"
     },
     {
       id: "masina-gombe",
@@ -1485,8 +1643,10 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
       via: "Boulevard Lumumba & Limete",
       origin: { lat: -4.3850, lng: 15.4200 },
       dest: { lat: -4.3042, lng: 15.3150 },
-      rushMult: 3.1,
-      escape: "Bifurquer vers Poids Lourds à Kingabwa"
+      rushMult: 2.8,
+      altOrigin: { lat: -4.3150, lng: 15.3400 },
+      altDest: { lat: -4.3042, lng: 15.3150 },
+      escapeName: "Av. des Poids Lourds à Kingabwa"
     },
     {
       id: "lemba-gombe",
@@ -1494,8 +1654,10 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
       via: "By-Pass & Av. Université",
       origin: { lat: -4.4100, lng: 15.3150 },
       dest: { lat: -4.3042, lng: 15.3150 },
-      rushMult: 2.1,
-      escape: "Emprunter la nouvelle Avenue Elengesa"
+      rushMult: 2.0,
+      altOrigin: { lat: -4.3520, lng: 15.3200 },
+      altDest: { lat: -4.3042, lng: 15.3150 },
+      escapeName: "Av. Kimwenza / Elengesa"
     },
     {
       id: "kintambo-gombe",
@@ -1503,27 +1665,36 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
       via: "Avenue Mondjiba",
       origin: { lat: -4.3270, lng: 15.2740 },
       dest: { lat: -4.3042, lng: 15.3150 },
-      rushMult: 2.4,
-      escape: "Prendre l'Avenue de l'OUA ou Av. du Port"
+      rushMult: 2.2,
+      altOrigin: { lat: -4.3220, lng: 15.2700 },
+      altDest: { lat: -4.3042, lng: 15.3150 },
+      escapeName: "Avenue de l'OUA"
     }
   ];
 
   const commutes = await Promise.all(COMMUTE_NODES.map(async (c) => {
     try {
-      const seg = await fetchSegmentTelemetry(c.origin, c.dest, c.rushMult, isPeakHour);
+      const [seg, altSeg] = await Promise.all([
+        fetchSegmentTelemetry(c.origin, c.dest, c.rushMult, isPeakHour),
+        fetchSegmentTelemetry(c.altOrigin, c.altDest, Math.max(1.2, c.rushMult * 0.7), isPeakHour)
+      ]);
 
       let status = "FLUIDE";
       let badgeColor = "bg-emerald-500";
-      if (seg.delayMin >= 25 || seg.ratio >= 2.3) {
+      if (seg.delayMin >= 20 || seg.ratio >= 2.0) {
         status = "BLOQUÉ";
         badgeColor = "bg-purple-600";
-      } else if (seg.delayMin >= 10 || seg.ratio >= 1.6) {
+      } else if (seg.delayMin >= 8 || seg.ratio >= 1.45) {
         status = "EMBOUTEILLAGE";
         badgeColor = "bg-red-500";
-      } else if (seg.delayMin >= 3 || seg.ratio >= 1.2) {
+      } else if (seg.delayMin >= 3 || seg.ratio >= 1.15) {
         status = "MODÉRÉ";
         badgeColor = "bg-amber-500";
       }
+
+      const escapeSummary = altSeg.isEstimated
+        ? `${c.escapeName} : ~+${altSeg.delayMin} min (Estimation)`
+        : `${c.escapeName} : ${altSeg.durationMin} min (+${altSeg.delayMin} min live)`;
 
       return {
         id: c.id,
@@ -1537,7 +1708,8 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
         status,
         badgeColor,
         source: seg.source,
-        escape: c.escape
+        isEstimated: seg.isEstimated,
+        escape: escapeSummary
       };
     } catch {
       return {
@@ -1545,28 +1717,35 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
         title: c.title,
         via: c.via,
         coords: c.origin,
-        distKm: 12.0,
-        durMin: 45,
-        delayMin: 20,
-        delayText: "+20 min",
-        status: "EMBOUTEILLAGE",
-        badgeColor: "bg-red-500",
-        source: "fallback",
-        escape: c.escape
+        distKm: 0,
+        durMin: 0,
+        delayMin: 0,
+        delayText: "Indisponible",
+        status: "INCONNU",
+        badgeColor: "bg-slate-500",
+        source: "unavailable",
+        isEstimated: true,
+        escape: `${c.escapeName} (non vérifiée)`
       };
     }
   }));
 
-  // 4. Synthèse globale de la ville
-  const speeds = bottlenecks.map(b => b.speedKmh);
-  const avgSpeed = Math.round(speeds.reduce((a, b) => a + b, 0) / speeds.length);
+  // 4. Synthèse globale honnête de la ville
+  const validSpeeds = bottlenecks.filter(b => b.speedKmh > 0).map(b => b.speedKmh);
+  const avgSpeed = validSpeeds.length > 0 ? Math.round(validSpeeds.reduce((a, b) => a + b, 0) / validSpeeds.length) : 0;
   const blockedCount = bottlenecks.filter(b => b.status === "BLOQUÉ" || b.status === "EMBOUTEILLAGE").length;
   const congestionIndex = Math.round((blockedCount / bottlenecks.length) * 100);
   const liveGoogleCount = bottlenecks.filter(b => b.source === "google").length;
+  const totalLiveIncidents = incidentsCtx.events.length + incidentsCtx.roadReports.length + incidentsCtx.policeReports.length;
 
-  // Génération dynamique du flash vocal audio d'après la situation réelle
+  const telemetrySource = liveGoogleCount === bottlenecks.length
+    ? `${liveGoogleCount}/${bottlenecks.length} axes Google Live`
+    : liveGoogleCount > 0
+      ? `${liveGoogleCount}/${bottlenecks.length} Google Live (autres estimés)`
+      : `Estimation horaire (Google Routes indisponible)`;
+
   const worstNode = bottlenecks.find(b => b.status === "BLOQUÉ") || bottlenecks.find(b => b.status === "EMBOUTEILLAGE") || bottlenecks[0];
-  const audioFlashText = `Flash Info Kinshasa Flow en direct. À ${kinshasaHour} heures, ${worstNode.name} est ${worstNode.status.toLowerCase()} avec ${worstNode.delayMin} minutes de retard causé par : ${worstNode.cause}. Alternative conseillée : ${worstNode.certifiedAlt}. ${worstNode.lingala}`;
+  const audioFlashText = `Flash Info Kinshasa Flow. Il est ${kinshasaHour} heures à Kinshasa. ${weather?.isRaining ? weather.weatherLabel + '. ' : ''}Point le plus ralenti : ${worstNode.name}, statut ${worstNode.status.toLowerCase()} avec ${worstNode.delayMin} minutes de retard. ${worstNode.cause} Alternative vérifiée : ${worstNode.certifiedAlt}.`;
 
   const payload = {
     success: true,
@@ -1577,9 +1756,12 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
       isPeakHour,
       avgSpeed,
       congestionIndex,
-      activeIncidentsCount: activeReports.length,
-      telemetrySource: liveGoogleCount > 0 ? "Google Routes Live + Firestore" : "OSRM Live + Firestore",
-      updatedAt: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      activeIncidentsCount: totalLiveIncidents,
+      liveGoogleCount,
+      totalNodes: bottlenecks.length,
+      weather,
+      telemetrySource,
+      updatedAt: formattedTime,
       audioFlashText
     }
   };
