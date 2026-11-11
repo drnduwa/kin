@@ -39,7 +39,10 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { checkTrafficAction, awardWalletContributionAction, getRealtimeCommandDashboardAction, locateAxisAction } from '@/app/actions';
+import { checkTrafficAction, awardWalletContributionAction, getRealtimeCommandDashboardAction, locateAxisAction, getCityForecastAction } from '@/app/actions';
+import LiveCityMap, { levelFromStatus, levelFromDelay, type MapNode } from '@/components/game/live-city-map';
+import PlayerHud from '@/components/game/player-hud';
+import { CloudRain, CalendarDays } from 'lucide-react';
 import { voteSlot } from '@/lib/kinshasa-time';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
@@ -273,6 +276,8 @@ export default function TrafficCommandDashboard() {
     votesLastHour?: number;
     liveCount?: number;
     nodeCount?: number;
+    weather?: { rainMmH: number; rainProbNext2h: number } | null;
+    activeEventsCount?: number;
     telemetrySource?: string;
     updatedAt: string;
     audioFlashText: string;
@@ -281,6 +286,35 @@ export default function TrafficCommandDashboard() {
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string>('');
 
   const walletBalanceCDF = profile?.walletBalanceCDF ?? 0;
+
+  // --- Carte vivante : moment affiché (0 = maintenant, 1 = +1 h, 2 = +2 h) et nœud choisi
+  const [timeOffset, setTimeOffset] = useState<0 | 1 | 2>(0);
+  const [cityForecast, setCityForecast] = useState<Awaited<ReturnType<typeof getCityForecastAction>> | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
+  useEffect(() => {
+    getCityForecastAction().then(setCityForecast).catch(() => setCityForecast(null));
+  }, []);
+
+  const mapNodes: MapNode[] = bottlenecks.map(b => {
+    const f = timeOffset > 0 ? cityForecast?.nodes?.[b.id]?.[timeOffset - 1] : null;
+    return {
+      id: b.id,
+      name: b.name,
+      coords: b.coords,
+      level: timeOffset === 0 ? levelFromStatus(b.status) : levelFromDelay(f?.delay ?? null),
+      isLive: b.isLive,
+      hasIncident: (b.activeIncidents?.length ?? 0) > 0,
+    };
+  });
+  const forecastKnown = timeOffset > 0 ? mapNodes.filter(n => n.level !== 'none').length : 0;
+
+  const selectNode = (id: string) => {
+    setSelectedNodeId(id);
+    if (typeof document !== 'undefined') {
+      document.getElementById(`node-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
 
   // Récupération dynamique en direct (Google Routes Live + OSRM + Firestore)
   const fetchRealtimeTraffic = useCallback(async (showToast = false) => {
@@ -386,10 +420,18 @@ export default function TrafficCommandDashboard() {
         refId: voteId,
         road: nodeName,
       });
-      toast({
-        title: "Merci, la carte est à jour",
-        description: res.success ? `+${res.rewardCDF} FC sur votre E-Wallet. Solde : ${res.newBalanceCDF} FC.` : (res.error || "Votre vote est compté."),
-      });
+      if (res.success) {
+        const extras = [
+          ...(res.missionsCompleted?.length ? [`Mission réussie : ${res.missionsCompleted.join(', ')}`] : []),
+          ...(res.badgesUnlocked?.length ? [`Badge : ${res.badgesUnlocked.join(', ')}`] : []),
+        ];
+        toast({
+          title: res.levelUp ? `Niveau ${res.level} ! Rang : ${res.rank}` : `+${res.xpGained} XP`,
+          description: [res.message, ...extras].join(' · '),
+        });
+      } else {
+        toast({ title: "Merci, la carte est à jour", description: res.error || "Votre vote est compté." });
+      }
     } catch {
       toast({ title: "Merci, la carte est à jour", description: "Votre vote est compté." });
     }
@@ -544,6 +586,51 @@ export default function TrafficCommandDashboard() {
               </Button>
             </div>
           </div>
+        </div>
+
+        {/* ── 1b. JOUEUR + CARTE VIVANTE ── */}
+        <PlayerHud profile={profile} />
+
+        <div className="rounded-3xl bg-[#0A1A29] text-[#EAF3FA] p-3 sm:p-4 border border-[#22425C] shadow-xl space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {([0, 1, 2] as const).map(o => (
+              <button
+                key={o}
+                type="button"
+                onClick={() => setTimeOffset(o)}
+                aria-pressed={timeOffset === o}
+                className={cn(
+                  "rounded-full px-3 py-1.5 text-xs font-bold border transition-colors",
+                  timeOffset === o ? "bg-[#EAF3FA] text-[#0A1A29] border-[#EAF3FA]" : "bg-[#11273A] text-[#EAF3FA] border-[#22425C] hover:border-[#8EA8BD]"
+                )}
+              >
+                {o === 0 ? 'Maintenant' : `+${o} h`}
+              </button>
+            ))}
+            {globalMetrics?.weather && globalMetrics.weather.rainMmH >= 0.5 && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30 px-2.5 py-1 text-[11px] font-bold">
+                <CloudRain className="h-3.5 w-3.5" /> Pluie {globalMetrics.weather.rainMmH.toFixed(1)} mm/h
+              </span>
+            )}
+            {(globalMetrics?.activeEventsCount ?? 0) > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 px-2.5 py-1 text-[11px] font-bold">
+                <CalendarDays className="h-3.5 w-3.5" /> {globalMetrics!.activeEventsCount} événement(s) en cours
+              </span>
+            )}
+            <span className="ml-auto text-[11px] text-[#8EA8BD]">
+              {timeOffset === 0
+                ? (lastRefreshedAt ? `Mis à jour à ${lastRefreshedAt}` : 'Chargement…')
+                : forecastKnown > 0
+                  ? `Prévision d'après l'historique · ${forecastKnown}/8 nœuds`
+                  : "Pas encore assez d'historique pour prévoir"}
+            </span>
+          </div>
+          <LiveCityMap
+            nodes={mapNodes}
+            selectedId={selectedNodeId}
+            onSelect={selectNode}
+            caption="Touchez un carrefour pour savoir pourquoi"
+          />
         </div>
 
         {/* ── 2. RECHERCHE RAPIDE & GPS DIRECT ── */}
@@ -732,7 +819,11 @@ export default function TrafficCommandDashboard() {
               return (
                 <div
                   key={node.id}
-                  className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-4 sm:p-5 shadow-sm space-y-3 hover:border-slate-300 transition-all flex flex-col justify-between"
+                  id={`node-${node.id}`}
+                  className={cn(
+                    "rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-4 sm:p-5 shadow-sm space-y-3 hover:border-slate-300 transition-all flex flex-col justify-between scroll-mt-24",
+                    selectedNodeId === node.id && "ring-2 ring-amber-400 border-amber-400"
+                  )}
                 >
                   <div className="space-y-2.5">
                     
@@ -769,15 +860,34 @@ export default function TrafficCommandDashboard() {
 
                     <div className="pl-6"><SourceChip source={node.source} confidence={node.confidence} /></div>
 
-                    {/* Cause Box */}
-                    <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-300/40 text-slate-800 dark:text-slate-200 space-y-1">
+                    {/* Pourquoi ça bloque : causes réelles avec preuve et poids */}
+                    <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-300/40 text-slate-800 dark:text-slate-200 space-y-2">
                       <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-amber-800 dark:text-amber-300">
                         <ShieldAlert className="h-3 w-3 text-amber-600" />
-                        <span>{node.cause ? `Pourquoi ça bloque · signalé il y a ${node.causeAgeMin ?? '?'} min` : "Cause habituelle (non confirmée aujourd'hui)"}</span>
+                        <span>Pourquoi ?</span>
                       </div>
-                      <p className="text-xs font-medium leading-relaxed pl-4 text-slate-700 dark:text-slate-300">
-                        {node.cause || node.typicalCause}
-                      </p>
+                      {Array.isArray(node.why) && node.why.length > 0 ? (
+                        <ul className="space-y-2">
+                          {node.why.map((w: any, i: number) => (
+                            <li key={i} className="space-y-1">
+                              <div className="flex items-start justify-between gap-2 text-xs">
+                                <span className="font-semibold text-slate-800 dark:text-slate-200">
+                                  {w.label}
+                                  <span className={cn("block text-[10px] font-medium", w.confirmed ? "text-slate-500" : "text-amber-700 dark:text-amber-400")}>{w.evidence}</span>
+                                </span>
+                                <span className="text-[10px] font-bold text-slate-500 tabular-nums">{w.pct}%</span>
+                              </div>
+                              <div className="h-1.5 rounded-full bg-amber-500/15 overflow-hidden">
+                                <div className="h-full rounded-full bg-amber-500" style={{ width: `${w.pct}%` }} />
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-xs font-medium leading-relaxed text-slate-600 dark:text-slate-400">
+                          {node.status === 'INCONNU' ? 'Chargement…' : "Rien de signalé ici pour l'instant. Vous êtes sur place ? Dites-le en un tap."}
+                        </p>
+                      )}
                     </div>
 
                     {/* Escape Route */}

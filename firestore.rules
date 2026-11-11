@@ -32,7 +32,9 @@ service cloud.firestore {
               'lastEarningTimestamp', 'hasActivePass', 'passExpiresAt', 'passType', 'isBlocked',
               'isCashSubscribed', 'cashSubscriptionExpiry', 'hasUsedFreeTrial',
               'currentStarsBalance', 'totalStarsEarned', 'totalStarsPurchased', 'totalStarsUsed',
-              'hasReceivedRelanceGift'];
+              'hasReceivedRelanceGift',
+              // Jeu : XP, niveaux, séries, badges (écrits par le serveur seulement)
+              'xp', 'level', 'gameVotes', 'gameReports', 'streakDays', 'lastActiveDay', 'badges'];
     }
 
     // Création du profil à l'inscription : aucun argent, aucun Pass, bonus de bienvenue (25 Stars) au plus.
@@ -48,7 +50,8 @@ service cloud.firestore {
         && d.get('isBlocked', false) == false
         && !('passExpiresAt' in d)
         && !('trustScore' in d)
-        && !('totalContributionsCount' in d);
+        && !('totalContributionsCount' in d)
+        && !('xp' in d) && !('level' in d) && !('badges' in d) && !('streakDays' in d);
     }
 
     // Le propriétaire peut DÉPENSER ses Stars (le solde baisse) depuis l'app…
@@ -197,6 +200,21 @@ service cloud.firestore {
       allow update: if isAdmin();
       allow create, delete: if false;
     }
+    /** Jeu : missions du jour (lecture par le joueur), classements (lecture par les connectés). */
+    match /missions/{id} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow write: if false;
+    }
+    match /leaderboards/{week}/{board}/{id} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+    /** Calendrier des événements qui bloquent les routes (matchs, cortèges, travaux, coupures). */
+    match /traffic_events/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     /** Anti-doublon et plafond journalier des récompenses : serveur uniquement. */
     match /reward_claims/{id} { allow read: if isAdmin(); allow write: if false; }
     match /reward_daily/{id} { allow read: if isAdmin(); allow write: if false; }

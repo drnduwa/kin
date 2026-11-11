@@ -16,6 +16,7 @@ import { adminDb, verifyCaller, verifyAdmin, AuthError } from "@/firebase/admin"
 import { FieldValue } from "firebase-admin/firestore";
 import { STAR_PACK_CATALOG, PASS_CATALOG, DATA_PACK_CATALOG, REWARD_CDF, DAILY_REWARD_CAP_CDF, MIN_CASHOUT_CDF, CDF_PER_USD } from "@/lib/pricing";
 import { fulfillVerifiedFlexPayPayment, markPaymentFailed } from "@/lib/payments-server";
+import { XP, DAILY_MISSIONS, BADGES, COMMUNES, levelFromXp, rankFor, kinshasaDayKey, kinshasaWeekId, type MissionKind } from "@/lib/game";
 
 /** Identifiants SMTP lus dans l'environnement uniquement (les mots de passe ne doivent plus être dans le code). */
 function smtpCredentials() {
@@ -114,6 +115,98 @@ function confidenceScore(isLive: boolean, congested: boolean, reports: number, v
         c += Math.min(20, agree * 5) - Math.min(30, disagree * 10);
     }
     return Math.max(5, Math.min(98, Math.round(c)));
+}
+
+/** Pluie à Kinshasa (Open-Meteo, gratuit, sans clé). Cache 10 min. null si indisponible. */
+let weatherCache: { data: { rainMmH: number; rainProbNext2h: number } | null; expires: number } | null = null;
+async function loadKinshasaWeather() {
+    if (weatherCache && weatherCache.expires > Date.now()) return weatherCache.data;
+    let data: { rainMmH: number; rainProbNext2h: number } | null = null;
+    try {
+        const url = 'https://api.open-meteo.com/v1/forecast?latitude=-4.33&longitude=15.31&current=precipitation&hourly=precipitation_probability&forecast_hours=3&timezone=Africa%2FKinshasa';
+        const res = await fetch(url, { cache: 'no-store' });
+        if (res.ok) {
+            const w = await res.json();
+            const probs: number[] = (w?.hourly?.precipitation_probability || []).slice(0, 2);
+            data = {
+                rainMmH: Number(w?.current?.precipitation ?? 0),
+                rainProbNext2h: probs.length ? Math.max(...probs.map(Number)) : 0,
+            };
+        }
+    } catch (err) {
+        console.warn('[Météo] indisponible:', err);
+    }
+    weatherCache = { data, expires: Date.now() + 10 * 60 * 1000 };
+    return data;
+}
+
+/**
+ * Événements qui bloquent les routes : matchs, cortèges, rassemblements, travaux, coupures SNEL.
+ * Collection `traffic_events` saisie par les admins : { title, type, lat, lng, radiusKm, startsAt, endsAt }.
+ */
+async function loadActiveTrafficEvents(): Promise<Array<{ title: string; type: string; lat: number; lng: number; radiusKm: number }>> {
+    try {
+        const firestore = getServerFirestore();
+        const snap = await getDocs(query(collection(firestore, 'traffic_events'), orderBy('endsAt', 'desc'), limit(40)));
+        const now = Date.now();
+        return snap.docs.map(d => d.data() as any).filter(e => {
+            const start = tsToMillis(e.startsAt) ?? 0;
+            const end = tsToMillis(e.endsAt) ?? 0;
+            // actif d'une heure avant le début à une heure après la fin
+            return typeof e.lat === 'number' && typeof e.lng === 'number' && now >= start - 3600e3 && now <= end + 3600e3;
+        }).map(e => ({ title: String(e.title || 'Événement'), type: String(e.type || 'autre'), lat: e.lat, lng: e.lng, radiusKm: Number(e.radiusKm || 1.5) }));
+    } catch (err) {
+        console.warn('[Événements] lecture impossible:', err);
+        return [];
+    }
+}
+
+function distanceKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
+    const dLat = (a.lat - b.lat) * 111;
+    const dLng = (a.lng - b.lng) * 111 * Math.cos((a.lat * Math.PI) / 180);
+    return Math.sqrt(dLat * dLat + dLng * dLng);
+}
+
+const REPORT_TYPE_LABEL: Record<string, string> = {
+    blockage: 'Blocage signalé',
+    police: 'Contrôle de police',
+    pothole: 'Nid-de-poule',
+    damaged_road: 'Chaussée abîmée',
+};
+const EVENT_ICON: Record<string, string> = { match: 'calendar', cortege: 'siren', eglise: 'users', travaux: 'construction', coupure: 'bolt', autre: 'calendar' };
+
+/**
+ * Panneau « Pourquoi ça bloque » : chaque cause avec sa preuve et son poids.
+ * Seules les sources réelles comptent ; la cause habituelle n'apparaît que s'il n'y a rien d'autre,
+ * et elle est marquée « non confirmée ».
+ */
+function buildWhy(node: any, ctx: { weather: { rainMmH: number; rainProbNext2h: number } | null; events: Awaited<ReturnType<typeof loadActiveTrafficEvents>> }) {
+    const items: Array<{ icon: string; label: string; evidence: string; weight: number; confirmed: boolean }> = [];
+    for (const r of node.activeIncidents || []) {
+        items.push({ icon: r.type === 'police' ? 'shield' : 'alert', label: r.description || REPORT_TYPE_LABEL[r.type] || 'Signalement', evidence: `${REPORT_TYPE_LABEL[r.type] || 'Signalement'} · il y a ${r.ageMin} min`, weight: 3, confirmed: true });
+    }
+    for (const e of ctx.events) {
+        if (distanceKm(node.coords, e) <= e.radiusKm) {
+            items.push({ icon: EVENT_ICON[e.type] || 'calendar', label: e.title, evidence: 'Calendrier des événements', weight: 3, confirmed: true });
+        }
+    }
+    const v = node.votes || { still: 0, clear: 0, lastAgeMin: null };
+    if (v.still > v.clear && v.still > 0) {
+        items.push({ icon: 'users', label: `${v.still} Kinois sur place disent que c'est toujours bloqué`, evidence: v.lastAgeMin !== null ? `dernier vote il y a ${v.lastAgeMin} min` : 'votes récents', weight: 2, confirmed: true });
+    }
+    const congested = node.status === 'BLOQUÉ' || node.status === 'EMBOUTEILLAGE';
+    if (ctx.weather && ctx.weather.rainMmH >= 0.5) {
+        items.push({ icon: 'rain', label: `Pluie en ce moment (${ctx.weather.rainMmH.toFixed(1)} mm/h)`, evidence: 'Météo Open-Meteo', weight: congested ? 2 : 1, confirmed: true });
+    } else if (ctx.weather && ctx.weather.rainProbNext2h >= 60) {
+        items.push({ icon: 'rain', label: `Pluie probable dans les 2 h (${ctx.weather.rainProbNext2h}%)`, evidence: 'Prévision Open-Meteo', weight: 1, confirmed: false });
+    }
+    if (congested && !items.some(i => i.confirmed)) {
+        items.push({ icon: 'clock', label: node.typicalCause, evidence: "Cause habituelle à cette heure, non confirmée aujourd'hui", weight: 1, confirmed: false });
+    }
+    const total = items.reduce((a, i) => a + i.weight, 0) || 1;
+    return items
+        .sort((a, b) => b.weight - a.weight)
+        .map(i => ({ ...i, pct: Math.round((i.weight / total) * 100) }));
 }
 
 export async function checkTrafficAction(input: { lat: number, lng: number, address?: string }) {
@@ -1064,8 +1157,12 @@ export async function getWalletTransactionsAction(idToken: string) {
  * Récompense une contribution RÉELLE et vérifiée, une seule fois :
  *  - 'upvote'         : refId = id du document traffic_votes créé par l'usager (vote 1-tap)
  *  - 'incident_report': refId = id d'un road_condition_reports créé par l'usager il y a moins de 2 h
- * Plafond : DAILY_REWARD_CAP_CDF par usager et par jour (heure de Kinshasa).
- * Avant ce correctif, n'importe qui pouvait créditer n'importe quel compte, sans limite.
+ *
+ * Elle donne :
+ *  - des FC, dans la limite de DAILY_REWARD_CAP_CDF par jour (au-delà : 0 FC, mais l'XP reste) ;
+ *  - de l'XP, la progression des missions du jour, la série de jours, les badges ;
+ *  - des points de la semaine pour l'usager et sa commune (classement).
+ * Tout est écrit dans une seule transaction serveur (Admin SDK) ; le client ne peut rien modifier.
  */
 export async function awardWalletContributionAction(params: {
   idToken: string;
@@ -1075,21 +1172,23 @@ export async function awardWalletContributionAction(params: {
 }) {
   try {
     const { uid } = await verifyCaller(params.idToken);
-    const rewardCDF = REWARD_CDF[params.type];
-    if (!rewardCDF || !params.refId) return { success: false, error: "Contribution non reconnue." };
+    const fullReward = REWARD_CDF[params.type];
+    if (!fullReward || !params.refId) return { success: false, error: "Contribution non reconnue." };
 
     const db = adminDb();
+    const day = kinshasaDayKey();
+    const week = kinshasaWeekId();
     const sourceRef = params.type === 'upvote'
       ? db.collection('traffic_votes').doc(params.refId)
       : db.collection('road_condition_reports').doc(params.refId);
     const claimRef = db.collection('reward_claims').doc(`${params.type}_${params.refId}`);
     const userRef = db.collection('users').doc(uid);
-    const dayKey = `${uid}_${new Date(Date.now() + 3600 * 1000).toISOString().slice(0, 10)}`;
-    const dailyRef = db.collection('reward_daily').doc(dayKey);
+    const dailyRef = db.collection('reward_daily').doc(`${uid}_${day}`);
+    const missionRef = db.collection('missions').doc(`${uid}_${day}`);
 
     const outcome = await db.runTransaction(async (tx) => {
-      const [sourceSnap, claimSnap, userSnap, dailySnap] = await Promise.all([
-        tx.get(sourceRef), tx.get(claimRef), tx.get(userRef), tx.get(dailyRef),
+      const [sourceSnap, claimSnap, userSnap, dailySnap, missionSnap] = await Promise.all([
+        tx.get(sourceRef), tx.get(claimRef), tx.get(userRef), tx.get(dailyRef), tx.get(missionRef),
       ]);
       if (!sourceSnap.exists) return { ok: false as const, error: "Contribution introuvable." };
       const source = sourceSnap.data() as any;
@@ -1101,46 +1200,117 @@ export async function awardWalletContributionAction(params: {
       const user = userSnap.data() as any;
       if (user.isBlocked) return { ok: false as const, error: "Compte suspendu." };
 
+      // --- FC (plafonnés)
       const earnedToday = dailySnap.exists ? Number(dailySnap.data()!.amountCDF || 0) : 0;
-      if (earnedToday + rewardCDF > DAILY_REWARD_CAP_CDF) {
-        return { ok: false as const, error: `Plafond journalier atteint (${DAILY_REWARD_CAP_CDF} FC). Merci, vos votes comptent quand même pour la carte !` };
-      }
-
+      const rewardCDF = earnedToday + fullReward <= DAILY_REWARD_CAP_CDF ? fullReward : 0;
       const newCDF = (user.walletBalanceCDF || 0) + rewardCDF;
       const newUSD = parseFloat((newCDF / CDF_PER_USD).toFixed(2));
-      tx.create(claimRef, { userId: uid, type: params.type, refId: params.refId, amountCDF: rewardCDF, createdAt: FieldValue.serverTimestamp() });
-      tx.set(dailyRef, { userId: uid, amountCDF: earnedToday + rewardCDF, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+
+      // --- Jeu : missions du jour
+      const kind: MissionKind = params.type === 'incident_report' ? 'report' : 'vote';
+      const mission = missionSnap.exists ? (missionSnap.data() as any) : { progress: {}, completed: [] };
+      const progress: Record<string, number> = { ...(mission.progress || {}) };
+      progress[kind] = (progress[kind] || 0) + 1;
+      if (params.type === 'upvote' && source.vote === 'clear') progress.clearVote = (progress.clearVote || 0) + 1;
+      const completed: string[] = [...(mission.completed || [])];
+      let missionXp = 0;
+      const newlyCompleted: string[] = [];
+      for (const m of DAILY_MISSIONS) {
+        if (!completed.includes(m.id) && (progress[m.kind] || 0) >= m.target) {
+          completed.push(m.id);
+          newlyCompleted.push(m.label);
+          missionXp += m.xp;
+        }
+      }
+
+      // --- Série de jours (1er geste de la journée)
+      const yesterday = kinshasaDayKey(new Date(Date.now() - 24 * 3600 * 1000));
+      const firstToday = user.lastActiveDay !== day;
+      const streak = !firstToday ? (user.streakDays || 1) : user.lastActiveDay === yesterday ? (user.streakDays || 0) + 1 : 1;
+      const streakXp = firstToday ? XP.streakDay : 0;
+
+      // --- XP, niveau, badges
+      const gainedXp = (params.type === 'incident_report' ? XP.report : XP.vote) + missionXp + streakXp;
+      const xp = (user.xp || 0) + gainedXp;
+      const level = levelFromXp(xp);
+      const votes = (user.gameVotes || 0) + (params.type === 'upvote' ? 1 : 0);
+      const reports = (user.gameReports || 0) + (params.type === 'incident_report' ? 1 : 0);
+      const owned: string[] = user.badges || [];
+      const newBadges = BADGES.filter(b => !owned.includes(b.id) && b.test({ votes, reports, streak, level }));
+      const levelUp = level > levelFromXp(user.xp || 0);
+
+      tx.create(claimRef, { userId: uid, type: params.type, refId: params.refId, amountCDF: rewardCDF, xp: gainedXp, createdAt: FieldValue.serverTimestamp() });
+      if (rewardCDF > 0) tx.set(dailyRef, { userId: uid, amountCDF: earnedToday + rewardCDF, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      tx.set(missionRef, { userId: uid, day, progress, completed, updatedAt: FieldValue.serverTimestamp() });
       tx.update(userRef, {
         walletBalanceCDF: newCDF,
         walletBalanceUSD: newUSD,
         totalContributionsCount: (user.totalContributionsCount || 0) + 1,
         lastEarningTimestamp: FieldValue.serverTimestamp(),
+        xp,
+        level,
+        gameVotes: votes,
+        gameReports: reports,
+        streakDays: streak,
+        lastActiveDay: day,
+        badges: [...owned, ...newBadges.map(b => b.id)],
       });
-      tx.set(userRef.collection('wallet_transactions').doc(), {
-        userId: uid,
-        type: 'earning',
-        source: params.type,
-        amountCDF: rewardCDF,
-        amountUSD: parseFloat((rewardCDF / CDF_PER_USD).toFixed(3)),
-        description: params.type === 'upvote'
-          ? `Confirmation état de la route (${params.road || 'carrefour'})`
-          : `Signalement trafic (${params.road || 'Kinshasa'})`,
-        road: params.road || null,
-        refId: params.refId,
-        status: 'completed',
-        balanceAfterCDF: newCDF,
-        timestamp: FieldValue.serverTimestamp(),
-      });
-      return { ok: true as const, newCDF, newUSD };
+      if (rewardCDF > 0) {
+        tx.set(userRef.collection('wallet_transactions').doc(), {
+          userId: uid,
+          type: 'earning',
+          source: params.type,
+          amountCDF: rewardCDF,
+          amountUSD: parseFloat((rewardCDF / CDF_PER_USD).toFixed(3)),
+          description: params.type === 'upvote'
+            ? `Confirmation état de la route (${params.road || 'carrefour'})`
+            : `Signalement trafic (${params.road || 'Kinshasa'})`,
+          road: params.road || null,
+          refId: params.refId,
+          status: 'completed',
+          balanceAfterCDF: newCDF,
+          timestamp: FieldValue.serverTimestamp(),
+        });
+      }
+
+      // --- Classement de la semaine (points = XP gagnés cette semaine)
+      const weekRef = db.collection('leaderboards').doc(week);
+      tx.set(weekRef.collection('players').doc(uid), {
+        uid,
+        // Prénom seulement : le classement est visible par tous les usagers connectés.
+        name: String(user.name || 'Kinois').trim().split(/\s+/)[0].slice(0, 20),
+        commune: user.commune || null,
+        points: FieldValue.increment(gainedXp),
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      if (user.commune && COMMUNES.includes(user.commune)) {
+        tx.set(weekRef.collection('communes').doc(user.commune), {
+          commune: user.commune,
+          points: FieldValue.increment(gainedXp),
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+
+      return { ok: true as const, newCDF, newUSD, rewardCDF, gainedXp, xp, level, levelUp, streak, newlyCompleted, newBadges: newBadges.map(b => b.label) };
     });
 
     if (!outcome.ok) return { success: false, error: outcome.error };
     return {
       success: true,
-      rewardCDF,
+      rewardCDF: outcome.rewardCDF,
       newBalanceCDF: outcome.newCDF,
       newBalanceUSD: outcome.newUSD,
-      message: "Bravo ! +" + rewardCDF + " FC crédités sur votre E-Wallet K-Flow."
+      xpGained: outcome.gainedXp,
+      xp: outcome.xp,
+      level: outcome.level,
+      levelUp: outcome.levelUp,
+      rank: rankFor(outcome.level),
+      streak: outcome.streak,
+      missionsCompleted: outcome.newlyCompleted,
+      badgesUnlocked: outcome.newBadges,
+      message: outcome.rewardCDF > 0
+        ? `Bravo ! +${outcome.rewardCDF} FC et +${outcome.gainedXp} XP.`
+        : `+${outcome.gainedXp} XP. Plafond de ${DAILY_REWARD_CAP_CDF} FC atteint aujourd'hui, merci quand même !`
     };
   } catch (err: any) {
     console.error('[E-Wallet Earning Error]:', err);
@@ -1519,6 +1689,10 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
     }
   }));
 
+  // Panneau « Pourquoi » : signalements, événements, votes et météo réels
+  const [weather, trafficEvents] = await Promise.all([loadKinshasaWeather(), loadActiveTrafficEvents()]);
+  for (const b of bottlenecks as any[]) b.why = buildWhy(b, { weather, events: trafficEvents });
+
   // 3. Calcul des 4 trajets quotidiens (1-Tap Commutes) en télémétrie live
   const COMMUTE_NODES = [
     {
@@ -1651,6 +1825,8 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
       congestionIndex,
       activeIncidentsCount: activeReports.length,
       votesLastHour: totalVotes,
+      weather,
+      activeEventsCount: trafficEvents.length,
       liveCount,
       nodeCount: bottlenecks.length,
       telemetrySource,
@@ -1708,4 +1884,62 @@ export async function locateAxisAction(rawQuery: string): Promise<
     console.warn('[locateAxis] géocodage indisponible:', err);
   }
   return { found: false };
+}
+
+/** Nœud de la carte → axe enregistré dans traffic_history (MAJOR_AXES). */
+const NODE_HISTORY_AXIS: Record<string, string> = {
+  'limete-echangeur': 'Échangeur de Limete (Nœud)',
+  'kintambo-magasin': 'Av. Mondjiba (Kintambo Magasin)',
+  'matadi-upn': 'Route de Matadi (UPN)',
+  'lumumba-pascal': 'Blvd Lumumba (Masina Pascal)',
+  'bypass-triangle': 'Av. By-Pass (Triangle)',
+  'mandela-30juin': 'Blvd 30 Juin (Rond-point Mandela)',
+  'kalamu-victoire': 'Av. Kasa-Vubu (Victoire)',
+  'universite-pontgabu': "Av. de l'Université (Pont Gabu)",
+};
+
+let cityForecastCache: { data: any; expires: number } | null = null;
+
+/**
+ * Prévision +1 h / +2 h pour les 8 nœuds de la carte, à partir de l'historique réel
+ * (même heure, même jour de semaine en priorité, heure de Kinshasa).
+ * Sans assez de relevés (< 3), on renvoie delay = null : la carte affiche « pas assez d'historique »
+ * au lieu d'inventer une couleur.
+ */
+export async function getCityForecastAction(): Promise<{
+  generatedAt: string;
+  nodes: Record<string, Array<{ offsetH: number; hour: number; delay: number | null; samples: number }>>;
+}> {
+  if (cityForecastCache && cityForecastCache.expires > Date.now()) return cityForecastCache.data;
+  const kin = kinshasaNow();
+  const firestore = getServerFirestore();
+  const nodes: Record<string, Array<{ offsetH: number; hour: number; delay: number | null; samples: number }>> = {};
+
+  await Promise.all(Object.entries(NODE_HISTORY_AXIS).map(async ([nodeId, road]) => {
+    let docs: any[] = [];
+    try {
+      const snap = await getDocs(query(collection(firestore, 'traffic_history'), where('road', '==', road), limit(500)));
+      docs = snap.docs.map(d => {
+        const h = d.data() as any;
+        if (h.tz === 'Africa/Kinshasa' || typeof h.hourOfDay !== 'number') return h;
+        const hour = (h.hourOfDay + 1) % 24; // anciens relevés en UTC
+        return { ...h, hourOfDay: hour, dayOfWeek: hour === 0 && typeof h.dayOfWeek === 'number' ? (h.dayOfWeek + 1) % 7 : h.dayOfWeek };
+      });
+    } catch (err) {
+      console.warn('[CityForecast] lecture impossible:', road, err);
+    }
+    nodes[nodeId] = [1, 2].map(offsetH => {
+      const hour = (kin.hour + offsetH) % 24;
+      const dow = kin.hour + offsetH >= 24 ? (kin.dayOfWeek + 1) % 7 : kin.dayOfWeek;
+      let match = docs.filter(d => d.hourOfDay === hour && d.dayOfWeek === dow && typeof d.delay === 'number');
+      if (match.length < 3) match = docs.filter(d => d.hourOfDay === hour && typeof d.delay === 'number');
+      if (match.length < 3) return { offsetH, hour, delay: null, samples: match.length };
+      const delay = Math.round(match.reduce((a, d) => a + Number(d.delay), 0) / match.length);
+      return { offsetH, hour, delay, samples: match.length };
+    });
+  }));
+
+  const data = { generatedAt: kin.timeLabel, nodes };
+  cityForecastCache = { data, expires: Date.now() + 10 * 60 * 1000 };
+  return data;
 }

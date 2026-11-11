@@ -17,7 +17,9 @@ import {
   HelpCircle,
   User,
   Wallet,
-  ChevronDown
+  ChevronDown,
+  Target,
+  Trophy
 } from 'lucide-react';
 import {
   Sidebar,
@@ -288,6 +290,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const titles: Record<string, string> = {
       '/reports': 'Baromètre Trafic',
       '/e-wallet': 'K-Flow E-Wallet & Gains',
+      '/quetes': 'Quêtes',
+      '/classement': 'Classement',
       '/live-traffic': 'Temps Réel',
       '/local-traffic': 'Trafic Local',
       '/verifier-trafic': 'Centre de Contrôle Trafic',
@@ -373,6 +377,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   <Link href="/signaler-embouteillage" className="font-bold flex items-center gap-3 w-full">
                     <PlusCircle className="h-5 w-5 text-red-500" />
                     <span>Signaler un problème</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              {/* 5. Jeu : Quêtes et Classement */}
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/quetes'} className={cn("h-11 rounded-xl px-4", pathname === '/quetes' && "bg-white/10")}>
+                  <Link href="/quetes" className="font-bold flex items-center gap-3 w-full">
+                    <Target className="h-5 w-5 text-amber-500" />
+                    <span>Quêtes & niveaux</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/classement'} className={cn("h-11 rounded-xl px-4", pathname === '/classement' && "bg-white/10")}>
+                  <Link href="/classement" className="font-bold flex items-center gap-3 w-full">
+                    <Trophy className="h-5 w-5 text-amber-500" />
+                    <span>Classement des communes</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -707,7 +729,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       <Radar className={cn("h-5 w-5", pathname === '/verifier-trafic' ? "text-primary animate-spin" : "text-slate-400")} />
                       <span className="absolute -top-1 -right-1 flex h-2 w-2 rounded-full bg-red-500 animate-ping" />
                     </div>
-                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Trafic</span>
+                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Carte</span>
                   </Link>
 
                   {/* 2. Itinéraire (GPS) */}
@@ -721,7 +743,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     <div className={cn("p-1 rounded-xl transition-all", pathname === '/k-flow-nav' && "bg-primary/10")}>
                       <Navigation className={cn("h-5 w-5", pathname === '/k-flow-nav' ? "text-primary" : "text-slate-400")} />
                     </div>
-                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Itinéraire</span>
+                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Trajet</span>
                   </Link>
 
                   {/* 3. Bouton central : Signaler en 1 tap */}
@@ -746,35 +768,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     </span>
                   </Link>
 
-                  {/* 4. K-Flow E-Wallet (Gains & Récompenses) */}
-                  <Link 
-                    href="/e-wallet" 
-                    className={cn(
-                      "flex flex-col items-center justify-center flex-1 py-1 px-0.5 rounded-2xl transition-all relative",
-                      pathname === '/e-wallet' ? "text-emerald-600 font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
-                    )}
-                  >
-                    <div className={cn("p-1 rounded-xl transition-all relative", pathname === '/e-wallet' && "bg-emerald-500/10")}>
-                      <Wallet className={cn("h-5 w-5", pathname === '/e-wallet' ? "text-emerald-600" : "text-slate-400")} />
-                      <span className="absolute -top-1 -right-1 flex h-3 min-w-[12px] px-0.5 items-center justify-center rounded-full bg-emerald-500 text-[7px] font-black text-white">
-                        $
-                      </span>
-                    </div>
-                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Gains</span>
-                  </Link>
-
-                  {/* 5. Chat Live */}
+                  {/* 4. Quêtes (niveaux, missions, badges) */}
                   <Link
-                    href="/community-chat"
+                    href="/quetes"
                     className={cn(
                       "flex flex-col items-center justify-center flex-1 py-1 px-0.5 rounded-2xl transition-all",
-                      pathname === '/community-chat' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
+                      pathname === '/quetes' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
                     )}
                   >
-                    <div className={cn("p-1 rounded-xl transition-all", pathname === '/community-chat' && "bg-primary/10")}>
-                      <MessagesSquare className={cn("h-5 w-5", pathname === '/community-chat' ? "text-primary" : "text-slate-400")} />
+                    <div className={cn("p-1 rounded-xl transition-all", pathname === '/quetes' && "bg-primary/10")}>
+                      <Target className={cn("h-5 w-5", pathname === '/quetes' ? "text-primary" : "text-slate-400")} />
                     </div>
-                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Chat</span>
+                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Quêtes</span>
+                  </Link>
+
+                  {/* 5. Classement (bataille des communes) */}
+                  <Link
+                    href="/classement"
+                    className={cn(
+                      "flex flex-col items-center justify-center flex-1 py-1 px-0.5 rounded-2xl transition-all",
+                      pathname === '/classement' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
+                    )}
+                  >
+                    <div className={cn("p-1 rounded-xl transition-all", pathname === '/classement' && "bg-primary/10")}>
+                      <Trophy className={cn("h-5 w-5", pathname === '/classement' ? "text-primary" : "text-slate-400")} />
+                    </div>
+                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Classement</span>
                   </Link>
                 </nav>
             </div>
