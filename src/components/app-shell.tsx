@@ -15,7 +15,8 @@ import {
   Clock,
   Lightbulb,
   HelpCircle,
-  User
+  User,
+  Wallet
 } from 'lucide-react';
 import {
   Sidebar,
@@ -279,10 +280,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const getPageTitle = () => {
     const titles: Record<string, string> = {
       '/reports': 'Baromètre Trafic',
+      '/e-wallet': 'K-Flow E-Wallet & Gains',
       '/live-traffic': 'Temps Réel',
       '/local-traffic': 'Trafic Local',
-      '/verifier-trafic': 'Vérifier Trafic',
-      '/k-flow-nav': 'K-Flow Nav',
+      '/verifier-trafic': 'Centre de Contrôle Trafic',
+      '/k-flow-nav': 'K-Flow Nav GPS',
       '/hazard-map': 'Carte des Dangers',
       '/insights': 'Guide Anti-Bouchons',
       '/flux-infrastructure': 'Chantiers & Infrastructures',
@@ -317,7 +319,63 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </SidebarHeader>
             <SidebarMenu className="p-3 gap-1">
               
-              {/* Priorité au Chat Direct comme landing feature */}
+              {/* 1. Priorité Absolue : Centre de Contrôle Trafic (Tableau de Bord Plan 1) */}
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/verifier-trafic'} className={cn("h-11 px-4 rounded-xl font-black bg-primary/10 hover:bg-primary/20", pathname === '/verifier-trafic' && "bg-primary text-white hover:bg-primary")}>
+                  <Link href="/verifier-trafic" className="flex items-center justify-between w-full">
+                    <div className="flex items-center gap-3">
+                      <Radar className={cn("h-5 w-5", pathname === '/verifier-trafic' ? "text-white animate-spin" : "text-primary")} />
+                      <span className={cn(pathname === '/verifier-trafic' ? "text-white" : "text-slate-900 dark:text-white")}>Contrôle Trafic</span>
+                    </div>
+                    <Badge className={cn("text-[8px] font-black tracking-wider uppercase border-none", pathname === '/verifier-trafic' ? "bg-white text-primary" : "bg-red-500 text-white animate-pulse")}>LIVE</Badge>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              {/* 2. K-Flow E-Wallet (Contribute-to-Earn) */}
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/e-wallet'} className={cn("bg-emerald-500/10 mb-1 h-11 rounded-xl px-4 hover:bg-emerald-500/20", pathname === '/e-wallet' && "bg-emerald-600 text-white hover:bg-emerald-600")}>
+                  <Link href="/e-wallet" className="font-bold flex items-center justify-between w-full">
+                    <div className="flex items-center gap-3">
+                      <Wallet className={cn("h-5 w-5", pathname === '/e-wallet' ? "text-white" : "text-emerald-600")} />
+                      <span className={cn(pathname === '/e-wallet' ? "text-white" : "text-emerald-950 dark:text-emerald-200")}>E-Wallet & Gains</span>
+                    </div>
+                    <Badge className={cn("text-[8px] font-black tracking-wide border-none", pathname === '/e-wallet' ? "bg-white text-emerald-800" : "bg-emerald-500 text-slate-950")}>+CASH</Badge>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              {/* 3. GPS Nav */}
+              {isEnabled('kFlowNav') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname === '/k-flow-nav'} className={cn("bg-blue-500/10 mb-1 h-11 rounded-xl px-4", pathname === '/k-flow-nav' && "bg-blue-500/20")}>
+                    <Link href="/k-flow-nav" className="font-bold flex items-center justify-between w-full">
+                      <div className="flex items-center gap-3">
+                        <Navigation className={cn("h-5 w-5", pathname === '/k-flow-nav' ? "text-accent" : "text-primary")} />
+                        <span>K-Flow Nav</span>
+                      </div>
+                      <Badge className="bg-primary/20 text-primary text-[8px]">PREMIUM</Badge>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {/* 4. Baromètre Trafic */}
+              {isEnabled('reports') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname === '/reports'} className={cn(pathname === '/reports' && "bg-white/10")}>
+                    <Link href="/reports" className="font-bold flex items-center justify-between w-full h-11 px-4 rounded-xl">
+                      <div className="flex items-center gap-3">
+                        <Compass className={cn("h-5 w-5", pathname === '/reports' ? "text-accent" : "text-primary")} />
+                        <span>Baromètre Trafic</span>
+                      </div>
+                      {unreadReports > 0 && <Badge variant="destructive" className="h-5 px-1.5 min-w-[20px] justify-center text-[10px] rounded-full font-black">{unreadReports}</Badge>}
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {/* 5. Chat Direct (Communauté) */}
               {isEnabled('communityChat') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={pathname === '/community-chat'} className={cn(pathname === '/community-chat' && "bg-white/10")}>
@@ -347,30 +405,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </SidebarMenuButton>
               </SidebarMenuItem>
 
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={pathname === '/verifier-trafic'} className={cn(pathname === '/verifier-trafic' && "bg-white/10")}>
-                  <Link href="/verifier-trafic" className="font-bold flex items-center gap-3 h-11 px-4 rounded-xl">
-                    <TrafficCone className={cn("h-5 w-5", pathname === '/verifier-trafic' ? "text-accent" : "text-primary")} />
-                    <span>Vérifier Trafic</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-
-
-              {isEnabled('reports') && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={pathname === '/reports'} className={cn(pathname === '/reports' && "bg-white/10")}>
-                    <Link href="/reports" className="font-bold flex items-center justify-between w-full h-11 px-4 rounded-xl">
-                      <div className="flex items-center gap-3">
-                        <Compass className={cn("h-5 w-5", pathname === '/reports' ? "text-accent" : "text-primary")} />
-                        <span>Baromètre Trafic</span>
-                      </div>
-                      {unreadReports > 0 && <Badge variant="destructive" className="h-5 px-1.5 min-w-[20px] justify-center text-[10px] rounded-full font-black">{unreadReports}</Badge>}
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
-
               {isEnabled('liveTraffic') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={pathname === '/live-traffic'} className={cn(pathname === '/live-traffic' && "bg-white/10")}>
@@ -388,20 +422,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     <Link href="/local-traffic" className="font-medium flex items-center gap-3 h-11 px-4 rounded-xl">
                       <Radar className={cn("h-5 w-5", pathname === '/local-traffic' ? "text-accent" : "text-primary")} />
                       <span>Trafic Local</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
-
-              {isEnabled('kFlowNav') && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={pathname === '/k-flow-nav'} className={cn("bg-primary/10 mb-1 h-11 rounded-xl px-4", pathname === '/k-flow-nav' && "bg-primary/20")}>
-                    <Link href="/k-flow-nav" className="font-bold flex items-center justify-between w-full">
-                      <div className="flex items-center gap-3">
-                        <Navigation className={cn("h-5 w-5", pathname === '/k-flow-nav' ? "text-accent" : "text-primary")} />
-                        <span>K-Flow Nav</span>
-                      </div>
-                      <Badge className="bg-primary/20 text-primary text-[8px]">PREMIUM</Badge>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -642,7 +662,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
                 {/* ── Native Mobile App Bottom Navigation Bar ── */}
                 <nav className="md:hidden shrink-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-t border-slate-200/80 dark:border-slate-800 px-2 py-1 shadow-[0_-4px_25px_rgba(0,0,0,0.07)] z-40 flex items-center justify-around">
-                  {/* 1. Chat Live */}
+                  {/* 1. Contrôle Trafic (Tableau de Bord Plan 1) */}
+                  <Link 
+                    href="/verifier-trafic" 
+                    className={cn(
+                      "flex flex-col items-center justify-center flex-1 py-1 px-0.5 rounded-2xl transition-all",
+                      pathname === '/verifier-trafic' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
+                    )}
+                  >
+                    <div className={cn("p-1 rounded-xl transition-all relative", pathname === '/verifier-trafic' && "bg-primary/10")}>
+                      <Radar className={cn("h-5 w-5", pathname === '/verifier-trafic' ? "text-primary animate-spin" : "text-slate-400")} />
+                      <span className="absolute -top-1 -right-1 flex h-2 w-2 rounded-full bg-red-500 animate-ping" />
+                    </div>
+                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Contrôle</span>
+                  </Link>
+
+                  {/* 2. Chat Live */}
                   <Link 
                     href="/community-chat" 
                     className={cn(
@@ -654,20 +689,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       <MessagesSquare className={cn("h-5 w-5", pathname === '/community-chat' ? "text-primary" : "text-slate-400")} />
                     </div>
                     <span className="text-[9px] font-bold tracking-tight mt-0.5">Chat Live</span>
-                  </Link>
-
-                  {/* 2. Vérifier Trafic */}
-                  <Link 
-                    href="/verifier-trafic" 
-                    className={cn(
-                      "flex flex-col items-center justify-center flex-1 py-1 px-0.5 rounded-2xl transition-all",
-                      pathname === '/verifier-trafic' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
-                    )}
-                  >
-                    <div className={cn("p-1 rounded-xl transition-all", pathname === '/verifier-trafic' && "bg-primary/10")}>
-                      <TrafficCone className={cn("h-5 w-5", pathname === '/verifier-trafic' ? "text-primary" : "text-slate-400")} />
-                    </div>
-                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Vérifier</span>
                   </Link>
 
                   {/* 3. Center Highlight: K-Flow Nav GPS */}
@@ -691,23 +712,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     </span>
                   </Link>
 
-                  {/* 4. Baromètre Trafic */}
+                  {/* 4. K-Flow E-Wallet (Gains & Récompenses) */}
                   <Link 
-                    href="/reports" 
+                    href="/e-wallet" 
                     className={cn(
                       "flex flex-col items-center justify-center flex-1 py-1 px-0.5 rounded-2xl transition-all relative",
-                      pathname === '/reports' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
+                      pathname === '/e-wallet' ? "text-emerald-600 font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
                     )}
                   >
-                    <div className={cn("p-1 rounded-xl transition-all relative", pathname === '/reports' && "bg-primary/10")}>
-                      <Compass className={cn("h-5 w-5", pathname === '/reports' ? "text-primary" : "text-slate-400")} />
-                      {unreadReports > 0 && (
-                        <span className="absolute -top-1 -right-1 flex h-3.5 min-w-[14px] px-0.5 items-center justify-center rounded-full bg-destructive text-[8px] font-black text-white">
-                          {unreadReports}
-                        </span>
-                      )}
+                    <div className={cn("p-1 rounded-xl transition-all relative", pathname === '/e-wallet' && "bg-emerald-500/10")}>
+                      <Wallet className={cn("h-5 w-5", pathname === '/e-wallet' ? "text-emerald-600" : "text-slate-400")} />
+                      <span className="absolute -top-1 -right-1 flex h-3 min-w-[12px] px-0.5 items-center justify-center rounded-full bg-emerald-500 text-[7px] font-black text-white">
+                        $
+                      </span>
                     </div>
-                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Baromètre</span>
+                    <span className="text-[9px] font-bold tracking-tight mt-0.5">E-Wallet</span>
                   </Link>
 
                   {/* 5. Assistant IA */}

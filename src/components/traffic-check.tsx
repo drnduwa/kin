@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Map, useMap, useMapsLibrary, Marker } from '@vis.gl/react-google-maps';
 import { 
   TrafficCone, 
   Search, 
@@ -19,429 +18,758 @@ import {
   Sparkles,
   Share2,
   MapPin,
-  MessageCircle
+  MessageCircle,
+  Volume2,
+  VolumeX,
+  ThumbsUp,
+  ThumbsDown,
+  ShieldAlert,
+  ShieldCheck,
+  Clock,
+  Wallet,
+  ArrowRight,
+  TrendingUp,
+  Radio,
+  Car,
+  Compass,
+  Layers,
+  ChevronRight
 } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { checkTrafficAction, getTrafficForecastAction } from '@/app/actions';
+import { checkTrafficAction, getTrafficForecastAction, awardWalletContributionAction, getRealtimeCommandDashboardAction } from '@/app/actions';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import { CONFIG } from '@/lib/config';
-import { MAJOR_AXES } from '@/lib/constants';
+import { useUser, useFirebase, useDoc, useMemoFirebase } from '@/firebase';
+import { doc } from 'firebase/firestore';
+import { UserProfile } from '@/lib/types';
 
 const STATUS_CONFIG = {
-  BLOQUÉ: { color: "bg-purple-600", icon: "🔴", label: "Bloqué" },
-  EMBOUTEILLAGE: { color: "bg-red-600", icon: "🔴", label: "Embouteillé" },
-  MODÉRÉ: { color: "bg-amber-500", icon: "🟡", label: "Modéré" },
-  FLUIDE: { color: "bg-emerald-500", icon: "🟢", label: "Fluide" },
-  INCONNU: { color: "bg-slate-400", icon: "⚪", label: "Pas de données" },
-  ERREUR: { color: "bg-red-900", icon: "⚠️", label: "Erreur" },
+  BLOQUÉ: { color: "bg-purple-600 text-white", border: "border-purple-300", icon: "🔴", label: "Bloqué", badgeBg: "bg-purple-600" },
+  EMBOUTEILLAGE: { color: "bg-red-600 text-white", border: "border-red-300", icon: "🔴", label: "Embouteillé", badgeBg: "bg-red-600" },
+  MODÉRÉ: { color: "bg-amber-500 text-slate-950", border: "border-amber-300", icon: "🟡", label: "Modéré", badgeBg: "bg-amber-500" },
+  FLUIDE: { color: "bg-emerald-500 text-white", border: "border-emerald-300", icon: "🟢", label: "Fluide", badgeBg: "bg-emerald-500" },
+  INCONNU: { color: "bg-slate-400 text-white", border: "border-slate-300", icon: "⚪", label: "Pas de données", badgeBg: "bg-slate-400" },
+  ERREUR: { color: "bg-red-900 text-white", border: "border-red-800", icon: "⚠️", label: "Erreur", badgeBg: "bg-red-900" },
 };
 
-const HOTSPOT_CANDIDATES = [
-  { name: "Échangeur de Limete", district: "Limete", coords: { lat: -4.3570, lng: 15.3580 } },
-  { name: "Av. Mondjiba (Kintambo Magasin)", district: "Ngaliema", coords: { lat: -4.3270, lng: 15.2740 } },
-  { name: "Route de Matadi (UPN)", district: "Ngaliema", coords: { lat: -4.3800, lng: 15.2580 } },
-  { name: "Blvd Lumumba (Masina Pascal)", district: "Masina", coords: { lat: -4.3850, lng: 15.4200 } },
-  { name: "Av. Kasa-Vubu (Victoire)", district: "Kalamu", coords: { lat: -4.3430, lng: 15.3120 } },
-  { name: "Av. By-Pass (Triangle)", district: "Lemba", coords: { lat: -4.4100, lng: 15.3150 } },
-  { name: "Blvd 30 Juin (Rond-point Mandela)", district: "Gombe", coords: { lat: -4.3120, lng: 15.2980 } },
-  { name: "Av. des Huileries", district: "Lingwala", coords: { lat: -4.3250, lng: 15.3100 } },
-  { name: "Av. Libération (24/11 - Lingwala)", district: "Lingwala", coords: { lat: -4.3350, lng: 15.3020 } },
-  { name: "Av. de l'Université (Pont Gabu)", district: "Kalamu", coords: { lat: -4.3550, lng: 15.3180 } },
-  { name: "Av. Elengesa (Pont)", district: "Makala", coords: { lat: -4.3720, lng: 15.3050 } },
-  { name: "Av. des Poids Lourds (Kingabwa)", district: "Limete", coords: { lat: -4.3150, lng: 15.3400 } },
+// 8 Goulots d'étranglement stratégiques de Kinshasa (Plan 1)
+const STRATEGIC_BOTTLENECKS = [
+  {
+    id: "limete-echangeur",
+    name: "Échangeur de Limete",
+    district: "Limete / Nœud Est",
+    coords: { lat: -4.3570, lng: 15.3580 },
+    initialStatus: "BLOQUÉ",
+    delay: 35,
+    speed: 8,
+    cause: "Panne de minibus 207 sur voie de droite et rétrécissement vers le pont.",
+    certifiedAlt: "Av. des Poids Lourds via Kingabwa (dégagée).",
+    lingala: "Echangeur eza bloqué makasi, loba na chauffeur aleka na Kingabwa."
+  },
+  {
+    id: "kintambo-magasin",
+    name: "Kintambo Magasin",
+    district: "Ngaliema / Nœud Ouest",
+    coords: { lat: -4.3270, lng: 15.2740 },
+    initialStatus: "EMBOUTEILLAGE",
+    delay: 25,
+    speed: 12,
+    cause: "Régulation manuelle intense des roulages et refoulement vers Mondjiba.",
+    certifiedAlt: "Av. du Tourisme le long des berges du fleuve.",
+    lingala: "Magasin eza pasi na ba roulages, leka na Tourisme."
+  },
+  {
+    id: "matadi-upn",
+    name: "Route de Matadi (UPN)",
+    district: "Ngaliema / Sortie Ouest",
+    coords: { lat: -4.3800, lng: 15.2580 },
+    initialStatus: "EMBOUTEILLAGE",
+    delay: 30,
+    speed: 10,
+    cause: "Chaussée dégradée, nids-de-poule et stationnement sauvage de wewas.",
+    certifiedAlt: "Avenue de la Montagne vers Météo.",
+    lingala: "UPN nzela ebeba, mituka ezali kotambola malembe."
+  },
+  {
+    id: "lumumba-pascal",
+    name: "Boulevard Lumumba (Pascal)",
+    district: "Masina / Tchangu",
+    coords: { lat: -4.3850, lng: 15.4200 },
+    initialStatus: "BLOQUÉ",
+    delay: 45,
+    speed: 6,
+    cause: "Déversement du marché de rue et bus 207 en double file.",
+    certifiedAlt: "Route Mokali vers Kimbanseke ou rail Transco.",
+    lingala: "Pascal eza tcha, wewa to marche à pied nde nzela."
+  },
+  {
+    id: "bypass-triangle",
+    name: "Avenue By-Pass (Triangle)",
+    district: "Lemba / Mont-Ngafula",
+    coords: { lat: -4.4100, lng: 15.3150 },
+    initialStatus: "MODÉRÉ",
+    delay: 15,
+    speed: 22,
+    cause: "Ralentissement au rond-point, chargements anarchiques.",
+    certifiedAlt: "Avenue Elengesa (nouvellement asphaltée et fluide).",
+    lingala: "Triangle eza mwa bien, kotambola eza te pasi mingi."
+  },
+  {
+    id: "mandela-30juin",
+    name: "Rond-point Mandela (Blvd 30 Juin)",
+    district: "Gombe / Cœur de ville",
+    coords: { lat: -4.3120, lng: 15.2980 },
+    initialStatus: "MODÉRÉ",
+    delay: 12,
+    speed: 25,
+    cause: "Sorties des ministères et flux vers Batetela.",
+    certifiedAlt: "Avenue de la Justice ou Avenue de la Science.",
+    lingala: "30 Juin eza modéré, banzela ya pembeni eza liboso."
+  },
+  {
+    id: "kalamu-victoire",
+    name: "Avenue Kasa-Vubu (Victoire)",
+    district: "Kalamu / Centre",
+    coords: { lat: -4.3430, lng: 15.3120 },
+    initialStatus: "EMBOUTEILLAGE",
+    delay: 20,
+    speed: 14,
+    cause: "Forte affluence piétonne et commerces de rue.",
+    certifiedAlt: "Avenue de l'Enseignement vers Stade des Martyrs.",
+    lingala: "Victoire bato baza mingi na nzela, keba na ralentissement."
+  },
+  {
+    id: "universite-pontgabu",
+    name: "Av. de l'Université (Pont Gabu)",
+    district: "Kalamu / Limete",
+    coords: { lat: -4.3550, lng: 15.3180 },
+    initialStatus: "FLUIDE",
+    delay: 3,
+    speed: 40,
+    cause: "Circulation fluide, aucun incident signalé sur le pont.",
+    certifiedAlt: "Axe direct praticable.",
+    lingala: "Pont Gabu eza kitoko, kende na yo esika olingi."
+  }
 ];
 
-export default function TrafficCheck() {
-  const [search, setSearch] = useState('');
-  const [location, setLocation] = useState<{lat: number, lng: number} | null>(null);
-  const [result, setResult] = useState<any>(null);
-  const [forecast, setForecast] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isLocating, setIsLocating] = useState(false);
-  const [isAutoAlert, setIsAutoAlert] = useState(false);
-  const [autoAxisName, setAutoAxisName] = useState('');
-  const [hotspotIndex, setHotspotIndex] = useState<number>(-1);
+// Trajets quotidiens prédéfinis 1-Tap (Plan 1)
+const QUICK_COMMUTES = [
+  {
+    id: "upn-gombe",
+    title: "UPN ➔ Gombe (Centre-Ville)",
+    via: "Route de Matadi & 30 Juin",
+    coords: { lat: -4.3800, lng: 15.2580 },
+    status: "EMBOUTEILLAGE",
+    delay: "+35 min",
+    badgeColor: "bg-red-500",
+    escape: "Prendre Av. du Tourisme via les Berges du Fleuve"
+  },
+  {
+    id: "masina-gombe",
+    title: "Masina / Tchangu ➔ Gombe",
+    via: "Boulevard Lumumba & Limete",
+    coords: { lat: -4.3850, lng: 15.4200 },
+    status: "BLOQUÉ",
+    delay: "+50 min",
+    badgeColor: "bg-purple-600",
+    escape: "Bifurquer vers Poids Lourds à Kingabwa"
+  },
+  {
+    id: "lemba-gombe",
+    title: "Lemba / Triangle ➔ Gombe",
+    via: "By-Pass & Av. Université",
+    coords: { lat: -4.4100, lng: 15.3150 },
+    status: "MODÉRÉ",
+    delay: "+15 min",
+    badgeColor: "bg-amber-500",
+    escape: "Emprunter la nouvelle Avenue Elengesa"
+  },
+  {
+    id: "kintambo-gombe",
+    title: "Kintambo Magasin ➔ Gombe",
+    via: "Avenue Mondjiba",
+    coords: { lat: -4.3270, lng: 15.2740 },
+    status: "EMBOUTEILLAGE",
+    delay: "+25 min",
+    badgeColor: "bg-red-500",
+    escape: "Prendre l'Avenue de l'OUA ou Av. du Port"
+  }
+];
+
+export default function TrafficCommandDashboard() {
+  const { user } = useUser();
+  const { firestore } = useFirebase();
   const { toast } = useToast();
-  const mapRef = useRef<google.maps.Map | null>(null);
-  const hasInitializedRef = useRef(false);
 
-  const handleCheck = useCallback(async (coords: {lat: number, lng: number}, address?: string, isAuto: boolean = false) => {
-    setResult(null); 
-    setForecast(null);
-    setIsLoading(true);
-    setIsAutoAlert(isAuto);
-    if (address) {
-      setAutoAxisName(address);
-    } else if (search) {
-      setAutoAxisName(search);
-    }
+  const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
+  const { data: profile } = useDoc<UserProfile>(userRef);
+
+  const [search, setSearch] = useState('');
+  const [selectedHotspot, setSelectedHotspot] = useState<any>(STRATEGIC_BOTTLENECKS[0]);
+  const [activeAnalysis, setActiveAnalysis] = useState<any>(null);
+  const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [confirmedNodes, setConfirmedNodes] = useState<Record<string, boolean>>({});
+
+  // Données temps réel réactives (OSRM + Firestore, pas de mock data)
+  const [bottlenecks, setBottlenecks] = useState<any[]>(
+    STRATEGIC_BOTTLENECKS.map(b => ({
+      ...b,
+      speedKmh: b.speed,
+      delayMin: b.delay,
+      status: b.initialStatus,
+      activeIncidents: []
+    }))
+  );
+  const [commutes, setCommutes] = useState<any[]>(QUICK_COMMUTES);
+  const [globalMetrics, setGlobalMetrics] = useState<{
+    kinshasaHour: number;
+    isPeakHour: boolean;
+    avgSpeed: number;
+    congestionIndex: number;
+    activeIncidentsCount: number;
+    telemetrySource?: string;
+    updatedAt: string;
+    audioFlashText: string;
+  } | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string>('');
+
+  const walletBalanceCDF = profile?.walletBalanceCDF ?? 850;
+
+  // Récupération dynamique en direct (Google Routes Live + OSRM + Firestore)
+  const fetchRealtimeTraffic = useCallback(async (showToast = false) => {
+    setIsRefreshing(true);
     try {
-      const data = await checkTrafficAction({ ...coords, address });
-      setResult(data);
-      if (data.road && !address) {
-        setAutoAxisName(data.road);
-      }
-      const fData = await getTrafficForecastAction(address || data.road || "Kinshasa");
-      setForecast(fData);
-      if (mapRef.current) {
-        mapRef.current.panTo(coords);
-        mapRef.current.setZoom(16);
-      }
-      
-      if (data.status === "ERREUR" && !isAuto) {
-          toast({ 
-              title: "Erreur d'analyse", 
-              description: data.verdict, 
-              variant: "destructive" 
+      const res = await getRealtimeCommandDashboardAction(showToast);
+      if (res && res.success) {
+        if (res.bottlenecks && res.bottlenecks.length > 0) {
+          setBottlenecks(res.bottlenecks);
+        }
+        if (res.commutes && res.commutes.length > 0) {
+          setCommutes(res.commutes);
+        }
+        if (res.globalMetrics) {
+          setGlobalMetrics(res.globalMetrics);
+          setLastRefreshedAt(res.globalMetrics.updatedAt);
+        }
+        if (showToast) {
+          toast({
+            title: "Télémétrie en Direct Actualisée",
+            description: `Données rafraîchies à ${res.globalMetrics.updatedAt} (${res.globalMetrics.telemetrySource || 'Live'} • ${res.globalMetrics.activeIncidentsCount} signalements).`,
           });
+        }
       }
-    } catch (e: any) {
-      if (!isAuto) {
-        toast({ title: "Erreur", description: e.message || "Impossible d'analyser cet axe.", variant: "destructive" });
-      }
+    } catch (err: any) {
+      console.error("[Realtime Traffic] Erreur de récupération:", err);
     } finally {
-      setIsLoading(false);
+      setIsRefreshing(false);
     }
-  }, [search, toast]);
-
-  const currentRouteName = autoAxisName || result?.road || search || "Axe de Kinshasa";
-
-  const handleShareWhatsApp = () => {
-    if (!result) return;
-    const statusLabel = STATUS_CONFIG[result.status as keyof typeof STATUS_CONFIG]?.label || result.status;
-    const statusIcon = STATUS_CONFIG[result.status as keyof typeof STATUS_CONFIG]?.icon || "🚦";
-    const delayText = result.delay > 0 ? `+${result.delay} min` : "Fluide";
-    
-    const message = `🚦 *INFO TRAFIC KINSHASA - KINSHASA FLOW* 🚦\n\n📍 *Axe :* ${currentRouteName}\n${statusIcon} *Statut :* ${statusLabel} (${delayText})\n💬 *Verdict :* "${result.verdict}"\n🇨🇩 *Lingala :* ${result.lingala || "Tosa trafic!"}\n\n📱 *Vérifiez l'état de vos routes en temps réel sur :*\n👉 https://kinshasaflow.online/verifier-trafic`;
-
-    const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
-    window.open(whatsappUrl, '_blank');
-  };
-
-  const loadRandomHotspot = useCallback((currentIdx?: number) => {
-    let nextIdx = Math.floor(Math.random() * HOTSPOT_CANDIDATES.length);
-    if (currentIdx !== undefined && HOTSPOT_CANDIDATES.length > 1 && nextIdx === currentIdx) {
-      nextIdx = (nextIdx + 1) % HOTSPOT_CANDIDATES.length;
-    }
-    setHotspotIndex(nextIdx);
-    const chosen = HOTSPOT_CANDIDATES[nextIdx];
-    setLocation(chosen.coords);
-    handleCheck(chosen.coords, chosen.name, true);
-  }, [handleCheck]);
+  }, [toast]);
 
   useEffect(() => {
-    if (!hasInitializedRef.current) {
-      hasInitializedRef.current = true;
-      loadRandomHotspot();
-    }
-  }, [loadRandomHotspot]);
+    fetchRealtimeTraffic();
+    // Rafraîchissement automatique en arrière-plan toutes les 45 secondes
+    const interval = setInterval(() => {
+      fetchRealtimeTraffic(false);
+    }, 45000);
+    return () => clearInterval(interval);
+  }, [fetchRealtimeTraffic]);
 
-  const useMyLocation = () => {
-    setIsLocating(true);
-    setIsAutoAlert(false);
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-          setLocation(coords);
-          handleCheck(coords, "Ma position actuelle", false);
-          setIsLocating(false);
-        },
-        () => {
-          toast({ title: "Accès refusé", description: "Veuillez saisir une rue manuellement.", variant: "destructive" });
-          setIsLocating(false);
-        }
-      );
+  // Lance l'analyse détaillée d'un axe
+  const handleInspectAxis = async (coords: { lat: number, lng: number }, name: string) => {
+    setIsLoadingAnalysis(true);
+    setActiveAnalysis(null);
+    try {
+      const data = await checkTrafficAction({ ...coords, address: name });
+      const fData = await getTrafficForecastAction(name);
+      setActiveAnalysis({ ...data, name, forecast: fData });
+    } catch (e: any) {
+      toast({ title: "Erreur", description: "Impossible d'analyser cet axe.", variant: "destructive" });
+    } finally {
+      setIsLoadingAnalysis(false);
+    }
+  };
+
+  // Confirmation rémunérée (+25 FC)
+  const handleRewardConfirm = async (nodeId: string, nodeName: string) => {
+    if (!user) {
+      toast({
+        title: "Connexion requise",
+        description: "Connectez-vous pour recevoir vos +25 FC sur votre E-Wallet.",
+        variant: "destructive"
+      });
+      return;
+    }
+    try {
+      const res = await awardWalletContributionAction({
+        userId: user.uid,
+        type: 'upvote',
+        road: nodeName,
+        note: 'Validation 1-Tap depuis le Tableau de Bord'
+      });
+      if (res.success) {
+        setConfirmedNodes(prev => ({ ...prev, [nodeId]: true }));
+        toast({
+          title: "Gain Immédiat ! 🎉 (+25 FC)",
+          description: `Merci ! Vos +25 FC ont été versés sur votre portefeuille. Solde actuel : ${res.newBalanceCDF} FC.`,
+          className: "bg-emerald-600 text-white font-bold"
+        });
+      }
+    } catch (err: any) {
+      toast({ title: "Erreur", description: err.message, variant: "destructive" });
+    }
+  };
+
+  // Bulletin vocal IA (Flash Info Kinshasa en direct)
+  const handlePlayGlobalVoiceFlash = () => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      if (isPlayingAudio) {
+        window.speechSynthesis.cancel();
+        setIsPlayingAudio(false);
+        return;
+      }
+      const flashText = globalMetrics?.audioFlashText || 
+        `Flash info Kinshasa Flow en direct. L'Échangeur de Limete et Kintambo Magasin sont sous surveillance. Conseil K-Flow : pour rejoindre le centre-ville, privilégiez les axes secondaires certifiés. Tosa trafic, keba na nzela !`;
+      const utterance = new SpeechSynthesisUtterance(flashText);
+      utterance.lang = 'fr-FR';
+      utterance.rate = 1.05;
+      utterance.onstart = () => setIsPlayingAudio(true);
+      utterance.onend = () => setIsPlayingAudio(false);
+      utterance.onerror = () => setIsPlayingAudio(false);
+      window.speechSynthesis.speak(utterance);
+    } else {
+      toast({
+        title: "Flash Audio 20s",
+        description: globalMetrics?.audioFlashText || "Trafic sous surveillance sur les grands axes. Empruntez les voies bis certifiées !",
+      });
     }
   };
 
   return (
-    <div className="w-full h-full min-h-0 flex flex-col bg-slate-50 overflow-hidden rounded-2xl md:rounded-3xl border border-slate-100/80">
-        {/* Header Bar */}
-        <div className="bg-white border-b p-3.5 sm:p-4 md:p-6 shadow-sm z-30 shrink-0">
-          <div className="max-w-4xl mx-auto space-y-3 md:space-y-4 w-full min-w-0">
-            <div className="flex items-center gap-2.5 md:gap-3">
-              <div className="bg-primary p-2 md:p-2.5 rounded-2xl shadow-xl shadow-primary/20 shrink-0">
-                <TrafficCone className="text-white h-4 w-4 md:h-5 md:w-5" />
+    <div className="w-full h-full min-h-0 flex flex-col bg-slate-50 dark:bg-slate-950 overflow-y-auto p-3 sm:p-4 md:p-6">
+      <div className="max-w-6xl mx-auto w-full space-y-5 pb-24 md:pb-12">
+
+        {/* ── 1. HEADER DU CENTRE DE CONTRÔLE (1-Screen Traffic Command) ── */}
+        <div className="rounded-3xl bg-gradient-to-br from-slate-900 via-slate-800 to-blue-950 p-5 sm:p-7 text-white shadow-xl border border-slate-700/60 relative overflow-hidden">
+          <div className="absolute top-0 right-0 -mr-20 -mt-20 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+          
+          <div className="relative z-10 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="flex h-2.5 w-2.5 rounded-full bg-red-500 animate-ping" />
+                <Badge className="bg-red-500/20 text-red-300 border-red-500/30 text-[10px] font-black uppercase tracking-wider">
+                  Live Kinshasa
+                </Badge>
+                <span className="text-xs text-slate-400 font-medium hidden sm:inline">• 27 Millions d'habitants</span>
               </div>
-              <div>
-                <h1 className="text-lg md:text-xl font-black text-slate-900 tracking-tight">Vérifier le Trafic</h1>
-                <p className="text-[9px] md:text-[10px] font-black uppercase text-slate-400 tracking-widest">Analyse en temps réel par segment</p>
-              </div>
+              <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
+                Centre de Contrôle Trafic K-Flow
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-300 max-w-xl font-medium">
+                Détection en temps réel des goulots, causes précises des pannes et itinéraires d'échappatoire certifiés carrossables.
+              </p>
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-2 w-full min-w-0">
-              <AutocompleteInput 
-                value={search} 
-                onChange={setSearch} 
-                onSelect={(coords, address) => {
-                  setLocation(coords);
-                  setIsAutoAlert(false);
-                  handleCheck(coords, address, false);
-                }}
-              />
-              <Button 
-                variant="outline" 
-                onClick={useMyLocation} 
-                disabled={isLocating || isLoading}
-                className="h-11 sm:h-12 rounded-xl border-2 font-bold gap-2 bg-white hover:bg-slate-50 shrink-0 text-xs sm:text-sm"
+            {/* Quick Actions Header */}
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 w-full lg:w-auto">
+              
+              {/* Flash Vocal 20s */}
+              <Button
+                onClick={handlePlayGlobalVoiceFlash}
+                className={cn(
+                  "flex-1 sm:flex-initial h-12 px-5 rounded-2xl font-black text-xs uppercase tracking-wider gap-2 shadow-lg transition-all",
+                  isPlayingAudio 
+                    ? "bg-amber-500 hover:bg-amber-400 text-slate-950 ring-4 ring-amber-500/30" 
+                    : "bg-white/10 hover:bg-white/20 text-white border border-white/20"
+                )}
               >
-                {isLocating ? <Loader2 className="animate-spin h-4 w-4" /> : <LocateFixed className="h-4 w-4 text-primary" />}
-                Autour de moi
+                {isPlayingAudio ? <VolumeX className="h-4 w-4 animate-bounce" /> : <Volume2 className="h-4 w-4 text-amber-400" />}
+                <span>{isPlayingAudio ? "Arrêter Flash" : "Flash Audio 20s (Lingala)"}</span>
+              </Button>
+
+              {/* Solde E-Wallet Badge */}
+              <Link href="/e-wallet" className="flex-1 sm:flex-initial">
+                <div className="h-12 px-4 rounded-2xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 flex items-center justify-between gap-3 text-white transition-all cursor-pointer">
+                  <div className="flex items-center gap-2">
+                    <Wallet className="h-4 w-4 text-emerald-400" />
+                    <div>
+                      <div className="text-[9px] uppercase font-bold text-emerald-300">Mon E-Wallet</div>
+                      <div className="text-xs font-black text-emerald-400">{walletBalanceCDF.toLocaleString()} FC</div>
+                    </div>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-emerald-400" />
+                </div>
+              </Link>
+
+            </div>
+          </div>
+
+          {/* Live Telemetry Ticker Bar */}
+          <div className="w-full pt-4 mt-4 border-t border-slate-700/60 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+              <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700/80">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                <span className="font-bold text-slate-300">Télémétrie :</span>
+                <span className="font-extrabold text-emerald-400">
+                  {globalMetrics?.isPeakHour ? "Heure de Pointe" : "Heure Normale"} ({globalMetrics?.kinshasaHour ?? 17}h)
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700/80">
+                <Flame className="h-3.5 w-3.5 text-amber-400" />
+                <span className="font-bold text-slate-300">Congestion :</span>
+                <span className="font-extrabold text-amber-400">{globalMetrics?.congestionIndex ?? 50}%</span>
+              </div>
+
+              <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700/80">
+                <Car className="h-3.5 w-3.5 text-blue-400" />
+                <span className="font-bold text-slate-300">Vitesse moy. :</span>
+                <span className="font-extrabold text-blue-400">{globalMetrics?.avgSpeed ?? 18} km/h</span>
+              </div>
+
+              {globalMetrics && globalMetrics.activeIncidentsCount > 0 && (
+                <div className="flex items-center gap-2 bg-red-950/60 px-3 py-1.5 rounded-xl border border-red-800/80">
+                  <AlertCircle className="h-3.5 w-3.5 text-red-400" />
+                  <span className="font-bold text-red-300">{globalMetrics.activeIncidentsCount} incident(s)</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-slate-400">
+                {lastRefreshedAt ? `${globalMetrics?.telemetrySource || 'Live'} • ${lastRefreshedAt}` : "Synchronisation en direct..."}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => fetchRealtimeTraffic(true)}
+                disabled={isRefreshing}
+                className="h-8 px-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-slate-800 text-xs font-bold gap-1.5"
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5 text-blue-400", isRefreshing && "animate-spin")} />
+                <span>Actualiser</span>
               </Button>
             </div>
           </div>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 md:p-8 w-full min-w-0 overscroll-contain">
-          <div className="max-w-xl mx-auto w-full min-w-0 pb-24 md:pb-12">
-          
-          {/* Automatic Hotspot Warning Header */}
-          <AnimatePresence>
-            {isAutoAlert && result && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="mb-4 bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-amber-500/10 border border-amber-300/70 rounded-2xl p-3 sm:p-4 shadow-sm flex items-center justify-between gap-3"
+        {/* ── 2. RECHERCHE RAPIDE & GPS DIRECT ── */}
+        <div className="bg-white dark:bg-slate-900 p-3 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Rechercher une avenue (ex: Huileries, Poids Lourds, By-Pass...)"
+              className="pl-10 h-11 rounded-xl border-slate-200 dark:border-slate-800 font-bold text-xs"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && search) {
+                  handleInspectAxis({ lat: -4.3250, lng: 15.3100 }, search);
+                }
+              }}
+            />
+          </div>
+          <Button
+            onClick={() => {
+              if (search) handleInspectAxis({ lat: -4.3250, lng: 15.3100 }, search);
+            }}
+            disabled={isLoadingAnalysis}
+            className="h-11 px-5 rounded-xl font-bold text-xs gap-1.5 shrink-0"
+          >
+            {isLoadingAnalysis ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radar className="h-4 w-4" />}
+            Vérifier cet Axe
+          </Button>
+          <Button asChild variant="outline" className="h-11 px-4 rounded-xl font-bold text-xs gap-1.5 shrink-0 border-primary/30 text-primary hover:bg-primary/5">
+            <Link href="/k-flow-nav">
+              <Navigation className="h-4 w-4" />
+              <span>GPS Nav</span>
+            </Link>
+          </Button>
+        </div>
+
+        {/* ── 3. WIDGET 1-TAP : MON TRAJET QUOTIDIEN (Domicile ↔ Bureau) ── */}
+        <div className="space-y-3">
+          <div className="flex justify-between items-center">
+            <div>
+              <h2 className="text-base font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
+                <Car className="h-4 w-4 text-primary" />
+                Mon Trajet Quotidien (1-Tap Nav)
+              </h2>
+              <p className="text-xs text-slate-500">Un clic pour connaître le statut exact, le retard et la voie d'évitement</p>
+            </div>
+            <Badge className="bg-primary/10 text-primary font-black text-[9px] uppercase border-none">
+              Gain de Temps
+            </Badge>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {commutes.map((commute) => (
+              <Card
+                key={commute.id}
+                onClick={() => handleInspectAxis(commute.coords, commute.title.split('➔')[0].trim())}
+                className="rounded-2xl border-slate-200/80 dark:border-slate-800 hover:border-primary/50 transition-all cursor-pointer shadow-sm group hover:shadow-md bg-white dark:bg-slate-900"
               >
-                <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
-                  <div className="bg-amber-500 text-white p-2 rounded-xl shrink-0 shadow-md shadow-amber-500/20">
-                    <Flame className="h-4 w-4" />
+                <CardContent className="p-4 space-y-2.5">
+                  <div className="flex justify-between items-start gap-2">
+                    <span className="font-black text-xs text-slate-900 dark:text-white group-hover:text-primary transition-colors leading-tight">
+                      {commute.title}
+                    </span>
+                    <Badge className={cn("text-white font-black text-[9px] shrink-0", commute.badgeColor)}>
+                      {commute.delayText || commute.delay}
+                    </Badge>
                   </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <Badge className="bg-amber-500 text-white font-black text-[9px] uppercase px-2 py-0 border-none">
-                        Alerte Préventive
-                      </Badge>
-                      <span className="text-[10px] font-bold text-slate-500 hidden sm:inline">Point chaud sous surveillance</span>
-                    </div>
-                    <p className="text-xs sm:text-sm font-black text-slate-900 truncate mt-0.5">
-                      {result.road || autoAxisName}
-                    </p>
+                  <div className="text-[10px] text-slate-400 font-medium truncate flex items-center justify-between">
+                    <span>Via {commute.via}</span>
+                    {commute.distKm && <span className="font-bold text-slate-500">{commute.distKm} km • ~{commute.durMin} min</span>}
                   </div>
-                </div>
+                  <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 flex items-start gap-1.5">
+                    <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                    <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 leading-tight">
+                      {commute.escape}
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
 
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => loadRandomHotspot(hotspotIndex)}
-                  disabled={isLoading}
-                  className="h-9 px-3 rounded-xl border-amber-300 bg-white hover:bg-amber-50 text-[10px] font-black uppercase text-amber-800 shrink-0 gap-1.5 shadow-sm"
-                >
-                  <RefreshCw className={cn("h-3.5 w-3.5 text-amber-600", isLoading && "animate-spin")} />
-                  <span>Autre axe</span>
-                </Button>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Initial Loading Pulse */}
-          {isLoading && !result && (
-            <motion.div 
-              initial={{ opacity: 0 }} 
-              animate={{ opacity: 1 }}
-              className="w-full bg-white rounded-3xl p-8 sm:p-12 shadow-sm border border-slate-100 flex flex-col items-center justify-center text-center space-y-4 py-12 sm:py-16 mb-6"
+        {/* ── 4. ANALYSE DÉTAILLÉE D'UN AXE SÉLECTIONNÉ (Result Panel) ── */}
+        <AnimatePresence>
+          {activeAnalysis && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 border-2 border-primary/30 shadow-xl space-y-4"
             >
-              <div className="relative">
-                <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center animate-pulse">
-                  <Radar className="h-8 w-8 text-primary animate-spin" />
+              <div className="flex justify-between items-start">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 rounded-2xl bg-primary text-white shadow-md">
+                    <MapPin className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <Badge className="bg-primary/20 text-primary font-black text-[9px] uppercase border-none mb-1">
+                      Diagnostic Express
+                    </Badge>
+                    <h3 className="text-lg font-black text-slate-900 dark:text-white leading-tight">
+                      {activeAnalysis.name}
+                    </h3>
+                  </div>
                 </div>
-                <div className="absolute inset-0 rounded-full border-2 border-primary/20 animate-ping"></div>
+                <Button size="icon" variant="ghost" onClick={() => setActiveAnalysis(null)} className="rounded-full">
+                  <X className="h-5 w-5" />
+                </Button>
               </div>
-              <div className="space-y-1">
-                <h3 className="text-base font-black text-slate-800">
-                  {isAutoAlert ? "Scan d'un point chaud de Kinshasa..." : "Analyse du trafic en cours..."}
-                </h3>
-                <p className="text-xs font-medium text-slate-400">
-                  {isAutoAlert ? "Détection d'un axe nécessitant votre attention." : "Calcul de la fluidité et des prévisions horaires."}
-                </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {/* 1. Statut & Retard */}
+                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-1">
+                  <div className="text-[10px] font-bold uppercase text-slate-400">Statut de Fluidité</div>
+                  <div className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
+                    <span>{STATUS_CONFIG[activeAnalysis.status as keyof typeof STATUS_CONFIG]?.icon}</span>
+                    <span>{activeAnalysis.status}</span>
+                    {activeAnalysis.delay > 0 && <span className="text-red-600 text-xs">(+{activeAnalysis.delay} min)</span>}
+                  </div>
+                </div>
+
+                {/* 2. Pourquoi l'embouteillage ? */}
+                <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 space-y-1">
+                  <div className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-400 flex items-center gap-1">
+                    <ShieldAlert className="h-3 w-3" /> Cause du blocage
+                  </div>
+                  <p className="text-xs font-semibold text-amber-900 dark:text-amber-200 leading-tight">
+                    {activeAnalysis.cause || "Affluence intense de minibus et goulot d'étranglement."}
+                  </p>
+                </div>
+
+                {/* 3. Échappatoire Certifiée */}
+                <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 space-y-1">
+                  <div className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+                    <ShieldCheck className="h-3 w-3" /> Alternative Anti-Trou
+                  </div>
+                  <p className="text-xs font-bold text-emerald-900 dark:text-emerald-200 leading-tight">
+                    {activeAnalysis.certifiedAlternative || "Contourner par les voies secondaires."}
+                  </p>
+                </div>
+              </div>
+
+              {/* Bouton GPS Direct */}
+              <div className="flex gap-2 justify-end pt-1">
+                <Button asChild className="rounded-xl font-bold text-xs gap-1.5 bg-primary text-white">
+                  <Link href="/k-flow-nav">
+                    <Navigation className="h-4 w-4" />
+                    <span>Lancer Navigation GPS</span>
+                  </Link>
+                </Button>
               </div>
             </motion.div>
           )}
+        </AnimatePresence>
 
-          {/* Result Panel */}
-          <AnimatePresence>
-            {result && (
-              <motion.div 
-                initial={{ y: 20, opacity: 0, scale: 0.95 }}
-                animate={{ y: 0, opacity: 1, scale: 1 }}
-                exit={{ y: 20, opacity: 0, scale: 0.95 }}
-                className="w-full bg-white rounded-3xl shadow-xl border border-slate-100 flex flex-col overflow-hidden mb-6"
-              >
-                <div className={cn("p-5 sm:p-6 md:p-8 text-white relative", STATUS_CONFIG[result.status as keyof typeof STATUS_CONFIG]?.color)}>
-                  <button onClick={() => { setResult(null); setIsAutoAlert(false); }} className="absolute top-4 right-4 text-white/70 hover:text-white p-1.5 rounded-full bg-black/10 hover:bg-black/20 transition-colors"><X className="h-5 w-5" /></button>
-                  <div className="space-y-2 md:space-y-3 relative z-10 pr-8">
-                    <div className="flex items-center gap-2">
-                      <Badge className="bg-white/20 border-white/30 text-white font-bold text-[10px] md:text-xs">
-                        {isAutoAlert ? "POINT CHAUD EN DIRECT" : "VERDICT K-FLOW"}
-                      </Badge>
-                    </div>
+        {/* ── 5. LE RADAR LIVE DES 8 GOULOTS D'ÉTRANGLEMENT MAJEURS DE KINSHASA ── */}
+        <div className="space-y-3">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1">
+            <div>
+              <h2 className="text-base font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
+                <Radio className="h-4 w-4 text-red-500 animate-pulse" />
+                Radar Live des 8 Nœuds Stratégiques de Kinshasa
+              </h2>
+              <p className="text-xs text-slate-500">Mise à jour télémétrique continue des points névralgiques</p>
+            </div>
+            <div className="text-[10px] font-bold text-slate-400">
+              Affichage haute visibilité
+            </div>
+          </div>
 
-                    {/* Road Name Prominently Displayed */}
-                    <div className="flex items-center gap-2 bg-black/20 backdrop-blur-md px-3.5 py-1.5 rounded-2xl w-fit border border-white/20">
-                      <MapPin className="h-4 w-4 text-white shrink-0" />
-                      <span className="text-sm sm:text-base font-black text-white leading-tight">
-                        {currentRouteName}
-                      </span>
-                    </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+            {bottlenecks.map((node) => {
+              const statusKey = (node.status || node.initialStatus || "MODÉRÉ") as keyof typeof STATUS_CONFIG;
+              const cfg = STATUS_CONFIG[statusKey] || STATUS_CONFIG.MODÉRÉ;
+              const isConfirmed = confirmedNodes[node.id];
+              const speed = node.speedKmh ?? node.speed;
+              const delay = node.delayMin ?? node.delay;
 
-                    <div className="flex items-center gap-2.5 md:gap-3 pt-1">
-                      <span className="text-3xl md:text-4xl">{STATUS_CONFIG[result.status as keyof typeof STATUS_CONFIG]?.icon}</span>
-                      <h2 className="text-2xl md:text-3xl font-black uppercase tracking-tighter leading-none">
-                        {STATUS_CONFIG[result.status as keyof typeof STATUS_CONFIG]?.label}
-                      </h2>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-4 sm:p-5 md:p-6 space-y-4 md:space-y-6 flex-1">
-                  <div className="p-4 md:p-5 bg-slate-50 rounded-2xl border border-slate-100 space-y-2 md:space-y-3">
-                    <p className="text-xs sm:text-sm font-bold text-slate-800 leading-relaxed italic">"{result.verdict}"</p>
-                    <p className="text-[10px] sm:text-xs font-black text-primary uppercase tracking-widest">{result.lingala}</p>
-                  </div>
-
-                  {result.status === "ERREUR" && (
-                      <div className="p-4 bg-red-50 rounded-2xl border border-red-100 flex items-start gap-3">
-                        <AlertCircle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
-                        <div className="space-y-1">
-                            <p className="text-xs font-black text-red-800 uppercase">Détail technique</p>
-                            <p className="text-[10px] text-red-600 font-medium leading-relaxed">
-                                Veuillez vérifier dans votre console Google Cloud que l'API "Routes API" est bien activée pour votre clé "Kinshasaflow 3".
-                            </p>
+              return (
+                <div
+                  key={node.id}
+                  className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-4 sm:p-5 shadow-sm space-y-3 hover:border-slate-300 transition-all flex flex-col justify-between"
+                >
+                  <div className="space-y-2.5">
+                    
+                    {/* Top Row: Name + Badge */}
+                    <div className="flex justify-between items-start gap-2">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-base">{cfg.icon}</span>
+                          <h3 className="font-black text-sm sm:text-base text-slate-900 dark:text-white leading-tight">
+                            {node.name}
+                          </h3>
+                        </div>
+                        <span className="text-[10px] font-semibold text-slate-400 pl-6">
+                          {node.district}
+                        </span>
+                        {node.activeIncidents && node.activeIncidents.length > 0 && (
+                          <div className="pl-6 mt-1 flex items-center gap-1.5">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-black bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30">
+                              🚨 {node.activeIncidents.length} signalement(s) en direct
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      
+                      <div className="text-right shrink-0">
+                        <Badge className={cn("text-white font-black text-[10px] uppercase", cfg.badgeBg)}>
+                          {cfg.label}
+                        </Badge>
+                        <div className="text-[10px] font-bold text-slate-500 mt-0.5">
+                          +{delay} min • {speed} km/h
                         </div>
                       </div>
-                  )}
+                    </div>
 
-                  {forecast && forecast.hourlyForecast && (
-                    <div className="space-y-2 md:space-y-3 w-full min-w-0">
-                      <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
-                        <Zap className="h-3 w-3 text-primary" /> Prévisions Prochaines Heures
-                      </h3>
-                      <div className="flex gap-2 overflow-x-auto scrollbar-none pb-2 w-full">
-                        {forecast.hourlyForecast.map((hr: any, i: number) => (
-                          <div key={i} className="flex flex-col items-center p-2.5 sm:p-3 rounded-xl border border-slate-100 bg-white min-w-[64px] sm:min-w-[70px] shrink-0 shadow-sm">
-                            <span className="text-[10px] font-black text-slate-400">{hr.time}</span>
-                            <div className={cn("w-3 h-3 rounded-full mt-1.5 mb-1", hr.status === 'FLUIDE' ? 'bg-emerald-500' : hr.status === 'EMBOUTEILLAGE' ? 'bg-red-500' : 'bg-amber-500')} />
-                            <span className="text-[9px] font-bold text-slate-600">{hr.delay > 0 ? `+${hr.delay}m` : 'OK'}</span>
-                          </div>
-                        ))}
+                    {/* Cause Box */}
+                    <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-300/40 text-slate-800 dark:text-slate-200 space-y-1">
+                      <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-amber-800 dark:text-amber-300">
+                        <ShieldAlert className="h-3 w-3 text-amber-600" />
+                        <span>Pourquoi ça bloque ?</span>
                       </div>
+                      <p className="text-xs font-medium leading-relaxed pl-4 text-slate-700 dark:text-slate-300">
+                        {node.cause}
+                      </p>
                     </div>
-                  )}
 
-                  {result.alternatives && result.alternatives.length > 0 && (
-                    <div className="space-y-3 md:space-y-4">
-                      <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2">
-                        <Zap className="h-3 w-3 text-amber-500" /> Itinéraires plus fluides
-                      </h3>
-                      {result.alternatives.map((alt: any, i: number) => (
-                        <div key={i} className="p-3.5 sm:p-4 rounded-2xl border-2 border-emerald-100 bg-emerald-50/50 flex justify-between items-center group hover:bg-emerald-50 transition-all">
-                          <div className="min-w-0 pr-2">
-                            <p className="font-bold text-slate-800 text-xs truncate">{alt.description}</p>
-                            <p className="text-[10px] font-black text-emerald-600 uppercase">{alt.duration} en tout</p>
-                          </div>
-                          <Button asChild size="icon" variant="ghost" className="rounded-full text-emerald-600 hover:bg-emerald-100 shrink-0">
-                            <Link href="/k-flow-nav"><Navigation className="h-4 w-4" /></Link>
-                          </Button>
-                        </div>
-                      ))}
+                    {/* Escape Route */}
+                    <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-300/40 text-slate-800 dark:text-slate-200 space-y-1">
+                      <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-emerald-800 dark:text-emerald-300">
+                        <ShieldCheck className="h-3 w-3 text-emerald-600" />
+                        <span>Échappatoire Validée (Anti-Trou)</span>
+                      </div>
+                      <p className="text-xs font-bold leading-relaxed pl-4 text-emerald-800 dark:text-emerald-300">
+                        {node.certifiedAlt}
+                      </p>
                     </div>
-                  )}
 
-                  <div className="p-3.5 sm:p-4 bg-blue-50 rounded-2xl border border-blue-100 flex items-start gap-2.5 sm:gap-3">
-                    <Info className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-                    <p className="text-[10px] text-blue-800 font-bold leading-relaxed">
-                      L'analyse est basée sur le ratio de congestion actuel par rapport à la circulation fluide théorique.
-                    </p>
+                    {/* Lingala Alert */}
+                    <div className="text-[11px] font-bold italic text-primary dark:text-blue-400 pl-1">
+                      🇨🇩 "{node.lingala}"
+                    </div>
+
+                  </div>
+
+                  {/* Bottom Row Actions */}
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
+                    
+                    {/* Action 1: Confirmer & Gagner (+25 FC) */}
+                    {isConfirmed ? (
+                      <div className="flex items-center gap-1.5 text-emerald-600 text-xs font-bold">
+                        <CheckCircle2 className="h-4 w-4" />
+                        <span>+25 FC Crédités</span>
+                      </div>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleRewardConfirm(node.id, node.name)}
+                        className="rounded-xl text-[11px] font-black text-emerald-700 dark:text-emerald-400 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 gap-1.5 h-8"
+                      >
+                        <ThumbsUp className="h-3 w-3" />
+                        <span>Confirmer (+25 FC)</span>
+                      </Button>
+                    )}
+
+                    {/* Action 2: Itinéraire Bis */}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleInspectAxis(node.coords, node.name)}
+                      className="rounded-xl text-xs font-bold gap-1 text-primary hover:bg-primary/10 h-8"
+                    >
+                      <span>Diagnostiquer</span>
+                      <ArrowRight className="h-3 w-3" />
+                    </Button>
+
                   </div>
                 </div>
-
-                <div className="p-4 sm:p-5 md:p-6 bg-slate-50 border-t flex flex-col gap-2.5 sm:gap-3">
-                  
-                  {/* WhatsApp Share Button */}
-                  <Button 
-                    onClick={handleShareWhatsApp}
-                    className="h-12 sm:h-14 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm uppercase tracking-wider gap-2 shadow-xl shadow-emerald-600/20"
-                  >
-                    <MessageCircle className="h-5 w-5 fill-current" />
-                    <span>Partager ce Trafic sur WhatsApp</span>
-                  </Button>
-
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <Button asChild variant="outline" className="h-12 rounded-2xl border-2 font-black text-xs uppercase tracking-wider gap-1.5">
-                      <Link href="/signaler-embouteillage">
-                        <RefreshCw className="h-4 w-4" />
-                        <span>Signaler</span>
-                      </Link>
-                    </Button>
-                    <Button asChild className="h-12 rounded-2xl font-black text-xs uppercase tracking-wider gap-1.5 shadow-lg shadow-primary/20">
-                      <Link href="/k-flow-nav">
-                        <Navigation className="h-4 w-4" />
-                        <span>GPS Nav</span>
-                      </Link>
-                    </Button>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+              );
+            })}
           </div>
         </div>
+
+        {/* ── 6. BANNIÈRE E-WALLET & RECHARGE MÉGAS ── */}
+        <div className="rounded-3xl bg-gradient-to-r from-emerald-600 to-teal-700 p-5 sm:p-6 text-white shadow-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Badge className="bg-white/20 text-white font-black text-[9px] uppercase border-none">
+                Gagnez du Cash
+              </Badge>
+              <span className="text-xs text-emerald-100 font-bold">Portefeuille Citoyen K-Flow</span>
+            </div>
+            <h3 className="text-xl font-black">Chaque bouchon signalé = de l'argent dans votre poche</h3>
+            <p className="text-xs text-emerald-100 max-w-xl">
+              Retirez vos Francs Congolais instantanément par M-Pesa, Orange Money ou Airtel Money, ou rechargez des mégas internet gratuits !
+            </p>
+          </div>
+
+          <Button asChild size="lg" className="rounded-2xl bg-white hover:bg-slate-100 text-emerald-950 font-black text-xs uppercase tracking-wider px-6 h-12 shadow-lg shrink-0">
+            <Link href="/e-wallet">
+              <span>Ouvrir mon Portefeuille ({walletBalanceCDF.toLocaleString()} FC)</span>
+              <ArrowRight className="h-4 w-4 ml-1.5" />
+            </Link>
+          </Button>
+        </div>
+
+      </div>
     </div>
   );
 }
-
-function AutocompleteInput({ value, onChange, onSelect }: { value: string, onChange: (v: string) => void, onSelect: (coords: {lat: number, lng: number}, address: string) => void }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const places = useMapsLibrary('places');
-
-  useEffect(() => {
-    if (!places || !inputRef.current) return;
-    const autocomplete = new places.Autocomplete(inputRef.current, {
-      componentRestrictions: { country: 'cd' },
-      bounds: CONFIG.KINSHASA_BOUNDS,
-      fields: ['formatted_address', 'geometry', 'name'],
-      strictBounds: true,
-    });
-    autocomplete.addListener('place_changed', () => {
-      const place = autocomplete.getPlace();
-      if (place.geometry?.location) {
-        const coords = { lat: place.geometry.location.lat(), lng: place.geometry.location.lng() };
-        onSelect(coords, place.formatted_address || place.name || '');
-      }
-    });
-  }, [places, onSelect]);
-
-  return (
-    <div className="relative flex-1 w-full min-w-0">
-      <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
-      <Input 
-        ref={inputRef}
-        placeholder="Entrez le nom d'une avenue ou d'un quartier..." 
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        className="pl-12 h-12 rounded-xl border-2 border-slate-100 bg-slate-50 font-bold focus-visible:ring-primary shadow-inner"
-      />
-    </div>
-  );
-}
-
-const TrafficLayerComponent = () => {
-  const map = useMap();
-  useEffect(() => {
-    if (!map) return;
-    const g = (window as any).google;
-    if (!g) return;
-    const layer = new g.maps.TrafficLayer();
-    layer.setMap(map);
-    return () => layer.setMap(null);
-  }, [map]);
-  return null;
-};

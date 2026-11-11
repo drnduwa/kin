@@ -154,9 +154,29 @@ export const userProfileSchema = z.object({
   passType: z.enum(['weekly', 'monthly']).optional(),
   hasUsedFreeTrial: z.boolean().default(false).optional(),
   hasReceivedRelanceGift: z.boolean().default(false).optional(),
+  walletBalanceCDF: z.number().default(500).optional(), // 500 FC cadeau d'amorçage
+  walletBalanceUSD: z.number().default(0.18).optional(),
+  trustScore: z.number().default(95).optional(), // Score de réputation sentinelle (0-100%)
+  totalContributionsCount: z.number().default(0).optional(),
   createdAt: z.any().optional(),
 });
 export type UserProfile = z.infer<typeof userProfileSchema>;
+
+export interface WalletTransaction {
+  id: string;
+  userId: string;
+  type: 'earning' | 'cashout' | 'bonus' | 'conversion';
+  amountCDF: number;
+  amountUSD?: number;
+  description: string;
+  source: 'incident_report' | 'upvote' | 'voice_memo' | 'telemetry' | 'daily_bonus' | 'mobile_money_withdrawal' | 'data_recharge';
+  status: 'completed' | 'pending' | 'rejected';
+  balanceAfterCDF?: number;
+  road?: string;
+  phone?: string;
+  operator?: string;
+  timestamp: any;
+}
 
 export function isUserSubscribedOrHasPass(profile?: UserProfile | null): boolean {
   if (!profile) return false;

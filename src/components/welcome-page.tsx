@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Activity, Bot, Megaphone, ArrowRight, ShieldCheck, Zap, Monitor, X, Smartphone as PhoneIcon, MessagesSquare, MessageCircle, Share2 } from 'lucide-react';
+import { Activity, Bot, Megaphone, ArrowRight, ShieldCheck, Zap, Monitor, X, Smartphone as PhoneIcon, MessagesSquare, MessageCircle, Share2, Wallet, TrafficCone } from 'lucide-react';
 import { Button } from './ui/button';
 import { Logo } from './logo';
 import React, { useState, useEffect } from 'react';
@@ -194,30 +194,33 @@ export default function WelcomePage() {
                         Évitez les bouchons et échangez en direct avec la communauté. Le futur de la mobilité urbaine est ici.
                     </motion.p>
 
-                    <motion.div variants={itemVariants} className="flex flex-col sm:flex-row justify-center gap-6">
+                    <motion.div variants={itemVariants} className="flex flex-col sm:flex-row justify-center gap-4">
                         <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-                            <Link href="/community-chat">
-                                <Button size="lg" className="text-xl py-8 px-10 rounded-2xl shadow-2xl shadow-primary/30 group font-black gap-3">
-                                    <MessagesSquare className="w-6 h-6" />
-                                    Entrer dans le Chat
+                            <Link href="/verifier-trafic">
+                                <Button size="lg" className="w-full text-lg py-7 px-8 rounded-2xl shadow-2xl shadow-primary/30 group font-black gap-3 bg-primary hover:bg-primary/90 text-white">
+                                    <TrafficCone className="w-6 h-6" />
+                                    Vérifier le Trafic
                                     <ArrowRight className="ml-1 w-5 h-5 transition-transform group-hover:translate-x-1" />
                                 </Button>
                             </Link>
                         </motion.div>
-                        
-                        <div className="flex flex-col gap-3">
-                            <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-                                <Button asChild size="lg" className="w-full text-base py-6 px-10 rounded-2xl bg-emerald-600 hover:bg-emerald-700 shadow-xl font-black gap-3 text-white">
-                                    <a href={whatsappChannelUrl} target="_blank" rel="noopener noreferrer">
-                                        <Share2 className="w-5 h-5" />
-                                        Rejoindre le Canal
-                                    </a>
+
+                        <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                            <Link href="/e-wallet">
+                                <Button size="lg" className="w-full text-lg py-7 px-8 rounded-2xl shadow-2xl shadow-emerald-500/20 group font-black gap-3 bg-emerald-600 hover:bg-emerald-500 text-white">
+                                    <Wallet className="w-6 h-6" />
+                                    E-Wallet & Gains (+CASH)
                                 </Button>
-                            </motion.div>
+                            </Link>
+                        </motion.div>
+                        
+                        <div className="flex flex-col gap-2">
                             <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-                                <Button onClick={() => handleInstallClick('mobile')} size="lg" variant="ghost" className="w-full text-base py-6 px-10 rounded-2xl border-2 border-dashed border-slate-200 hover:bg-slate-50 group font-bold">
-                                    <AppIconSmall className="mr-3 w-8 h-8 opacity-40 group-hover:opacity-100" />
-                                    Installer App Mobile
+                                <Button asChild size="lg" variant="outline" className="w-full text-sm py-5 px-6 rounded-2xl border-emerald-500/40 text-emerald-700 hover:bg-emerald-50 font-bold gap-2">
+                                    <a href={whatsappChannelUrl} target="_blank" rel="noopener noreferrer">
+                                        <Share2 className="w-4 h-4 text-emerald-600" />
+                                        Canal WhatsApp
+                                    </a>
                                 </Button>
                             </motion.div>
                         </div>
@@ -287,15 +290,15 @@ export default function WelcomePage() {
                     />
                     <FeatureCard
                         icon={<ShieldCheck size={32} className="text-white" />}
-                        title="Alertes Sécurité"
-                        description="Soyez prévenu de la présence policière et des zones de contrôle."
+                        title="Alertes Sécurité & Voies Bis"
+                        description="Soyez prévenu des blocages, pannes et des avenues de délestage sécurisées."
                         color="bg-primary shadow-blue-200"
                     />
                     <FeatureCard
-                        icon={<Megaphone size={32} className="text-white" />}
-                        title="Annonces Officielles"
-                        description="Les dernières communications de l'Hôtel de Ville directement sur votre écran."
-                        color="bg-orange-500 shadow-orange-200"
+                        icon={<Wallet size={32} className="text-white" />}
+                        title="E-Wallet & Gains Cash"
+                        description="Signalez un bouchon, gagnez des Francs Congolais et retirez via M-Pesa, Orange ou Airtel."
+                        color="bg-emerald-600 shadow-emerald-200"
                     />
                     <FeatureCard
                         icon={<Bot size={32} className="text-white" />}

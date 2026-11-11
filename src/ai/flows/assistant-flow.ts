@@ -10,7 +10,7 @@ import { AssistantInput, AssistantInputSchema, AssistantOutput, AssistantOutputS
 import { z } from 'genkit';
 import { CONFIG } from '@/lib/config';
 
-const GOOGLE_API_KEY = CONFIG.GOOGLE_MAPS_API_KEY;
+const GOOGLE_API_KEY = process.env.GOOGLE_ROUTES_API_KEY || CONFIG.GOOGLE_MAPS_API_KEY;
 
 /**
  * Outil permettant à l'IA d'analyser en profondeur un trajet entre deux points.
