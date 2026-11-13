@@ -16,9 +16,10 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { animate } from 'framer-motion';
-import { Plus, Minus, LocateFixed, Maximize2, Minimize2, Layers, CloudRain, Moon, Sun, Radio, ChevronRight, Check, X as XIcon } from 'lucide-react';
+import { Plus, Minus, LocateFixed, Maximize2, Minimize2, Layers, CloudRain, Moon, Sun, Radio, ChevronRight, Check, X as XIcon, Route } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ROADS, LEVEL_COLOR, LEVEL_LABEL, type MapLevel } from '@/components/game/live-city-map';
+import { BLACK_SPOTS, CORRIDORS, type Corridor } from '@/lib/corridors';
 
 // ───────────────────────────── Projection ─────────────────────────────
 const W = 1200, H = 780;
@@ -71,12 +72,8 @@ const COMMUNES: Array<{ name: string; c: LatLng }> = [
 
 /** Petites rues non mesurées : donnent la trame de la ville, jamais colorées. */
 const MINOR_ROADS: Array<{ id: string; label: string; pts: LatLng[] }> = [
-  { id: 'sendwe', label: 'Bd Sendwe', pts: [[-4.330, 15.300], [-4.345, 15.322], [-4.352, 15.340]] },
-  { id: 'triomphal', label: 'Bd Triomphal', pts: [[-4.322, 15.300], [-4.335, 15.312], [-4.343, 15.312]] },
   { id: 'kabinda', label: 'Av. Kabinda', pts: [[-4.315, 15.305], [-4.322, 15.325], [-4.328, 15.345]] },
-  { id: 'liberation', label: 'Av. de la Libération', pts: [[-4.316, 15.287], [-4.345, 15.290], [-4.372, 15.300], [-4.392, 15.300]] },
   { id: 'kimwenza', label: 'Route de Kimwenza', pts: [[-4.405, 15.300], [-4.420, 15.296], [-4.431, 15.292]] },
-  { id: 'aeroport', label: "Route de l'Aéroport", pts: [[-4.388, 15.448], [-4.380, 15.460], [-4.372, 15.475]] },
   { id: 'kimbanseke', label: 'Av. Bongolo', pts: [[-4.395, 15.378], [-4.412, 15.385], [-4.431, 15.392]] },
   { id: 'lemba', label: 'Av. By-Pass Lemba', pts: [[-4.390, 15.320], [-4.395, 15.338], [-4.405, 15.355]] },
   { id: 'ngaliema', label: 'Av. Colonel Mondjiba', pts: [[-4.318, 15.262], [-4.330, 15.258], [-4.345, 15.250], [-4.365, 15.245]] },
@@ -152,7 +149,7 @@ export interface CityMapNode {
   incidents?: Array<{ id: string; type?: string | null; description?: string; locationName?: string | null; coords: { lat: number; lng: number }; ageMin?: number }>;
 }
 
-type Sel = { kind: 'node'; id: string } | { kind: 'commune'; i: number } | { kind: 'landmark'; id: string } | { kind: 'incident'; id: string } | null;
+type Sel = { kind: 'node'; id: string } | { kind: 'commune'; i: number } | { kind: 'landmark'; id: string } | { kind: 'incident'; id: string } | { kind: 'corridor'; id: string } | { kind: 'spot'; id: string } | null;
 type LayerKey = 'traffic' | 'communes' | 'landmarks' | 'incidents';
 
 const PALETTE = {
@@ -184,6 +181,7 @@ export default function KinshasaCityMap({
   const [sel, setSel] = useState<Sel>(null);
   const [full, setFull] = useState(false);
   const [layersOpen, setLayersOpen] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
   const [layers, setLayers] = useState<Record<LayerKey, boolean>>({ traffic: true, communes: true, landmarks: true, incidents: true });
   const [hour, setHour] = useState<number | null>(null);
   const [nightOverride, setNightOverride] = useState<boolean | null>(null);
@@ -212,11 +210,21 @@ export default function KinshasaCityMap({
       rivers: RIVERS.map(r => ({ ...r, d: smooth(proj(r.pts)) })),
       roads: ROADS.map(r => ({ ...r, d: smooth(proj(r.points)) })),
       minor: MINOR_ROADS.map(r => ({ ...r, d: smooth(proj(r.pts)) })),
+      corridors: CORRIDORS.filter(c => c.pts).map(c => ({ ...c, d: smooth(proj(c.pts!)) })),
     };
   }, []);
 
   const byId = useMemo(() => Object.fromEntries(nodes.map(n => [n.id, n])), [nodes]);
   const roadLevel = useCallback((nodeId: string | null): MapLevel => (nodeId ? byId[nodeId]?.level ?? 'none' : 'none'), [byId]);
+
+  /** Un axe de la liste : sa géométrie (propre ou celle d'un grand axe mesuré) et son état réel. */
+  const corridorInfo = useCallback((c: Corridor) => {
+    const base = c.sameAs ? CORRIDORS.find(o => o.id === c.sameAs) ?? c : c;
+    const road = base.roadId ? ROADS.find(r => r.id === base.roadId) : undefined;
+    const node = road?.nodeId ? byId[road.nodeId] : undefined;
+    const pts = (road ? road.points : base.pts) ?? [];
+    return { base, road, node, level: (node?.level ?? 'none') as MapLevel, pts: proj(pts as LatLng[]) };
+  }, [byId]);
 
   /** État d'une commune : celui du carrefour mesuré le plus proche, s'il est à moins de ~3,5 km. */
   const communeState = useMemo(() => geo.sites.map(s => {
@@ -464,6 +472,26 @@ export default function KinshasaCityMap({
     flyTo(geo.sites[i][0], geo.sites[i][1], Math.max(2.4, viewRef.current.k));
   };
   const closeSel = () => { setSel(null); onSelect?.(null); };
+  const selCorridor = sel?.kind === 'corridor' ? CORRIDORS.find(c => c.id === sel.id) ?? null : null;
+  const selCorridorInfo = selCorridor ? corridorInfo(selCorridor) : null;
+  const selSpot = sel?.kind === 'spot' ? BLACK_SPOTS.find(b => b.id === sel.id) ?? null : null;
+  const pickCorridor = (c: Corridor) => {
+    const info = corridorInfo(c);
+    setSel({ kind: 'corridor', id: c.id });
+    setListOpen(false);
+    onSelect?.(null);
+    if (!info.pts.length) return;
+    const xs = info.pts.map(p => p[0]), ys = info.pts.map(p => p[1]);
+    const bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys);
+    const kk = Math.max(1.6, Math.min(4.5, Math.min((W * 0.55) / Math.max(bw, 1), (H * 0.55) / Math.max(bh, 1))));
+    flyTo((Math.max(...xs) + Math.min(...xs)) / 2, (Math.max(...ys) + Math.min(...ys)) / 2, kk);
+  };
+  const pickSpot = (id: string) => {
+    const b = BLACK_SPOTS.find(x => x.id === id)!;
+    setSel({ kind: 'spot', id });
+    onSelect?.(null);
+    flyTo(X(b.c[1]), Y(b.c[0]), Math.max(3.2, viewRef.current.k));
+  };
 
   const ticker = nodes.filter(n => n.level !== 'none');
 
@@ -652,10 +680,30 @@ export default function KinshasaCityMap({
             </g>
           ))}
 
+          {/* les 20 axes chargés (tracés propres, pas encore mesurés en direct) */}
+          {geo.corridors.map(c => {
+            const hi = selCorridor && (selCorridor.id === c.id || selCorridor.sameAs === c.id);
+            return (
+              <g key={c.id} onClick={click(() => pickCorridor(c))} className="cursor-pointer">
+                {hi && <path d={c.d} fill="none" stroke="#FFD23F" strokeWidth={14} strokeLinecap="round" opacity={0.5} />}
+                <path d={c.d} fill="none" stroke="transparent" strokeWidth={14} />
+                <path d={c.d} fill="none" stroke={C.casing} strokeWidth={6.6} strokeLinecap="round" strokeLinejoin="round" />
+                <path id={`kfm-cor-${c.id}`} d={c.d} fill="none" stroke={C.road} strokeWidth={5} strokeLinecap="round" strokeLinejoin="round" />
+                <path d={c.d} fill="none" stroke={LEVEL_COLOR.none} strokeWidth={1.6} strokeDasharray="3 4" opacity={0.7} pointerEvents="none" />
+                <title>{`${c.name} : pas encore mesuré en direct`}</title>
+                {k >= 2 && (
+                  <text fontSize={6.8} fill={C.text} fontWeight={800} dy={-5} pointerEvents="none" stroke={C.land} strokeWidth={2} paintOrder="stroke">
+                    <textPath href={`#kfm-cor-${c.id}`} startOffset="10%">{c.name}</textPath>
+                  </text>
+                )}
+              </g>
+            );
+          })}
+
           {/* grands axes */}
           {geo.roads.map(r => {
             const lvl = layers.traffic ? roadLevel(r.nodeId) : 'none';
-            const hi = selNode && r.nodeId === selNode.id;
+            const hi = (selNode && r.nodeId === selNode.id) || (selCorridorInfo?.road?.id === r.id);
             return (
               <g key={r.id}>
                 {hi && <path d={r.d} fill="none" stroke="#FFD23F" strokeWidth={16} strokeLinecap="round" opacity={0.45} />}
@@ -720,6 +768,34 @@ export default function KinshasaCityMap({
                 </circle>
                 <path d="M0 -12 L11 8 L-11 8 Z" fill={st.color} stroke="#fff" strokeWidth={2} strokeLinejoin="round" filter="url(#kfm-shadow)" />
                 <text y={5.5} textAnchor="middle" fontSize={10} fontWeight={900} fill="#fff">{st.glyph}</text>
+              </g>
+            );
+          })}
+
+          {/* points noirs connus */}
+          {BLACK_SPOTS.map(b => {
+            const x = X(b.c[1]), y = Y(b.c[0]);
+            const measured = !!(b.nodeId && byId[b.nodeId]);
+            return (
+              <g key={b.id} transform={`translate(${x} ${y}) scale(${ui})`} onClick={click(() => pickSpot(b.id))} className="cursor-pointer">
+                <circle r={26} fill="none" stroke="#F59E0B" strokeWidth={2.5} strokeDasharray="6 5">
+                  <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="8s" repeatCount="indefinite" />
+                </circle>
+                {!measured && (
+                  <g filter="url(#kfm-shadow)">
+                    <circle r={13} fill="#0B1622" stroke="#F59E0B" strokeWidth={3} />
+                    <text y={5} textAnchor="middle" fontSize={15} fontWeight={900} fill="#F59E0B">!</text>
+                  </g>
+                )}
+                {(k >= 1.5 || !measured) && (
+                  <g transform={`translate(0 ${measured ? -40 : -36})`}>
+                    <rect x={-34} y={-9} width={68} height={16} rx={8} fill="#F59E0B" />
+                    <text y={3} textAnchor="middle" fontSize={8.5} fontWeight={900} fill="#0B1622" letterSpacing={0.8}>POINT NOIR</text>
+                  </g>
+                )}
+                {!measured && k >= 1.7 && (
+                  <text y={30} textAnchor="middle" fontSize={10} fontWeight={800} fill={C.text} stroke={night ? '#0B1118' : '#fff'} strokeWidth={3} paintOrder="stroke">{b.name}</text>
+                )}
               </g>
             );
           })}
@@ -803,7 +879,8 @@ export default function KinshasaCityMap({
           { icon: <Minus className="h-4 w-4" />, label: 'Dézoomer', on: () => zoomAt([W / 2, H / 2], 1 / 1.6) },
           { icon: <LocateFixed className="h-4 w-4" />, label: 'Toute la ville', on: resetView },
           { icon: full ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />, label: full ? 'Quitter le plein écran' : 'Plein écran', on: () => setFull(f => !f) },
-          { icon: <Layers className="h-4 w-4" />, label: 'Calques', on: () => setLayersOpen(o => !o) },
+          { icon: <Route className="h-4 w-4" />, label: 'Les 20 axes', on: () => { setListOpen(o => !o); setLayersOpen(false); } },
+          { icon: <Layers className="h-4 w-4" />, label: 'Calques', on: () => { setLayersOpen(o => !o); setListOpen(false); } },
         ].map(b => (
           <button key={b.label} type="button" onClick={b.on} title={b.label} aria-label={b.label}
             className="grid h-9 w-9 place-items-center rounded-xl bg-white/95 text-[#0B1622] shadow-md border border-black/10 hover:bg-[#FFD23F] transition-colors">
@@ -826,11 +903,93 @@ export default function KinshasaCityMap({
         )}
       </div>
 
+      {/* ── Liste des 20 axes */}
+      {listOpen && (
+        <div data-ui className="absolute right-12 sm:right-14 top-2 sm:top-3 bottom-10 w-[min(300px,calc(100%-4rem))] flex flex-col rounded-2xl bg-[#0B1622]/95 text-white shadow-2xl border border-white/10 backdrop-blur overflow-hidden">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-[#7DD3FC]">Axes chargés</p>
+              <p className="text-sm font-black">Les 20 axes de Kin</p>
+            </div>
+            <button type="button" onClick={() => setListOpen(false)} className="rounded-full p-1 text-white/50 hover:bg-white/10 hover:text-white" aria-label="Fermer la liste"><XIcon className="h-4 w-4" /></button>
+          </div>
+          <ol className="flex-1 overflow-y-auto overscroll-contain py-1">
+            {CORRIDORS.map(c => {
+              const info = corridorInfo(c);
+              return (
+                <li key={c.id}>
+                  <button type="button" onClick={() => pickCorridor(c)} className={cn('flex w-full items-center gap-2.5 px-3 py-1.5 text-left hover:bg-white/5', sel?.kind === 'corridor' && sel.id === c.id && 'bg-white/10')}>
+                    <span className="w-5 text-[11px] font-black tabular-nums text-white/40">{c.rank}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[12px] font-bold">{c.name}</span>
+                      {c.aliases?.length ? <span className="block truncate text-[10px] text-white/45">{c.aliases.join(' · ')}</span> : null}
+                    </span>
+                    <span className="inline-flex shrink-0 items-center gap-1 text-[10px] font-bold text-white/70">
+                      <span className="h-2 w-2 rounded-full" style={{ background: LEVEL_COLOR[info.level] }} />
+                      {info.node ? LEVEL_LABEL[info.level] : 'Non mesuré'}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+          <p className="border-t border-white/10 px-3 py-2 text-[10px] text-white/50">Liste pratique, pas un classement. Tracés approximatifs pour les axes pas encore mesurés en direct.</p>
+        </div>
+      )}
+
       {/* ── Fiche de l'élément choisi */}
-      {(selNode || selCommune !== null || selLandmark || selIncident) && (
+      {(selNode || selCommune !== null || selLandmark || selIncident || selCorridor || selSpot) && (
         <div data-ui className="absolute inset-x-2 bottom-10 sm:inset-x-auto sm:left-3 sm:bottom-12 sm:w-[340px] rounded-2xl bg-[#0B1622]/95 text-white shadow-2xl border border-white/10 backdrop-blur p-3.5 animate-in fade-in slide-in-from-bottom-2 duration-200">
           <button type="button" onClick={closeSel} className="absolute right-2 top-2 rounded-full p-1 text-white/50 hover:bg-white/10 hover:text-white" aria-label="Fermer la fiche"><XIcon className="h-4 w-4" /></button>
           {selNode && <NodeCard n={selNode} onOpen={onOpenDetails} />}
+          {selCorridor && selCorridorInfo && (
+            <div className="space-y-1.5 pr-6">
+              <p className="text-[10px] font-black uppercase tracking-widest text-[#7DD3FC]">Axe chargé n° {selCorridor.rank}</p>
+              <h3 className="font-black text-base leading-tight text-white">{selCorridor.name}</h3>
+              {(selCorridor.aliases?.length || selCorridor.sameAs) && (
+                <p className="text-[11px] text-white/55">
+                  {[...(selCorridor.aliases ?? []), ...(selCorridor.sameAs ? [`même axe que ${selCorridorInfo.base.name}`] : [])].join(' · ')}
+                </p>
+              )}
+              {selCorridorInfo.node ? (
+                <>
+                  <p className="text-xs text-white/80">
+                    Mesuré au carrefour <b>{selCorridorInfo.node.name}</b> :{' '}
+                    <span className="font-black" style={{ color: LEVEL_COLOR[selCorridorInfo.level] }}>{LEVEL_LABEL[selCorridorInfo.level].toLowerCase()}</span>
+                    {typeof selCorridorInfo.node.delayMin === 'number' && selCorridorInfo.node.delayMin > 0 ? ` (+${Math.round(selCorridorInfo.node.delayMin)} min)` : ''}.
+                  </p>
+                  <button type="button" onClick={() => pickNode(selCorridorInfo.node!)} className="inline-flex items-center gap-1 text-xs font-black text-[#FFD23F] hover:underline">
+                    Voir le carrefour <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </>
+              ) : (
+                <p className="text-xs text-white/65">Pas encore mesuré en direct. Si tu y passes, signale ce que tu vois pour éclairer cet axe.</p>
+              )}
+              {(selCorridor.note || selCorridorInfo.base.note) && <p className="text-[11px] italic text-amber-200/80">{selCorridor.note || selCorridorInfo.base.note}</p>}
+            </div>
+          )}
+          {selSpot && (() => {
+            const n = selSpot.nodeId ? byId[selSpot.nodeId] : undefined;
+            return (
+              <div className="space-y-1.5 pr-6">
+                <p className="text-[10px] font-black uppercase tracking-widest text-amber-400">Point noir connu</p>
+                <h3 className="font-black text-base leading-tight text-white">{selSpot.name}</h3>
+                {n ? (
+                  <>
+                    <p className="text-xs text-white/80">
+                      État mesuré : <span className="font-black" style={{ color: LEVEL_COLOR[n.level] }}>{LEVEL_LABEL[n.level].toLowerCase()}</span>
+                      {typeof n.delayMin === 'number' && n.delayMin > 0 ? ` (+${Math.round(n.delayMin)} min)` : ''}.
+                    </p>
+                    <button type="button" onClick={() => pickNode(n)} className="inline-flex items-center gap-1 text-xs font-black text-[#FFD23F] hover:underline">
+                      Voir le carrefour <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+                  </>
+                ) : (
+                  <p className="text-xs text-white/65">Bouchon fréquent, mais pas encore mesuré en direct. Signale l'état quand tu y passes.</p>
+                )}
+              </div>
+            );
+          })()}
           {selCommune !== null && <CommuneCard name={COMMUNES[selCommune].name} st={communeState[selCommune]} onPick={pickNode} />}
           {selLandmark && (
             <div className="pr-6">

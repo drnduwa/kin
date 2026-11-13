@@ -20,9 +20,9 @@ export const ROADS: Array<{ id: string; nodeId: string | null; label: string; po
   { id: 'triomphal', nodeId: 'limete-echangeur', label: 'Vers Limete', points: [[-4.343, 15.312], [-4.350, 15.335], [-4.357, 15.358]] },
   { id: 'lumumba', nodeId: 'lumumba-pascal', label: 'Bd Lumumba', points: [[-4.357, 15.358], [-4.368, 15.380], [-4.378, 15.400], [-4.385, 15.420], [-4.388, 15.448]] },
   // Voies de contournement : pas encore mesurées → grises en pointillés.
-  { id: 'poids', nodeId: null, label: 'Av. des Poids Lourds', points: [[-4.304, 15.318], [-4.312, 15.335], [-4.325, 15.352], [-4.340, 15.372], [-4.358, 15.392], [-4.375, 15.410], [-4.385, 15.420]] },
+  { id: 'poids', nodeId: null, label: 'Bd Congo-Japon (ex-Poids Lourds)', points: [[-4.304, 15.318], [-4.312, 15.335], [-4.325, 15.352], [-4.340, 15.372], [-4.358, 15.392], [-4.375, 15.410], [-4.385, 15.420]] },
   { id: 'elengesa', nodeId: null, label: 'Av. Elengesa', points: [[-4.400, 15.295], [-4.380, 15.298], [-4.360, 15.303], [-4.343, 15.312]] },
-  { id: 'berges', nodeId: null, label: 'Av. du Tourisme', points: [[-4.327, 15.274], [-4.313, 15.279], [-4.304, 15.292], [-4.301, 15.305], [-4.304, 15.318]] },
+  { id: 'berges', nodeId: null, label: 'Av. du Tourisme (Nzela ya Mayi)', points: [[-4.327, 15.274], [-4.313, 15.279], [-4.304, 15.292], [-4.301, 15.305], [-4.304, 15.318]] },
 ];
 
 const RIVER: LatLng[] = [[-4.250, 15.20], [-4.318, 15.24], [-4.316, 15.265], [-4.300, 15.285], [-4.292, 15.31], [-4.296, 15.34], [-4.306, 15.37], [-4.322, 15.40], [-4.336, 15.43], [-4.330, 15.47], [-4.250, 15.47]];
