@@ -107,7 +107,7 @@ export default function RootLayout({
         <meta name="format-detection" content="telephone=no" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Anton&display=swap" rel="stylesheet" />
+        <link href="https://fonts.googleapis.com/css2?family=Anton&family=Montserrat:wght@600;700;800;900&display=swap" rel="stylesheet" />
         <meta name="mobile-web-app-capable" content="yes" />
         
         <script

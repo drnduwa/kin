@@ -11,6 +11,7 @@ import { useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { KinSkyline } from './illustrations';
 import { Bus207, Car, FulaFula, Moto, Person } from './vehicles';
+import { FlowPin, PinShape } from './brand';
 
 const VW = 1600;
 const VH = 600;
@@ -41,13 +42,14 @@ const distAt = (t: number) => {
 };
 const wrap = (x: number, min: number, range: number) => ((((x - min) % range) + range) % range) + min;
 
-export function TrafficHeroScene({ className, street = 'Bd du 30 Juin' }: { className?: string; street?: string }) {
+export function TrafficHeroScene({ className, street = 'Bd du 30 Juin', onReplay }: { className?: string; street?: string; onReplay?: () => void }) {
   const root = useRef<SVGSVGElement>(null);
   const brake = useRef<SVGRectElement>(null);
   const busBrake = useRef<SVGRectElement>(null);
   const speedTxt = useRef<HTMLSpanElement>(null);
   const stateTxt = useRef<HTMLSpanElement>(null);
   const bubble = useRef<HTMLDivElement>(null);
+  const tip = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const svg = root.current;
@@ -90,6 +92,7 @@ export function TrafficHeroScene({ className, street = 'Bd du 30 Juin' }: { clas
       if (stopped !== lastStopped) {
         lastStopped = stopped;
         if (stateTxt.current) stateTxt.current.textContent = stopped ? 'Nzela ekangami' : 'Ça avance… malembe';
+        if (tip.current) tip.current.dataset.show = stopped ? '1' : '0';
         if (bubble.current) {
           bubble.current.textContent = stopped ? 'Ah, bouchon encore !' : 'Tokende !';
           bubble.current.dataset.on = '1';
@@ -144,6 +147,12 @@ export function TrafficHeroScene({ className, street = 'Bd du 30 Juin' }: { clas
             <stop offset="0" stopColor="#F49A5A" stopOpacity={0} />
             <stop offset="1" stopColor="#F49A5A" stopOpacity={0.45} />
           </linearGradient>
+          <filter id="kf-soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="10" /></filter>
+          <filter id="kf-fg" x="-50%" y="-10%" width="200%" height="120%"><feGaussianBlur stdDeviation="5" /></filter>
+          <linearGradient id="kf-ray" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stopColor="#FFE3A3" stopOpacity={0.5} />
+            <stop offset="1" stopColor="#FFE3A3" stopOpacity={0} />
+          </linearGradient>
           <pattern id="kf-pave" width="48" height="40" patternUnits="userSpaceOnUse">
             <rect width="48" height="40" fill="#9C8F7D" />
             <path d="M0 0 L48 0 M0 20 L48 20 M24 0 L24 20 M0 20 L0 40" stroke="#857967" strokeWidth="2" />
@@ -153,7 +162,21 @@ export function TrafficHeroScene({ className, street = 'Bd du 30 Juin' }: { clas
         {/* ciel + soleil */}
         <rect width={VW} height={VH} fill="url(#kf-sky)" />
         <circle cx={1120} cy={300} r={170} fill="url(#kf-sun)" />
+        <g opacity={0.55} style={{ mixBlendMode: 'screen' }}>
+          {Array.from({ length: 14 }, (_, i) => (
+            <path key={i} d="M1120 300 L1900 284 L1900 316 Z" fill="url(#kf-ray)" transform={`rotate(${i * (360 / 14)} 1120 300)`} />
+          ))}
+          <animateTransform attributeName="transform" type="rotate" from="0 1120 300" to="360 1120 300" dur="120s" repeatCount="indefinite" />
+        </g>
         <circle cx={1120} cy={300} r={62} fill="#FFF1C2" />
+        <g fill="none" stroke="#2A1B45" strokeWidth={2.2} strokeLinecap="round">
+          {[[0, 0], [26, 10], [50, -6], [70, 14], [92, 4]].map(([bx, by], i) => (
+            <path key={i} d={`M${bx} ${by} q6 -6 12 0 q6 -6 12 0`}>
+              <animate attributeName="d" values={`M${bx} ${by} q6 -6 12 0 q6 -6 12 0;M${bx} ${by} q6 3 12 0 q6 3 12 0;M${bx} ${by} q6 -6 12 0 q6 -6 12 0`} dur={`${0.5 + i * 0.07}s`} repeatCount="indefinite" />
+            </path>
+          ))}
+          <animateTransform attributeName="transform" type="translate" values="-200 150;1800 60" dur="28s" repeatCount="indefinite" />
+        </g>
 
         {/* nuages */}
         <g data-par="0.03" data-tile={VW} opacity={0.55}>
@@ -225,16 +248,47 @@ export function TrafficHeroScene({ className, street = 'Bd du 30 Juin' }: { clas
 
         {/* la voiture Kinshasa Flow */}
         <g transform="translate(660 0)">
-          <Car kind="hatch" body="#2EB6F0" y={LANE_OURS} scale={1.18} brakeRef={brake} headlights />
+          <ellipse cx={150} cy={LANE_OURS + 2} rx={190} ry={14} fill="#1E9BFF" opacity={0.28} filter="url(#kf-soft)" />
+          <Car kind="hatch" body="#1E9BFF" flow y={LANE_OURS} scale={1.18} brakeRef={brake} headlights />
+        </g>
+        {/* premier plan flou : poteaux qui passent devant la caméra */}
+        <g data-par="1.8" data-tile={VW} filter="url(#kf-fg)" opacity={0.92}>
+          {[0, VW].map(o => (
+            <g key={o} transform={`translate(${o} 0)`} fill="#07090D">
+              <rect x={240} y={-10} width={34} height={VH + 20} />
+              <rect x={210} y={70} width={94} height={60} rx={6} />
+            </g>
+          ))}
         </g>
       </svg>
+
+      {/* étalonnage cinéma : vignette + chaleur */}
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_60%_45%,transparent_45%,rgba(10,6,25,.55))]" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-1/3 bg-gradient-to-b from-[#0B1118]/60 to-transparent" />
+
+      {/* conseil K-Flow quand ça bloque */}
+      <div ref={tip} data-show="0" className="pointer-events-none absolute right-3 top-3 sm:right-6 sm:top-6 max-w-[230px] sm:max-w-[280px] rounded-2xl border border-[#1E9BFF]/50 bg-[#06264F]/90 backdrop-blur px-3 py-2.5 shadow-[0_10px_40px_-10px_rgba(30,155,255,.7)] transition-all duration-500 data-[show='0']:opacity-0 data-[show='0']:translate-y-2 data-[show='1']:opacity-100">
+        <div className="flex items-center gap-2">
+          <FlowPin className="h-6 w-6 shrink-0" />
+          <div>
+            <div className="text-[9px] font-black uppercase tracking-[0.2em] text-[#7DD3FC]">Kinshasa Flow</div>
+            <div className="text-xs sm:text-sm font-bold text-white leading-snug">Bouchon devant&nbsp;? On te montre la voie bis.</div>
+          </div>
+        </div>
+      </div>
+
+      {onReplay && (
+        <button type="button" onClick={onReplay} className="absolute right-3 bottom-3 sm:right-6 sm:bottom-5 rounded-full bg-black/40 border border-white/20 px-3 py-1.5 text-[11px] font-bold text-white/80 backdrop-blur hover:bg-black/60">
+          ▶ Revoir l&apos;intro
+        </button>
+      )}
 
       {/* tableau de bord façon jeu */}
       <div className="pointer-events-none absolute left-3 top-3 sm:left-6 sm:top-6 flex items-stretch gap-2">
         <div className="rounded-xl bg-[#0B1118]/80 backdrop-blur px-3 py-2 border border-white/10">
           <div className="text-[9px] font-black uppercase tracking-[0.2em] text-white/50">{street}</div>
           <div className="flex items-baseline gap-1 text-white">
-            <span ref={speedTxt} className="font-display text-3xl leading-none tabular-nums text-[#FFD23F]">0</span>
+            <span ref={speedTxt} className="font-display text-3xl leading-none tabular-nums text-[#7DD3FC]">0</span>
             <span className="text-[10px] font-bold text-white/60">km/h</span>
           </div>
         </div>
@@ -355,10 +409,12 @@ function StreetBlock({ x }: { x: number }) {
       <circle cx={1050} cy={B - 290} r={10} fill="#E2E8F0" /><path d={`M1050 ${B - 290} L1050 ${B - 280}`} stroke="#A0AEC0" strokeWidth={3} />
       <g transform={`translate(1040 ${B - 388})`}>
         <path d="M40 120 L40 100 M180 120 L180 100" stroke="#2D3748" strokeWidth={6} />
-        <rect width={220} height={100} rx={4} fill="#0B1118" stroke="#FFD23F" strokeWidth={3} />
-        <text x={110} y={42} fontSize={30} textAnchor="middle" fill="#FFD23F" fontFamily="Anton, Impact, sans-serif">BOUCHON ?</text>
-        <text x={110} y={74} fontSize={16} textAnchor="middle" fill="#fff" fontFamily="Anton, Impact, sans-serif" letterSpacing={1}>KINSHASA FLOW SAIT OÙ PASSER</text>
-        <rect x={0} y={0} width={220} height={100} rx={4} className="kf-shine" style={{ fill: 'none' }} />
+        <rect x={-6} y={-6} width={232} height={112} rx={8} fill="#1E9BFF" opacity={0.25} className="kf-beam" />
+        <rect width={220} height={100} rx={5} fill="#06264F" stroke="#1E9BFF" strokeWidth={3} />
+        <g transform="translate(10 12) scale(.72)"><PinShape id="billboard" glow /></g>
+        <text x={88} y={38} fontSize={13} fontWeight={800} fill="#fff" fontFamily="Montserrat, sans-serif" letterSpacing={3.5}>KINSHASA</text>
+        <text x={86} y={70} fontSize={34} fontWeight={900} fill="#7DD3FC" fontFamily="Montserrat, sans-serif">FLOW</text>
+        <text x={88} y={88} fontSize={9} fontWeight={700} fill="#BDE6FF" fontFamily="Montserrat, sans-serif">Bouchon ? On sait où passer.</text>
       </g>
       <rect x={1030} y={B - 64} width={100} height={64} fill="#1A202C" />
       <rect x={1150} y={B - 64} width={80} height={44} fill="#FBD38D" opacity={0.7} />

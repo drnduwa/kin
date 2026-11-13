@@ -6,6 +6,8 @@ import { Activity, Bot, ArrowRight, ShieldCheck, Zap, Monitor, X, MessageCircle,
 import { Button } from './ui/button';
 import React, { useState, useEffect } from 'react';
 import { TrafficHeroScene } from './kin/traffic-scene';
+import { FlowIntro } from './kin/intro';
+import { FlowLogo } from './kin/brand';
 import { KinSkyline, YaFlowAvatar } from './kin/illustrations';
 import { Bus207, Car } from './kin/vehicles';
 import { EPISODES, LEXIQUE, RUNS } from '@/lib/kin-slang';
@@ -57,6 +59,18 @@ export default function WelcomePage() {
     const isMobile = useIsMobile();
     const [installPrompt, setInstallPrompt] = useState<any>(null);
     const [showInstallSuggestion, setShowInstallSuggestion] = useState(false);
+    // Intro cinématique : une fois par session, jamais si l'usager demande moins de mouvement.
+    // Décidé dès le premier rendu (la page d'accueil n'est montée que côté client) : pas de flash de la page avant l'intro.
+    const [intro, setIntro] = useState(() => {
+        if (typeof window === 'undefined') return false;
+        let seen = false;
+        try { seen = sessionStorage.getItem('kf-intro-seen') === '1'; } catch { /* stockage bloqué */ }
+        return !seen && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    });
+    const endIntro = () => {
+        setIntro(false);
+        try { sessionStorage.setItem('kf-intro-seen', '1'); } catch { /* stockage bloqué */ }
+    };
     
     const whatsappChannelUrl = "https://whatsapp.com/channel/0029Vb7S97n7oQhlHe5k1k1f";
     const whatsappBusinessUrl = "https://wa.me/243892293178";
@@ -100,8 +114,9 @@ export default function WelcomePage() {
 
     return (
         <div className="relative min-h-screen w-full overflow-x-hidden flex flex-col bg-[#0B1118] text-[#F3F0E8]">
+            {intro && <FlowIntro onDone={endIntro} />}
             <AnimatePresence>
-                {showInstallSuggestion && (
+                {showInstallSuggestion && !intro && (
                     <motion.div
                         initial={{ y: 100, opacity: 0 }}
                         animate={{ y: 0, opacity: 1 }}
@@ -136,8 +151,7 @@ export default function WelcomePage() {
             >
                 <div className="container mx-auto px-4 py-3 flex justify-between items-center gap-3">
                     <Link href="/" className="flex items-center gap-2 min-w-0">
-                        <span className="grid place-items-center h-9 w-9 shrink-0 rounded-lg bg-[#FFD23F] text-[#0B1118] font-display text-lg leading-none">KF</span>
-                        <span className="font-display text-lg sm:text-xl tracking-wide uppercase truncate">Kinshasa Flow<span className="text-[#FFD23F]">.</span></span>
+                        <FlowLogo className="text-[22px] sm:text-[26px]" />
                     </Link>
                     <nav className="hidden md:flex items-center gap-6 text-xs font-bold uppercase tracking-widest text-white/60">
                         <a href="#histoire" className="hover:text-[#FFD23F]">L&apos;histoire</a>
@@ -162,7 +176,7 @@ export default function WelcomePage() {
             <main className="flex-grow">
                 {/* ── Héros : la rue de Kin, en mouvement ── */}
                 <section className="relative">
-                    <TrafficHeroScene className="h-[44vh] sm:h-[58vh] min-h-[300px] max-h-[640px] w-full" />
+                    <TrafficHeroScene onReplay={() => setIntro(true)} className="h-[48vh] sm:h-[62vh] min-h-[320px] max-h-[680px] w-full" />
                     <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#0B1118] to-transparent" />
                 </section>
 
@@ -359,7 +373,7 @@ export default function WelcomePage() {
 
             <footer className="border-t border-white/10 bg-[#080C11] p-10 text-center">
                 <div className="flex flex-col items-center gap-5">
-                    <span className="font-display uppercase text-2xl tracking-wide">Kinshasa Flow<span className="text-[#FFD23F]">.</span></span>
+                    <FlowLogo className="text-[28px]" />
                     <div className="flex flex-wrap justify-center gap-x-8 gap-y-3 text-sm font-medium text-white/60">
                         <Link href="/privacy" className="hover:text-[#FFD23F] transition-colors flex items-center gap-2">
                             <ShieldCheck className="h-4 w-4" />

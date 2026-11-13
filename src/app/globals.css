@@ -98,6 +98,10 @@ html, body {
 @keyframes kf-wave { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-12deg); } }
 @keyframes kf-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 @keyframes kf-ripple { to { stroke-dashoffset: -40; } }
+@keyframes kf-lane { to { stroke-dashoffset: -62; } }
+@keyframes kf-wave-flow { to { transform: translateX(36px); } }
+@keyframes kf-rays { to { transform: translate(-50%, -50%) rotate(360deg); } }
+@keyframes kf-fly { from { transform: translate(-10%, 0); } to { transform: translate(110vw, -6vh); } }
 @keyframes kf-shine { from { background-position: -200% 0; } to { background-position: 200% 0; } }
 
 .kf-spin { transform-box: fill-box; transform-origin: center; animation: kf-spin .55s linear infinite; }
@@ -113,6 +117,14 @@ html, body {
 .kf-wave { transform-box: fill-box; transform-origin: left center; animation: kf-wave 1.2s ease-in-out infinite; }
 .kf-marquee { animation: kf-marquee 40s linear infinite; }
 .kf-ripple { animation: kf-ripple 3s linear infinite; }
+.kf-intro .kf-green { opacity: 0; transition: opacity .35s ease-out; }
+.kf-intro .kf-red { transition: opacity .35s ease-out; }
+.kf-intro .kf-go .kf-green { opacity: 1; }
+.kf-intro .kf-go .kf-red { opacity: .12; }
+.kf-intro[data-flowing='1'] .kf-lane { animation: kf-lane .4s linear infinite; }
+.kf-wave-flow { animation: kf-wave-flow 1.6s linear infinite; }
+.kf-rays { animation: kf-rays 80s linear infinite; }
+.kf-fly { animation: kf-fly 26s linear infinite; }
 .kf-drift { animation: kf-drift 60s linear infinite; }
 .kf-drift-fast { animation: kf-drift 22s linear infinite; }
 .kf-cross { animation: kf-cross 9s linear infinite; }
@@ -143,7 +155,7 @@ html, body {
 
 @media (prefers-reduced-motion: reduce) {
   .kf-spin, .kf-spin-slow, .kf-bob, .kf-bob-slow, .kf-puff, .kf-beam, .kf-blink, .kf-wiggle,
-  .kf-leg-a, .kf-leg-b, .kf-wave, .kf-marquee, .kf-ripple,
+  .kf-leg-a, .kf-leg-b, .kf-wave, .kf-marquee, .kf-ripple, .kf-wave-flow, .kf-rays, .kf-fly,
   .kf-drift, .kf-drift-fast, .kf-cross, .kf-cross-fast, .kf-pop, .kf-road-dash, .kf-rain, .kf-shine {
     animation: none !important;
   }

@@ -6,6 +6,7 @@
  * `flip` retourne le véhicule (trafic d'en face).
  */
 import { useId, type Ref } from 'react';
+import { PinShape } from './brand';
 
 type Place = { x?: number; y?: number; scale?: number; flip?: boolean; className?: string };
 
@@ -63,8 +64,8 @@ export type CarKind = keyof typeof SHAPES;
 
 /** Voiture de profil (260 × 106). `taxi` ajoute l'enseigne et la bande des taxis de Kin. */
 export function Car({
-  kind = 'sedan', body = '#E2E8F0', taxi = false, brakeRef, headlights = false, lane = 'ours', roofRack = false, ...p
-}: Place & { kind?: CarKind; body?: string; taxi?: boolean; brakeRef?: Ref<SVGRectElement>; headlights?: boolean; lane?: 'ours' | 'onc' | 'none'; roofRack?: boolean }) {
+  kind = 'sedan', body = '#E2E8F0', taxi = false, brakeRef, headlights = false, lane = 'ours', roofRack = false, flow = false, ...p
+}: Place & { kind?: CarKind; body?: string; taxi?: boolean; brakeRef?: Ref<SVGRectElement>; headlights?: boolean; lane?: 'ours' | 'onc' | 'none'; roofRack?: boolean; flow?: boolean }) {
   const s = SHAPES[kind];
   const id = useId().replace(/:/g, '');
   return (
@@ -101,6 +102,20 @@ export function Car({
           <rect x={18} y={66} width={228} height={7} fill="#1D4ED8" opacity={0.9} />
           <rect x={s.roof[0] + 24} y={s.roof[2] - 9} width={34} height={9} rx={2} fill="#FEF08A" stroke="#0B1118" strokeWidth={1} />
           <text x={s.roof[0] + 41} y={s.roof[2] - 2.2} fontSize={7} fontWeight={900} textAnchor="middle" fill="#0B1118" fontFamily="sans-serif">TAXI</text>
+        </g>
+      )}
+      {flow && (
+        <g>
+          {/* livrée Kinshasa Flow : vague sur le flanc, logo sur la portière, balise au toit */}
+          <path d="M20 76 Q70 64 120 74 T246 70 L246 79 L18 79 Z" fill="#0B5FD6" opacity={0.85} />
+          <path d="M20 76 Q70 64 120 74 T246 70" stroke="#7DD3FC" strokeWidth={1.6} fill="none" />
+          <g transform="translate(103 54) scale(.17)"><PinShape id={`door${id}`} /></g>
+          <text x={124} y={70} fontSize={9.5} fontWeight={900} fill="#fff" fontFamily="Montserrat, sans-serif" letterSpacing={0.6}>KIN FLOW</text>
+          <g transform={`translate(${(s.roof[0] + s.roof[1]) / 2 - 11} ${s.roof[2] - 24})`}>
+            <circle cx={11} cy={9} r={16} fill="#1E9BFF" opacity={0.35} className="kf-beam" />
+            <rect x={-1} y={20} width={24} height={4} rx={1.5} fill="#0B1118" />
+            <g transform="scale(.22)"><PinShape id={`roof${id}`} glow /></g>
+          </g>
         </g>
       )}
       {roofRack && (
