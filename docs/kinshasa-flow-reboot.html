@@ -1,0 +1,637 @@
+<title>Kinshasa Flow Reboot</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700;800&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Layout: briefing page around a playable phone. Phone = fixed dark "game world"; page = theme-aware. */
+:root{
+  --bg:#F2F6F9; --fg:#0F202E; --muted:#56697A; --line:#D9E3EA; --card:#FFFFFF; --accent:#0A7DB5; --accent-soft:#E1F1FA; --warn:#B4520F;
+  --display:"Unbounded","Arial Black",system-ui,sans-serif;
+  --body:"Manrope",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+  /* game world (phone) — single dark look, same in both themes */
+  --g-bg:#0A1A29; --g-surface:#11273A; --g-raise:#173248; --g-line:#22425C; --g-fg:#EAF3FA; --g-muted:#8EA8BD;
+  --g-sky:#2EB6F0; --g-star:#FFD23F; --s-ok:#3DDC97; --s-mod:#FFC53D; --s-dense:#FF7A45; --s-block:#FF3B5C; --g-river:#0F3550;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#09131C; --fg:#E4EDF3; --muted:#8CA1B2; --line:#1E3141; --card:#0F1D29; --accent:#4CC3F5; --accent-soft:#12324A; --warn:#F59E5B; color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#09131C; --fg:#E4EDF3; --muted:#8CA1B2; --line:#1E3141; --card:#0F1D29; --accent:#4CC3F5; --accent-soft:#12324A; --warn:#F59E5B; color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.55}
+.wrap{max-width:1180px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:28px 64px}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;line-height:1.15;margin:0}
+h1{font-size:clamp(26px,4.2vw,44px);font-weight:800;letter-spacing:-.01em}
+h2{font-size:clamp(20px,2.4vw,26px);font-weight:700}
+h3{font-size:15px;font-weight:700}
+p{margin:0}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.lead{color:var(--muted);max-width:68ch;font-size:16.5px}
+header.top{display:grid;gap:14px;padding-bottom:26px}
+.targets{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px}
+.target{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:8px 12px;display:flex;gap:10px;align-items:baseline}
+.target b{font-family:var(--mono);font-size:17px}
+.target span{color:var(--muted);font-size:13px}
+
+/* stage */
+.stage{display:grid;grid-template-columns:392px minmax(0,1fr);gap:40px;align-items:start}
+@media (max-width:860px){.stage{grid-template-columns:minmax(0,1fr)}}
+.notes{position:sticky;top:calc(env(safe-area-inset-top,0px) + 16px);display:grid;gap:18px;min-width:0}
+@media (max-width:860px){.notes{position:static}}
+.note-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px 22px;display:grid;gap:12px}
+.note-card ul{margin:0;padding-left:18px;display:grid;gap:7px}
+.note-card li::marker{color:var(--accent)}
+.fix{display:inline-flex;gap:6px;flex-wrap:wrap}
+.fix span{font-family:var(--mono);font-size:11.5px;padding:3px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent);letter-spacing:.04em;text-transform:uppercase}
+.under{font-size:13.5px;color:var(--muted);border-top:1px dashed var(--line);padding-top:10px}
+.under code{font-family:var(--mono);font-size:12px}
+.tryit{font-size:13px;color:var(--muted)}
+.tryit b{color:var(--fg)}
+
+/* ===== phone ===== */
+.phone{width:100%;max-width:392px;margin:0 auto;background:#050D15;border-radius:44px;padding:12px;box-shadow:0 30px 60px -30px rgba(5,20,35,.55),0 0 0 1px rgba(120,160,190,.18)}
+.screen{position:relative;height:760px;max-height:calc(100vh - 60px);min-height:640px;background:var(--g-bg);color:var(--g-fg);border-radius:34px;overflow:hidden;display:flex;flex-direction:column;font-family:var(--body)}
+.sbar{display:flex;justify-content:space-between;align-items:center;padding:14px 16px 8px;gap:6px}
+.live{white-space:nowrap}
+.brand{white-space:nowrap;font-family:var(--display);font-weight:800;font-size:14px;letter-spacing:-.01em;display:flex;align-items:center;gap:7px}
+.brand i{width:20px;height:20px;border-radius:6px;background:conic-gradient(from 200deg,var(--g-sky),var(--g-star),var(--s-block),var(--g-sky));display:inline-block}
+.live{font-family:var(--mono);font-size:10.5px;color:var(--s-ok);display:flex;align-items:center;gap:5px}
+.live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--s-ok);box-shadow:0 0 0 0 rgba(61,220,151,.6);animation:ping 1.8s infinite}
+@keyframes ping{70%{box-shadow:0 0 0 7px rgba(61,220,151,0)}100%{box-shadow:0 0 0 0 rgba(61,220,151,0)}}
+.hud{display:flex;gap:6px;align-items:center}
+.pill{font-family:var(--mono);font-size:11.5px;font-weight:700;padding:4px 8px;border-radius:999px;background:var(--g-raise);display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.pill.star{color:var(--g-star)}
+.pill.lvl{color:var(--g-sky)}
+.xpbar{height:4px;margin:0 18px 6px;background:var(--g-raise);border-radius:4px;overflow:hidden}
+.xpbar i{display:block;height:100%;background:linear-gradient(90deg,var(--g-sky),var(--g-star));transition:width .6s cubic-bezier(.2,.8,.2,1)}
+.view{flex:1;overflow-y:auto;overflow-x:hidden;padding:4px 14px 16px;scrollbar-width:none}
+.view::-webkit-scrollbar{display:none}
+.tabs{display:grid;grid-template-columns:repeat(5,1fr);background:var(--g-surface);border-top:1px solid var(--g-line);padding:6px 6px 12px}
+.tab{background:none;border:0;color:var(--g-muted);font:600 10.5px var(--body);display:grid;justify-items:center;gap:3px;padding:6px 0;cursor:pointer;border-radius:12px}
+.tab svg{width:21px;height:21px}
+.tab[aria-selected="true"]{color:var(--g-fg)}
+.tab[aria-selected="true"] svg{color:var(--g-sky)}
+.tab.cta svg{width:26px;height:26px;background:var(--s-block);color:#fff;border-radius:50%;padding:4px;box-shadow:0 6px 16px -4px rgba(255,59,92,.7)}
+.tab.cta[aria-selected="true"] svg{color:#fff}
+.tab:focus-visible,.g-btn:focus-visible,.chip:focus-visible,.node:focus-visible{outline:2px solid var(--g-star);outline-offset:2px}
+.ic{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+.g-card{background:var(--g-surface);border:1px solid var(--g-line);border-radius:18px;padding:14px}
+.g-h{font-family:var(--display);font-weight:700;font-size:14px;letter-spacing:-.01em}
+.g-sub{color:var(--g-muted);font-size:12px}
+.g-btn{border:0;border-radius:14px;padding:12px 14px;font:800 13px var(--body);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:7px;color:#06121C;background:var(--g-sky)}
+.g-btn.ghost{background:var(--g-raise);color:var(--g-fg)}
+.g-btn.ok{background:var(--s-ok)}
+.g-btn.bad{background:var(--s-block);color:#fff}
+.g-btn:active{transform:scale(.97)}
+.g-btn:disabled{opacity:.45;cursor:default}
+.stack{display:grid;gap:10px}
+.row{display:flex;align-items:center;gap:8px}
+.between{justify-content:space-between}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.st{font:800 10px var(--mono);letter-spacing:.06em;padding:3px 7px;border-radius:6px;color:#06121C;text-transform:uppercase}
+.st.ok{background:var(--s-ok)}.st.mod{background:var(--s-mod)}.st.dense{background:var(--s-dense)}.st.block{background:var(--s-block);color:#fff}
+.demo{font:600 9.5px var(--mono);color:var(--g-muted);letter-spacing:.08em;text-transform:uppercase}
+
+/* map */
+.pulse{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px}
+.pulse div{background:var(--g-surface);border:1px solid var(--g-line);border-radius:12px;padding:7px 9px}
+.pulse b{font-family:var(--mono);font-size:16px;display:block}
+.pulse span{font-size:10.5px;color:var(--g-muted)}
+.mapbox{position:relative;border-radius:18px;overflow:hidden;background:#0C2033;border:1px solid var(--g-line)}
+.mapbox svg{display:block;width:100%;height:auto}
+.node{cursor:pointer}
+.chips{display:flex;gap:6px;margin:8px 0;flex-wrap:wrap}
+.chip{border:1px solid var(--g-line);background:var(--g-surface);color:var(--g-fg);font:700 11.5px var(--body);padding:6px 10px;border-radius:999px;cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--g-fg);color:var(--g-bg);border-color:var(--g-fg)}
+.forecast-note{font-size:11px;color:var(--g-muted);margin-left:auto;align-self:center}
+.alerts{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none}
+.alerts::-webkit-scrollbar{display:none}
+.alert{flex:0 0 200px;background:var(--g-surface);border:1px solid var(--g-line);border-radius:14px;padding:10px;display:grid;gap:4px;font-size:12px}
+.alert .row b{font-size:12.5px}
+.banner{background:linear-gradient(90deg,rgba(46,182,240,.22),rgba(255,210,63,.18));border:1px solid rgba(46,182,240,.5);border-radius:14px;padding:9px 11px;font-size:12px;margin-bottom:8px;display:flex;gap:8px;align-items:center}
+
+/* sheet */
+.sheet-back{position:absolute;inset:0;background:rgba(3,10,18,.55);opacity:0;pointer-events:none;transition:opacity .25s}
+.sheet{position:absolute;left:0;right:0;bottom:0;max-height:86%;overflow-y:auto;background:var(--g-surface);border-radius:24px 24px 0 0;border-top:1px solid var(--g-line);padding:10px 16px 18px;transform:translateY(105%);transition:transform .32s cubic-bezier(.2,.8,.2,1);scrollbar-width:none}
+.sheet::-webkit-scrollbar{display:none}
+.sheet-open .sheet-back{opacity:1;pointer-events:auto}
+.sheet-open .sheet{transform:none}
+.grab{width:40px;height:4px;background:var(--g-line);border-radius:4px;margin:0 auto 10px}
+.cause{display:grid;grid-template-columns:22px 1fr auto;gap:8px;align-items:center;font-size:12.5px}
+.cause .bar{grid-column:2/4;height:5px;background:var(--g-raise);border-radius:4px;overflow:hidden}
+.cause .bar i{display:block;height:100%;background:var(--g-sky)}
+.src{display:flex;flex-wrap:wrap;gap:5px}
+.src span{font:600 10.5px var(--mono);padding:3px 7px;border-radius:6px;background:var(--g-raise);color:var(--g-muted);display:inline-flex;gap:4px;align-items:center}
+.conf{font-family:var(--mono);font-size:22px;font-weight:700}
+.fc{display:flex;align-items:flex-end;gap:5px;height:64px}
+.fc div{flex:1;display:grid;justify-items:center;gap:3px;font:600 9.5px var(--mono);color:var(--g-muted);align-content:end;height:100%}
+.fc i{display:block;width:100%;border-radius:5px 5px 2px 2px}
+
+/* commute */
+.bigtime{font-family:var(--display);font-weight:800;font-size:34px;letter-spacing:-.02em;line-height:1}
+.dep{display:flex;align-items:flex-end;gap:3px;height:96px;margin-top:8px}
+.dep button{flex:1;border:0;background:none;padding:0;height:100%;display:flex;align-items:flex-end;cursor:pointer;border-radius:4px}
+.dep button i{display:block;width:100%;border-radius:4px 4px 1px 1px;background:var(--g-line);transition:background .2s}
+.dep button[aria-pressed="true"] i{background:var(--g-star)}
+.dep-axis{display:flex;justify-content:space-between;font:600 9.5px var(--mono);color:var(--g-muted);margin-top:4px}
+.route{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:11px;border-radius:14px;border:1px solid var(--g-line);background:var(--g-bg);cursor:pointer;text-align:left;color:var(--g-fg);font:inherit;width:100%}
+.route[aria-pressed="true"]{border-color:var(--g-sky);box-shadow:0 0 0 1px var(--g-sky) inset}
+.route .dot{width:10px;height:10px;border-radius:50%}
+.save{font:800 12px var(--mono);color:var(--s-ok)}
+
+/* report */
+.rgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.rbtn{border:1px solid var(--g-line);background:var(--g-surface);color:var(--g-fg);border-radius:18px;padding:14px 6px;display:grid;justify-items:center;gap:7px;font:700 11.5px var(--body);cursor:pointer;text-align:center}
+.rbtn .ic{width:26px;height:26px}
+.rbtn[aria-pressed="true"]{border-color:var(--g-star);background:var(--g-raise)}
+.mic{width:100%;border:1px dashed var(--g-line);background:transparent;color:var(--g-fg);border-radius:18px;padding:14px;display:flex;gap:10px;align-items:center;justify-content:center;font:700 13px var(--body);cursor:pointer}
+.mic.rec{border-color:var(--s-block);color:var(--s-block)}
+
+/* quests */
+.player{display:grid;grid-template-columns:56px 1fr;gap:12px;align-items:center}
+.avatar{width:56px;height:56px;border-radius:16px;background:linear-gradient(135deg,var(--g-sky),#1A5E8C);display:grid;place-items:center;font:800 18px var(--display);color:#fff;position:relative}
+.avatar em{position:absolute;bottom:-6px;right:-6px;font:800 10px var(--mono);font-style:normal;background:var(--g-star);color:#06121C;border-radius:6px;padding:2px 5px}
+.saved{display:flex;align-items:baseline;gap:8px}
+.saved b{font-family:var(--display);font-size:28px;font-weight:800;color:var(--s-ok)}
+.mission{display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center;font-size:12.5px}
+.mission .prog{grid-column:1/3;height:6px;border-radius:6px;background:var(--g-raise);overflow:hidden}
+.mission .prog i{display:block;height:100%;background:var(--g-star);transition:width .5s}
+.mission.done{opacity:.6}
+.badges{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.badge{display:grid;justify-items:center;gap:4px;font-size:10px;text-align:center;color:var(--g-muted)}
+.badge i{width:46px;height:46px;border-radius:14px;display:grid;place-items:center;background:var(--g-raise);color:var(--g-star)}
+.badge.off i{color:var(--g-line)}
+.shop{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.item{border:1px solid var(--g-line);border-radius:14px;padding:10px;display:grid;gap:6px;font-size:12px;background:var(--g-bg)}
+
+/* ranks */
+.seg{display:grid;grid-template-columns:1fr 1fr;background:var(--g-surface);border-radius:12px;padding:3px;gap:3px}
+.seg button{border:0;border-radius:10px;background:none;color:var(--g-muted);font:700 12px var(--body);padding:8px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--g-raise);color:var(--g-fg)}
+.lb{display:grid;gap:7px}
+.lbr{display:grid;grid-template-columns:20px 1fr auto;gap:8px;align-items:center;font-size:12.5px}
+.lbr .barw{grid-column:2/4;height:7px;background:var(--g-raise);border-radius:6px;overflow:hidden}
+.lbr .barw i{display:block;height:100%;background:var(--g-sky)}
+.lbr.me{color:var(--g-star)}
+.lbr.me .barw i{background:var(--g-star)}
+.vs{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;text-align:center}
+.vs b{font-family:var(--display);font-size:15px}
+
+/* toast + level up */
+.toast{position:absolute;left:50%;top:86px;transform:translate(-50%,-20px);opacity:0;background:var(--g-star);color:#06121C;font:800 13px var(--body);padding:9px 14px;border-radius:999px;transition:all .35s;pointer-events:none;white-space:nowrap;z-index:5;box-shadow:0 10px 24px -8px rgba(255,210,63,.6)}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+.lvlup{position:absolute;inset:0;display:grid;place-items:center;background:rgba(3,10,18,.78);z-index:6;opacity:0;pointer-events:none;transition:opacity .3s}
+.lvlup.show{opacity:1;pointer-events:auto}
+.lvlup .box{text-align:center;display:grid;gap:8px;padding:24px}
+.lvlup .box b{font-family:var(--display);font-size:30px;color:var(--g-star)}
+
+/* ===== briefing sections ===== */
+section.brief{margin-top:72px;display:grid;gap:18px}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px;display:grid;gap:8px;align-content:start;min-width:0}
+.card .ref{font-family:var(--mono);font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.sev{font:700 11px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--warn)}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:14px;background:var(--card)}
+table{border-collapse:collapse;width:100%;min-width:720px;font-size:14px}
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:700 11.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+tr:last-child td{border-bottom:0}
+td.when{font-family:var(--mono);font-size:12.5px;white-space:nowrap;color:var(--accent)}
+.loop{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}
+.loop .step{flex:1 1 150px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;display:grid;gap:4px;position:relative;min-width:0}
+.loop .step b{font-family:var(--display);font-size:14px}
+.loop .step span{font-size:13.5px;color:var(--muted)}
+.loop-note{font-size:13.5px;color:var(--muted)}
+.phase{display:grid;gap:8px}
+.phase .when{font-family:var(--mono);font-size:12px;color:var(--accent);letter-spacing:.06em;text-transform:uppercase}
+.phase ul{margin:0;padding-left:18px;display:grid;gap:5px;font-size:14px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:12px}
+.kpi{border-left:3px solid var(--accent);padding:4px 0 4px 12px}
+.kpi b{font-family:var(--mono);font-size:22px;display:block}
+.kpi span{font-size:13px;color:var(--muted)}
+.foot{margin-top:56px;font-size:13px;color:var(--muted);border-top:1px solid var(--line);padding-top:16px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="eyebrow">Marketing meeting · proposal · Nov 2026</div>
+    <h1>Kinshasa Flow, rebuilt as a game Kinois play to beat the traffic</h1>
+    <p class="lead">Today the app has 411 users in a city of 27 million. People don't trust its numbers, it rarely explains <em>why</em> a road is blocked, and it is buried under 15 unrelated modules. This proposal keeps one promise, <b>"get me out of traffic now"</b>, makes every number honest and live, and turns drivers into players whose reports keep the map fresh. Click through the phone below; the panel beside it explains each screen.</p>
+    <div class="targets" aria-label="Proposed 90-day targets">
+      <div class="target"><b>10 000</b><span>weekly users by day 90 (goal)</span></div>
+      <div class="target"><b>&lt;15%</b><span>travel-time error on main corridors</span></div>
+      <div class="target"><b>3 min</b><span>max age of data on a corridor at rush hour</span></div>
+    </div>
+  </header>
+
+  <div class="stage">
+    <div class="phone" aria-label="Interactive app prototype">
+      <div class="screen" id="screen">
+        <div class="sbar">
+          <div class="brand"><i aria-hidden="true"></i>Kin Flow</div>
+          <div class="hud">
+            <span class="live" id="clock" title="En direct">17:45</span>
+            <span class="pill lvl" id="lvlPill">Niv. 7</span>
+            <span class="pill star" id="starPill"></span>
+          </div>
+        </div>
+        <div class="xpbar" title="Progression vers le niveau suivant"><i id="xpFill" style="width:73%"></i></div>
+        <div class="view" id="view"></div>
+        <nav class="tabs" role="tablist" id="tabs"></nav>
+        <div class="toast" id="toast" role="status" aria-live="polite"></div>
+        <div class="sheet-back" id="sheetBack"></div>
+        <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="Détail du carrefour"></div>
+        <div class="lvlup" id="lvlup"><div class="box"><span class="demo">Niveau supérieur</span><b id="lvlTitle">Niveau 8</b><span id="lvlRank" class="g-sub"></span><button class="g-btn" id="lvlClose" type="button">Continuer</button></div></div>
+      </div>
+    </div>
+
+    <aside class="notes" aria-live="polite">
+      <div class="note-card" id="note"></div>
+      <p class="tryit"><b>Prototype only.</b> Every number on the phone is example data for the demo (shown at a fixed clock of 17:45, Tuesday). The panel names the real data source each number would come from.</p>
+    </aside>
+  </div>
+
+  <section class="brief">
+    <div class="eyebrow">What we found in the code</div>
+    <h2>Why the current app doesn't feel accurate</h2>
+    <p class="lead">The last release added a "command center", but most of what it calls live is an estimate. Users notice when the app says 25 minutes and the trip takes an hour.</p>
+    <div class="grid">
+      <div class="card"><span class="sev">Biggest trust issue</span><h3>Estimates are shown as live</h3><p>When Google Routes doesn't answer, travel time is the empty-road time multiplied by a fixed rush-hour factor (2.1 to 3.1). That is a guess, but the screen still labels it as live telemetry.</p><span class="ref">src/app/actions.ts:1285–1296</span></div>
+      <div class="card"><span class="sev">"Why" is missing</span><h3>Causes are fixed sentences</h3><p>Each bottleneck has one hard-coded cause ("minibus en double file"…) that is shown every time unless a citizen report happens to be nearby. Rain, events, power cuts and accidents never appear.</p><span class="ref">src/app/actions.ts:1333 onward (defaultCause)</span></div>
+      <div class="card"><span class="sev">Forecast bug</span><h3>History is saved at the wrong hour</h3><p>The traffic logger stores <code>getHours()</code> from the server clock. Firebase servers run on UTC, one hour behind Kinshasa, so the forecast learns that 17:00 traffic happens at 16:00.</p><span class="ref">src/app/actions.ts:274, 850 · api/cron/traffic-logger/route.ts</span></div>
+      <div class="card"><span class="sev">Made-up alternatives</span><h3>Detours aren't measured</h3><p>The delay on an alternative road is set to 60% of the main road's delay. Nobody checks whether the detour is actually clear.</p><span class="ref">src/app/actions.ts:972</span></div>
+      <div class="card"><span class="sev">Focus</span><h3>Nine traffic screens, fifteen side modules</h3><p>Traffic is split across verifier-trafic, live-traffic, local-traffic, routes, map, hazard-map, k-flow-nav, insights and flux-infrastructure, next to tourism, housing, car rental and restaurants. New users can't find the one thing they came for.</p><span class="ref">src/components/app-shell.tsx menu</span></div>
+      <div class="card"><span class="sev">Cold start</span><h3>411 users can't cover 27 million people</h3><p>A Waze-style crowd map needs density. Without a plan to seed data (fleets, paid sentinels, GPS from every app session), most streets show nothing and people uninstall.</p><span class="ref">Growth plan below</span></div>
+    </div>
+  </section>
+
+  <section class="brief">
+    <div class="eyebrow">Accuracy</div>
+    <h2>Where real-time data will come from</h2>
+    <p class="lead">No single source covers Kinshasa well, so we combine several and show the user which ones back each number, with a confidence score. When confidence is low, the app says so.</p>
+    <div class="tbl"><table>
+      <thead><tr><th>Source</th><th>What it gives us</th><th>Cost</th><th>When</th></tr></thead>
+      <tbody>
+        <tr><td><b>Google Routes API</b> (already wired in)</td><td>Traffic-aware travel time on the 8 bottlenecks and 4 commutes. Keep calling it, cache 2–3 min, and never replace a failed call with a multiplier.</td><td>Pay per call; caching keeps it small</td><td class="when">Week 1</td></tr>
+        <tr><td><b>TomTom Traffic Flow + Incidents</b> (key already in .env)</td><td>Second opinion on segment speeds, plus incidents. Test coverage in Kinshasa first; keep only if it matches what drivers see.</td><td>Free tier, then paid</td><td class="when">Week 2</td></tr>
+        <tr><td><b>Anonymous GPS from app users</b> (opt-in)</td><td>Real speeds on every street the user drives, including small avenues Google misses. Sent in batches, about 50 KB per hour of driving.</td><td>Free</td><td class="when">Weeks 3–6</td></tr>
+        <tr><td><b>Fleet partners</b></td><td>Continuous GPS from taxis, delivery bikes, cash vans, NGO vehicles, minibus associations, in exchange for a free fleet dashboard.</td><td>Free (barter)</td><td class="when">Month 2</td></tr>
+        <tr><td><b>Citizen reports + Lingala voice notes</b></td><td>The causes: accident, flood, police check, official convoy, broken traffic lights. Gemini (already in the stack) turns voice notes into structured reports.</td><td>Paid in Stars</td><td class="when">Week 1</td></tr>
+        <tr><td><b>Rain nowcast</b> (e.g. Open-Meteo)</td><td>Rain is a top cause of floods and jams in Kinshasa. Lets the app warn before roads flood.</td><td>Free</td><td class="when">Week 2</td></tr>
+        <tr><td><b>Event and outage calendar</b></td><td>Stade des Martyrs matches, large church gatherings, official convoys, SNEL power cuts that switch off traffic lights. Entered by the team and trusted users.</td><td>Staff time</td><td class="when">Month 2</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="brief">
+    <div class="eyebrow">The game</div>
+    <h2>One loop: playing makes the map better</h2>
+    <div class="loop">
+      <div class="step"><b>Drive</b><span>Open the app for your commute. It tells you when to leave and which way.</span></div>
+      <div class="step"><b>Report or confirm</b><span>One tap: "still blocked" or "it's clear". Three seconds, usable by a passenger.</span></div>
+      <div class="step"><b>Earn Stars + XP</b><span>Paid only after two other people confirm. Streaks and commune battles add pride.</span></div>
+      <div class="step"><b>Get rewards</b><span>Data bundles and airtime through the existing e-wallet, funded by sponsors.</span></div>
+      <div class="step"><b>Better map</b><span>More fresh reports → better routes → more people open the app.</span></div>
+    </div>
+    <p class="loop-note">Ranks use Kinshasa words people already joke with: Piéton → Wewa → Taximan → Chauffeur Esprit de Mort → Pilote de Kin → Mokonzi ya Nzela. The headline number on every profile is <b>time saved this month</b>, because that is what people will share on WhatsApp.</p>
+  </section>
+
+  <section class="brief">
+    <div class="eyebrow">Businesses and growth</div>
+    <h2>How it pays, and how it reaches people beyond 411</h2>
+    <div class="grid">
+      <div class="card"><h3>Kin Flow Pro for fleets</h3><p>A live dashboard for delivery companies, banks, NGOs, logistics and ride-hailing: where each vehicle is, realistic ETAs, and alerts before drivers enter a jam. Monthly fee per vehicle. Their GPS also feeds the map.</p></div>
+      <div class="card"><h3>Sponsored rewards</h3><p>Brands (telecoms, fuel stations, banks, beverages) fund the airtime and data prizes and the weekly commune battle. Ads appear only when the car is stopped, never while moving.</p></div>
+      <div class="card"><h3>Traffic reports</h3><p>Anonymous monthly reports per corridor for the city, insurers, real-estate developers and investors deciding where to open a shop.</p></div>
+      <div class="card"><h3>Corridor-first launch</h3><p>Start with four commutes (UPN, Masina, Lemba, Kintambo → Gombe). Recruit 100 paid "Sentinelles", moto-taxi drivers paid in airtime, so every corridor has fresh data from day one.</p></div>
+      <div class="card"><h3>Reach people without the app</h3><p>A WhatsApp bot ("écris LIMETE") and a short daily voice flash in Lingala that radios can play. Both end with "download Kin Flow for your own route".</p></div>
+      <div class="card"><h3>Shareable wins</h3><p>After each smart trip, a share card: "J'ai évité 34 min de bouchon à Victoire". Every share is free advertising in the right neighbourhood.</p></div>
+    </div>
+  </section>
+
+  <section class="brief">
+    <div class="eyebrow">Plan</div>
+    <h2>90 days in three phases</h2>
+    <div class="grid">
+      <div class="card phase"><span class="when">Weeks 1–3 · Make it true</span><h3>Trust first</h3><ul><li>Fix the UTC hour bug and re-run history</li><li>Stop showing multiplied estimates as live; show source and confidence</li><li>Merge the nine traffic screens into the five tabs shown here</li><li>Hide tourism, housing, rentals, restaurants from the main menu</li><li>One-tap reporting with confirm / deny</li></ul></div>
+      <div class="card phase"><span class="when">Weeks 4–8 · Make it fun</span><h3>The game layer</h3><ul><li>XP, levels, ranks, daily missions, streaks</li><li>Commune battle and driver leaderboards</li><li>Rewards shop on top of the existing e-wallet</li><li>Leave-time coach and the "Why" panel (rain, reports, events)</li><li>Anti-cheat: rewards only after independent confirmations</li></ul></div>
+      <div class="card phase"><span class="when">Weeks 9–13 · Make it scale</span><h3>Data and reach</h3><ul><li>Opt-in GPS speed probes from every trip</li><li>First fleet partners and Kin Flow Pro dashboard</li><li>Sentinelle program on the four corridors</li><li>WhatsApp bot and Lingala radio flash</li><li>First sponsor for the reward pool</li></ul></div>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><b>10 000</b><span>weekly active users by day 90</span></div>
+      <div class="kpi"><b>35%</b><span>of new users still active after 7 days</span></div>
+      <div class="kpi"><b>3+</b><span>confirmed reports per corridor per rush hour</span></div>
+      <div class="kpi"><b>&lt;15%</b><span>gap between predicted and real trip time</span></div>
+    </div>
+    <p class="foot">Targets are proposals for the team to agree on, not forecasts. All phone data is illustrative. Code references point to the Kinshasa Flow repository as of commit 5ee7d17.</p>
+  </section>
+</div>
+
+<script>
+(function(){
+const P={
+ star:'<path d="M12 2.5l2.9 6 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.2 1.3-6.6-4.9-4.6 6.6-.8z" fill="currentColor" stroke="none"/>',
+ map:'<path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14"/>',
+ route:'<circle cx="6" cy="17" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 15V10a4 4 0 0 1 4-4h6M18 9v5a4 4 0 0 1-4 4H8"/>',
+ plus:'<path d="M12 5v14M5 12h14"/>',
+ target:'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 12h.01"/>',
+ trophy:'<path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4zM7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4"/>',
+ car:'<path d="M4 16h16v-4l-2.2-5H6.2L4 12v4zM5.5 16v2.5M18.5 16v2.5M7.5 13h.01M16.5 13h.01"/>',
+ alert:'<path d="M12 3l10 18H2L12 3zM12 10v4M12 17h.01"/>',
+ flood:'<path d="M3 16c2 0 2-1.5 4.5-1.5S10 16 12 16s2-1.5 4.5-1.5S19 16 21 16M3 20c2 0 2-1.5 4.5-1.5S10 20 12 20s2-1.5 4.5-1.5S19 20 21 20M12 3l3.2 4.6a3.8 3.8 0 1 1-6.4 0L12 3z"/>',
+ shield:'<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z"/>',
+ siren:'<path d="M7 18v-6a5 5 0 0 1 10 0v6M5 21h14v-3H5zM12 2.5v2M4.2 6.2l1.4 1.4M19.8 6.2l-1.4 1.4"/>',
+ lights:'<rect x="8" y="2" width="8" height="18" rx="2"/><path d="M12 6.5h.01M12 11h.01M12 15.5h.01M3 3l18 18"/>',
+ mic:'<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+ flame:'<path d="M12 22c4 0 7-3 7-7 0-4-3-6-4-10-2 2-3 4-3 6-1-1-2-2-2-4-2 2-5 5-5 8 0 4 3 7 7 7z"/>',
+ speaker:'<path d="M11 5L6 9H3v6h3l5 4V5zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>',
+ rain:'<path d="M7 15a4 4 0 1 1 1-7.9A6 6 0 0 1 19 9a3.5 3.5 0 0 1-1 6.9M9 18l-1 3M13 18l-1 3M17 18l-1 3"/>',
+ users:'<circle cx="9" cy="7.5" r="3.5"/><path d="M2.5 21v-1a6.5 6.5 0 0 1 13 0v1M16 4a3.5 3.5 0 0 1 0 7M21.5 21v-1a6 6 0 0 0-3.5-5.5"/>',
+ gps:'<path d="M12 21s-7-6.5-7-11a7 7 0 0 1 14 0c0 4.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.2"/>',
+ cal:'<rect x="4" y="5" width="16" height="16" rx="2"/><path d="M4 10h16M8 3v4M16 3v4"/>',
+ bus:'<path d="M5 17V6a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v11zM5 12h14M7.5 20v-3M16.5 20v-3"/>',
+ bolt:'<path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/>',
+ check:'<path d="M5 12l5 5L20 7"/>',
+ clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+ eye:'<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+ gift:'<rect x="3" y="8" width="18" height="13" rx="1"/><path d="M3 12h18M12 8v13M12 8S10.5 3 8 3.5 7 8 12 8zM12 8s1.5-5 4-4.5S17 8 12 8z"/>'
+};
+const I=(n,cls='ic')=>`<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[n]}</svg>`;
+
+/* ---------- state ---------- */
+const RANKS=[[1,'Piéton'],[3,'Wewa'],[6,'Taximan'],[10,'Chauffeur Esprit de Mort'],[15,'Pilote de Kin'],[20,'Mokonzi ya Nzela']];
+const rankOf=l=>RANKS.filter(r=>l>=r[0]).pop()[1];
+const S={view:'map',t:0,stars:1240,xp:1840,xpMax:2500,level:7,node:null,voted:{},challenge:false,dep:0,route:1,report:null,rec:false,
+  missions:[{id:'confirm',txt:'Confirme 3 alertes près de toi',n:1,of:3,r:30},{id:'smart',txt:'Fais ton trajet par l\'itinéraire malin',n:0,of:1,r:40},{id:'report',txt:'Signale un incident validé',n:0,of:1,r:25}],
+  rankTab:'communes'};
+
+/* ---------- map data (lat,lng; example statuses) ---------- */
+const NODES={
+ limete:{name:'Échangeur de Limete',dist:'Limete',ll:[-4.357,15.358],d:[27,31,22,9],speed:6,alt:'Av. des Poids Lourds via Kingabwa',save:19,
+  why:[['rain','Pluie forte depuis 16:50',45,'Radar pluie'],['bus','Minibus 207 en double file',35,'7 signalements'],['bolt','Feux éteints (coupure SNEL)',20,'3 signalements']],src:['GPS · 41 usagers','Google Routes','7 Kinois'],conf:86},
+ magasin:{name:'Kintambo Magasin',dist:'Ngaliema',ll:[-4.327,15.274],d:[18,21,14,5],speed:9,alt:'Av. du Tourisme (berges du fleuve)',save:11,
+  why:[['shield','Contrôle de police au rond-point',55,'5 signalements'],['car','Sortie des écoles',45,'Historique mardi 17h']],src:['GPS · 22 usagers','Google Routes','5 Kinois'],conf:78},
+ upn:{name:'Route de Matadi (UPN)',dist:'Ngaliema',ll:[-4.380,15.258],d:[22,25,17,6],speed:8,alt:'Av. de la Montagne vers Météo',save:14,
+  why:[['flood','Chaussée inondée près de l\'UPN',60,'4 signalements + photo'],['car','Camions lents vers Matadi',40,'GPS flotte']],src:['GPS · 18 usagers','Flotte partenaire','4 Kinois'],conf:81},
+ pascal:{name:'Bd Lumumba (Pascal)',dist:'Masina',ll:[-4.385,15.420],d:[34,36,28,12],speed:5,alt:'Route Mokali vers Kimbanseke',save:22,
+  why:[['siren','Cortège officiel vers l\'aéroport',50,'Calendrier + 9 signalements'],['bus','Marché de rue sur la chaussée',30,'Historique'],['rain','Pluie forte',20,'Radar pluie']],src:['GPS · 57 usagers','Google Routes','9 Kinois'],conf:91},
+ triangle:{name:'By-Pass (Triangle)',dist:'Lemba',ll:[-4.410,15.315],d:[9,12,8,3],speed:17,alt:'Av. Elengesa',save:6,
+  why:[['users','Affluence piétonne au marché',70,'Historique mardi 17h'],['car','Taxis en stationnement',30,'2 signalements']],src:['GPS · 12 usagers','Google Routes'],conf:64},
+ mandela:{name:'Rond-point Mandela',dist:'Gombe',ll:[-4.312,15.298],d:[11,8,5,2],speed:14,alt:'Av. de la Justice',save:5,
+  why:[['users','Sortie des bureaux et ministères',80,'Historique mardi 17h'],['shield','Agents de roulage',20,'1 signalement']],src:['GPS · 33 usagers','Google Routes'],conf:83},
+ victoire:{name:'Victoire (Kasa-Vubu)',dist:'Kalamu',ll:[-4.335,15.311],d:[14,16,10,4],speed:11,alt:'Av. de l\'Enseignement',save:9,
+  why:[['cal','Match au Stade des Martyrs à 18:30',55,'Calendrier événements'],['users','Commerce de rue au carrefour',45,'Historique']],src:['GPS · 26 usagers','Google Routes','3 Kinois'],conf:79},
+ pontgabu:{name:'Pont Gabu (Université)',dist:'Kalamu / Limete',ll:[-4.355,15.318],d:[4,6,5,2],speed:24,alt:'Axe direct praticable',save:0,
+  why:[['check','Aucun incident signalé',100,'GPS en direct']],src:['GPS · 15 usagers','Google Routes'],conf:72}
+};
+const ROADS=[
+ {id:'30juin',n:'mandela',p:[[-4.327,15.274],[-4.318,15.287],[-4.312,15.298],[-4.306,15.308],[-4.304,15.318]]},
+ {id:'matadi',n:'upn',p:[[-4.327,15.274],[-4.345,15.266],[-4.362,15.262],[-4.380,15.258],[-4.405,15.252]]},
+ {id:'bypass',n:'triangle',p:[[-4.380,15.258],[-4.392,15.275],[-4.400,15.295],[-4.410,15.315]]},
+ {id:'univ',n:'pontgabu',p:[[-4.410,15.315],[-4.385,15.316],[-4.355,15.318],[-4.343,15.314]]},
+ {id:'kasavubu',n:'victoire',p:[[-4.343,15.314],[-4.335,15.311],[-4.318,15.306],[-4.306,15.308]]},
+ {id:'triomphal',n:'limete',p:[[-4.343,15.314],[-4.350,15.335],[-4.357,15.358]]},
+ {id:'lumumba',n:'pascal',p:[[-4.357,15.358],[-4.368,15.380],[-4.378,15.400],[-4.385,15.420],[-4.388,15.448]]},
+ {id:'poids',n:null,fixed:3,p:[[-4.304,15.318],[-4.312,15.335],[-4.325,15.352],[-4.340,15.372],[-4.358,15.392],[-4.375,15.410],[-4.385,15.420]]},
+ {id:'elengesa',n:null,fixed:2,p:[[-4.400,15.295],[-4.380,15.298],[-4.360,15.303],[-4.343,15.314]]},
+ {id:'berges',n:null,fixed:1,p:[[-4.327,15.274],[-4.313,15.279],[-4.304,15.292],[-4.301,15.305],[-4.304,15.318]]}
+];
+const RIVER=[[15.20,-4.250],[15.24,-4.318],[15.265,-4.316],[15.285,-4.300],[15.31,-4.292],[15.34,-4.296],[15.37,-4.306],[15.40,-4.322],[15.43,-4.336],[15.47,-4.330],[15.47,-4.250]];
+const W=360,H=220,LNG0=15.235,LNG1=15.462,LAT0=-4.288,LAT1=-4.418;
+const X=g=>((g-LNG0)/(LNG1-LNG0))*W, Y=a=>((a-LAT0)/(LAT1-LAT0))*H;
+const pt=([a,g])=>`${X(g).toFixed(1)},${Y(a).toFixed(1)}`;
+const cls=d=>d>=20?'block':d>=10?'dense':d>=4?'mod':'ok';
+const LBL={ok:'Fluide',mod:'Modéré',dense:'Dense',block:'Bloqué'};
+const COL={ok:'var(--s-ok)',mod:'var(--s-mod)',dense:'var(--s-dense)',block:'var(--s-block)'};
+const roadDelay=r=>r.n?NODES[r.n].d[S.t]:r.fixed;
+const TLBL=['Maintenant','+30 min','+1 h','+2 h'];
+const TCONF=[null,82,74,61];
+
+/* ---------- notes (English, for the team) ---------- */
+const NOTES={
+ map:{t:'Live map you can trust',fix:['accuracy','real time','why'],b:[
+  'Road colors come from measured speeds (Google Routes, TomTom, anonymous GPS from app users), never from a rush-hour multiplier.',
+  'The time chips above the alerts show the forecast for +30 min, +1 h and +2 h, with how confident the model is.',
+  'Tap any pulsing junction to see <b>why</b> it is blocked, which sources back it, and the fastest way around.',
+  'The traffic dots move at the measured speed. Slow dots read as "jam" instantly, even for someone who never reads text.'],
+  u:'Replaces <code>verifier-trafic</code>, <code>live-traffic</code>, <code>local-traffic</code>, <code>map</code> and <code>hazard-map</code> with one home screen. Data comes from <code>getRealtimeCommandDashboardAction</code>, rebuilt to return source + confidence per segment.',
+  try:'Tap <b>Échangeur de Limete</b>, then change the time to <b>+2 h</b>.'},
+ sheet:{t:'The "Why" panel',fix:['why','game'],b:[
+  'Causes are ranked by weight, each with its evidence: rain radar, event calendar, SNEL outages, police checks, citizen reports and Lingala voice notes.',
+  'Confidence is a real number from how many sources agree and how fresh they are. Below 60% the app says "peu de données".',
+  'The detour shows a measured time saving, not 60% of the main road\'s delay.',
+  '"Toujours bloqué / C\'est dégagé" is the core game move. It costs one tap and keeps every report fresh.'],
+  u:'New Firestore fields on <code>road_condition_reports</code>: <code>confirmations</code>, <code>denials</code>, <code>expiresAt</code>. A report fades out after 20 min unless someone confirms it.',
+  try:'Vote on a junction and watch the Stars counter and XP bar.'},
+ commute:{t:'Leave-time coach',fix:['forecast','alternatives'],b:[
+  'Answers the real daily question: leave now or wait? Each bar is the predicted trip time for one departure time.',
+  'It shows both numbers honestly: time stuck in traffic, and arrival time. Waiting is not always better.',
+  'Three measured route options, with the saving against the usual route.',
+  '"Lancer le défi" turns the commute into a mission: arrive before the predicted time and win Stars.'],
+  u:'Forecast reads <code>traffic_history</code> per 15-minute slot and weekday (Kinshasa time), blended with the live reading and rain. Fixes the UTC bug first.',
+  try:'Tap different bars, pick a route, then start the challenge.'},
+ report:{t:'Report in three seconds',fix:['real time','game'],b:[
+  'Six big buttons for what actually blocks Kinshasa roads, usable by a passenger without typing.',
+  'Hold the microphone to report in Lingala or French. Gemini turns it into a structured report.',
+  'Stars are paid only after two other users confirm. That stops cheating and teaches people that accurate reports pay.',
+  'Each user has a reliability score. Reliable reporters\' alerts show up faster for everyone.'],
+  u:'Builds on <code>report-traffic-form.tsx</code> and <code>awardWalletContributionAction</code>; reward moves from "on submit" to "on confirmation".',
+  try:'Pick an incident type and send it.'},
+ quests:{t:'Why people come back every day',fix:['game','retention'],b:[
+  'The first thing on the profile is <b>time saved this month</b>. It is the reason to keep the app, and the number people will share.',
+  'Daily missions ask for exactly the data the map needs at rush hour.',
+  'Prizes are things Kinois value: mobile data, airtime, fuel. Paid through the existing e-wallet and funded by sponsors.',
+  'Streaks reward opening the app on every commute day.'],
+  u:'Reuses <code>mes-stars</code>, <code>e-wallet.tsx</code> and <code>rechargeDataFromWalletAction</code>. New collections: <code>missions</code>, <code>badges</code>.',
+  try:'Confirm alerts on the map to complete the first mission.'},
+ ranks:{t:'Commune against commune',fix:['growth','game'],b:[
+  'Local pride spreads the app by word of mouth: "Lemba is beating Limete this week".',
+  'A weekly battle between communes, with a sponsor prize for the winning commune\'s top reporters.',
+  'Driver leaderboards for taxi, moto-taxi and minibus associations: their members become the sentinels on each corridor.',
+  'Names and scores here are examples.'],
+  u:'Scores are confirmed contributions grouped by the user\'s commune; one Cloud Function job per hour updates <code>leaderboards/{week}</code>.',
+  try:'Switch between Communes and Chauffeurs.'}
+};
+
+/* ---------- elements ---------- */
+const $=id=>document.getElementById(id);
+const view=$('view'),note=$('note'),screen=$('screen');
+const TABS=[['map','Carte','map'],['commute','Trajet','route'],['report','Signaler','plus'],['quests','Quêtes','target'],['ranks','Classement','trophy']];
+$('tabs').innerHTML=TABS.map(([id,l,ic])=>`<button class="tab${id==='report'?' cta':''}" role="tab" data-v="${id}" aria-selected="${id===S.view}">${I(ic)}${l}</button>`).join('');
+$('tabs').addEventListener('click',e=>{const b=e.target.closest('.tab');if(b)go(b.dataset.v)});
+
+function go(v){S.view=v;closeSheet();[...document.querySelectorAll('.tab')].forEach(b=>b.setAttribute('aria-selected',b.dataset.v===v));render();view.scrollTop=0}
+function hud(){$('starPill').innerHTML=I('star')+`<span class="num">${S.stars.toLocaleString('fr-FR')}</span>`;$('lvlPill').textContent='Niv. '+S.level;$('xpFill').style.width=Math.min(100,S.xp/S.xpMax*100)+'%'}
+let tt;function toast(m){const t=$('toast');t.innerHTML=m;t.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('show'),2200)}
+function reward(stars,xp,msg){S.stars+=stars;S.xp+=xp;toast(`+${stars} ★ · ${msg}`);
+  if(S.xp>=S.xpMax){S.xp-=S.xpMax;S.level++;S.xpMax=Math.round(S.xpMax*1.2);setTimeout(()=>{$('lvlTitle').textContent='Niveau '+S.level;$('lvlRank').textContent='Rang : '+rankOf(S.level);$('lvlup').classList.add('show')},700)}
+  hud()}
+$('lvlClose').onclick=()=>$('lvlup').classList.remove('show');
+function bumpMission(id){const m=S.missions.find(x=>x.id===id);if(m&&m.n<m.of){m.n++;if(m.n===m.of)setTimeout(()=>reward(m.r,120,'Mission terminée'),900)}}
+function setNote(k){const n=NOTES[k];note.innerHTML=`<div class="eyebrow">Screen · ${k==='sheet'?'junction detail':TABS.find(t=>t[0]===k)[1]}</div><h2>${n.t}</h2><div class="fix">${n.fix.map(f=>`<span>Fixes: ${f}</span>`).join('')}</div><ul>${n.b.map(x=>`<li>${x}</li>`).join('')}</ul><p class="under"><b>In the code:</b> ${n.u}</p><p class="tryit"><b>Try:</b> ${n.try}</p>`}
+
+/* ---------- MAP ---------- */
+let anim=null;
+function mapSVG(){
+ const river=`<path d="M${RIVER.map(([g,a])=>`${X(g).toFixed(1)},${Y(a).toFixed(1)}`).join('L')}Z" fill="var(--g-river)"/>`;
+ const hl=S.challenge?['elengesa','kasavubu']:[];
+ const roads=ROADS.map(r=>{const c=COL[cls(roadDelay(r))];const d='M'+r.p.map(pt).join('L');
+   return `${hl.includes(r.id)?`<path d="${d}" stroke="var(--g-star)" stroke-width="9" stroke-opacity=".35" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`:''}<path id="rd-${r.id}" d="${d}" stroke="${c}" stroke-width="${r.n?4:3}" fill="none" stroke-linecap="round" stroke-linejoin="round" ${r.n?'':'stroke-dasharray="1 0"'} opacity="${r.n?1:.85}"/>`}).join('');
+ const nodes=Object.entries(NODES).map(([k,n])=>{const s=cls(n.d[S.t]);const x=X(n.ll[1]),y=Y(n.ll[0]);
+   return `<g class="node" tabindex="0" role="button" aria-label="${n.name}, ${LBL[s]}" data-n="${k}">${s==='block'?`<circle cx="${x}" cy="${y}" r="6" fill="${COL[s]}" opacity=".35"><animate attributeName="r" values="6;14;6" dur="1.6s" repeatCount="indefinite"/><animate attributeName="opacity" values=".45;0;.45" dur="1.6s" repeatCount="indefinite"/></circle>`:''}<circle cx="${x}" cy="${y}" r="7" fill="var(--g-bg)" stroke="${COL[s]}" stroke-width="3"/><circle cx="${x}" cy="${y}" r="16" fill="transparent"/></g>`}).join('');
+ const labels=[['Fleuve Congo',15.30,-4.282],['GOMBE',15.302,-4.296],['LIMETE',15.36,-4.343],['NGALIEMA',15.257,-4.343],['LEMBA',15.322,-4.398],['MASINA',15.42,-4.372],['KALAMU',15.296,-4.345]]
+   .map(([t,g,a],i)=>`<text x="${X(g)}" y="${Y(a)}" fill="${i?'var(--g-muted)':'#3E7FA8'}" font-size="${i?7.5:8}" font-family="JetBrains Mono,monospace" font-weight="700" letter-spacing="1" text-anchor="middle" ${i?'':'font-style="italic"'}>${t}</text>`).join('');
+ const me=`<g transform="translate(${X(15.322)},${Y(-4.404)})"><circle r="9" fill="var(--g-sky)" opacity=".25"/><circle r="5" fill="var(--g-sky)" stroke="#fff" stroke-width="2"/></g>`;
+ const pins=[[15.305,-4.392,'flood'],[15.39,-4.37,'siren'],[15.27,-4.33,'shield']].map(([g,a,ic])=>`<g transform="translate(${X(g)-8},${Y(a)-20})"><rect width="16" height="16" rx="5" fill="var(--g-star)"/><svg x="2" y="2" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#06121C" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">${P[ic]}</svg></g>`).join('');
+ return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Carte du trafic de Kinshasa (données d'exemple)"><rect width="${W}" height="${H}" fill="#0C2033"/>${river}${labels}${roads}<g id="dots"></g>${pins}${me}${nodes}</svg>`;
+}
+function startDots(){
+ if(anim)cancelAnimationFrame(anim);
+ const g=document.getElementById('dots');if(!g)return;
+ const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+ const items=[];
+ ROADS.forEach(r=>{const path=document.getElementById('rd-'+r.id);const L=path.getTotalLength();const d=roadDelay(r);const sp=d>=20?.012:d>=10?.03:d>=4?.06:.11;const n=Math.max(2,Math.round(L/(d>=20?12:d>=10?16:26)));
+   for(let i=0;i<n;i++){const c=document.createElementNS('http://www.w3.org/2000/svg','circle');c.setAttribute('r','1.6');c.setAttribute('fill','#fff');c.setAttribute('opacity','.75');g.appendChild(c);items.push({c,path,L,o:i/n*L,sp})}});
+ const place=t=>items.forEach(it=>{const p=it.path.getPointAtLength((it.o+t*it.sp*60/1000*10)%it.L);it.c.setAttribute('cx',p.x);it.c.setAttribute('cy',p.y)});
+ if(reduce){place(0);return}
+ const t0=performance.now();const loop=t=>{if(!document.getElementById('dots'))return;place(t-t0);anim=requestAnimationFrame(loop)};anim=requestAnimationFrame(loop);
+}
+function renderMap(){
+ const delays=Object.values(NODES).map(n=>n.d[S.t]);const blocked=delays.filter(d=>d>=10).length;
+ const idx=Math.round(delays.reduce((a,b)=>a+b,0)/delays.length/35*100);
+ const avg=Math.round(Object.values(NODES).reduce((a,n)=>a+n.speed*(n.d[0]+5)/(n.d[S.t]+5),0)/8);
+ view.innerHTML=`
+ ${S.challenge?`<div class="banner">${I('flame')}<span><b>Défi en cours</b> · arrive à Gombe avant 18:37 par Elengesa → <b>+40 ★</b></span></div>`:''}
+ <div class="pulse"><div><b>${idx}</b><span>Indice bouchon /100</span></div><div><b>${avg} <small style="font-size:11px">km/h</small></b><span>Vitesse moyenne</span></div><div><b>${blocked}/8</b><span>Nœuds denses</span></div></div>
+ <div class="mapbox">${mapSVG()}</div>
+ <div class="chips" role="group" aria-label="Moment">${TLBL.map((l,i)=>`<button class="chip" data-t="${i}" aria-pressed="${i===S.t}">${l}</button>`).join('')}<span class="forecast-note">${S.t?`Prévision · confiance ${TCONF[S.t]}%`:'Mis à jour il y a 40 s'}</span></div>
+ <div class="row between" style="margin:4px 2px 8px"><span class="g-h">Alertes près de toi</span><span class="demo">Démo</span></div>
+ <div class="alerts">
+  ${[['flood','Inondation','Av. Kianza, Lemba','il y a 6 min',12,'limete'],['siren','Cortège officiel','Bd Lumumba → aéroport','il y a 11 min',9,'pascal'],['shield','Contrôle police','Kintambo Magasin','il y a 14 min',5,'magasin']]
+   .map(([ic,t,w,ago,c,n])=>`<div class="alert"><div class="row">${I(ic)}<b>${t}</b></div><span class="g-sub">${w} · ${ago}</span><span class="g-sub">${I('users','ic').replace('class="ic"','class="ic" style="width:13px;height:13px;vertical-align:-2px"')} ${c} confirmations</span><button class="g-btn ghost" data-open="${n}" style="padding:7px 10px;font-size:12px">Voir pourquoi</button></div>`).join('')}
+ </div>`;
+ view.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{S.t=+b.dataset.t;renderMap()});
+ view.querySelectorAll('.node').forEach(g=>{g.onclick=()=>openSheet(g.dataset.n);g.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openSheet(g.dataset.n)}}});
+ view.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>openSheet(b.dataset.open));
+ startDots();
+}
+
+/* ---------- SHEET ---------- */
+function openSheet(k){
+ S.node=k;const n=NODES[k];const d=n.d[S.t];const s=cls(d);const v=S.voted[k];
+ const fc=[n.d[0],Math.round((n.d[0]+n.d[1])/2),n.d[1],Math.round((n.d[1]+n.d[2])/2),n.d[2],Math.round((n.d[2]+n.d[3])/2),n.d[3]];
+ const fl=['17:45','18:00','18:15','18:30','18:45','19:15','19:45'];const mx=Math.max(...fc,20);
+ $('sheet').innerHTML=`<div class="grab"></div>
+ <div class="stack">
+  <div class="row between"><div><div class="g-h" style="font-size:17px">${n.name}</div><div class="g-sub">${n.dist} · ${S.t?TLBL[S.t]:'en direct'}</div></div><span class="st ${s}">${LBL[s]}</span></div>
+  <div class="row" style="gap:18px"><div><div class="conf num">+${d} min</div><div class="g-sub">de retard</div></div><div><div class="conf num">${n.speed}</div><div class="g-sub">km/h mesurés</div></div><div><div class="conf num" style="color:${n.conf>=75?'var(--s-ok)':'var(--s-mod)'}">${n.conf}%</div><div class="g-sub">confiance</div></div></div>
+  <div class="g-card stack" style="background:var(--g-bg)"><div class="g-h">Pourquoi ça bloque</div>
+   ${n.why.map(([ic,t,w,ev])=>`<div class="cause">${I(ic)}<span>${t}<br><span class="g-sub">${ev}</span></span><span class="num g-sub">${w}%</span><div class="bar"><i style="width:${w}%"></i></div></div>`).join('')}
+  </div>
+  <div class="src">${n.src.map(x=>`<span>${I(x.startsWith('GPS')?'gps':x.includes('Kinois')?'users':'eye').replace('class="ic"','class="ic" style="width:11px;height:11px"')}${x}</span>`).join('')}</div>
+  <div><div class="row between"><span class="g-h">Prochaines 2 heures</span><span class="demo">min de retard</span></div>
+   <div class="fc">${fc.map((x,i)=>`<div><span class="num">${x}</span><i style="height:${Math.max(4,x/mx*40)}px;background:${COL[cls(x)]}"></i><span>${fl[i]}</span></div>`).join('')}</div></div>
+  ${n.save?`<div class="g-card row between" style="border-color:var(--s-ok)"><div><div class="g-sub">Contourner par</div><b style="font-size:13px">${n.alt}</b></div><span class="save">−${n.save} min</span></div>`:''}
+  <div class="g-sub" style="text-align:center">${v?'Merci, ta réponse compte pour la carte de tout le monde.':'Tu es sur place ? Ta réponse rafraîchit la carte.'}</div>
+  <div class="row" style="gap:8px"><button class="g-btn bad" style="flex:1" data-vote="still" ${v?'disabled':''}>${I('alert')}Toujours bloqué +15 ★</button><button class="g-btn ok" style="flex:1" data-vote="clear" ${v?'disabled':''}>${I('check')}C'est dégagé +15 ★</button></div>
+  <button class="g-btn ghost" data-speak>${I('speaker')}Écouter le flash en lingala</button>
+ </div>`;
+ $('sheet').querySelectorAll('[data-vote]').forEach(b=>b.onclick=()=>{S.voted[k]=b.dataset.vote;bumpMission('confirm');reward(15,90,'Merci pour l\'info');openSheet(k)});
+ $('sheet').querySelector('[data-speak]').onclick=e=>{e.currentTarget.innerHTML=I('speaker')+'« '+n.name.split(' (')[0]+' eza bloqué, leka na '+n.alt.split(' (')[0]+'. »'};
+ screen.classList.add('sheet-open');setNote('sheet');
+}
+function closeSheet(){screen.classList.remove('sheet-open');if(S.node){S.node=null;setNote(S.view)}}
+$('sheetBack').onclick=closeSheet;
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet()});
+
+/* ---------- COMMUTE ---------- */
+const DEP=['17:45','18:00','18:15','18:30','18:45','19:00','19:15','19:30','19:45','20:00','20:15','20:30','20:45','21:00'];
+const DUR=[78,79,77,72,66,57,48,44,41,43,40,38,37,36];
+const ROUTES=[{n:'Habituel · Av. de l\'Université, Victoire',m:1,c:'block',why:'Victoire dense + match à 18:30'},{n:'Malin · Av. Elengesa, Kasa-Vubu',m:.667,c:'mod',why:'Elengesa asphaltée, peu de signalements'},{n:'Poids Lourds par Limete',m:.82,c:'dense',why:'Échangeur de Limete bloqué'}];
+const addMin=(hm,m)=>{let[h,mm]=hm.split(':').map(Number);mm+=m;h+=Math.floor(mm/60);mm%=60;return `${String(h%24).padStart(2,'0')}:${String(mm).padStart(2,'0')}`};
+const fmt=m=>m>=60?`${Math.floor(m/60)} h ${String(m%60).padStart(2,'0')}`:`${m} min`;
+function renderCommute(){
+ const base=DUR[S.dep];const r=ROUTES[S.route];const dur=Math.round(base*r.m);const usual=base;const free=32;
+ const mx=Math.max(...DUR);
+ view.innerHTML=`
+ <div class="g-card stack">
+  <div class="row between"><div><div class="g-sub">Mon trajet du soir</div><div class="g-h">Lemba → Gombe (Bureau)</div></div><button class="g-btn ghost" style="padding:7px 10px;font-size:11.5px">Modifier</button></div>
+  <div class="row between" style="align-items:flex-end"><div><div class="bigtime num">${fmt(dur)}</div><div class="g-sub">départ ${DEP[S.dep]} · arrivée <b class="num" style="color:var(--g-fg)">${addMin(DEP[S.dep],dur)}</b> · normal ${free} min</div></div>${S.route!==0?`<span class="save">−${usual-dur} min</span>`:''}</div>
+  <div class="row between"><span class="g-h" style="font-size:12.5px">Quand partir ?</span><span class="demo">durée prévue</span></div>
+  <div class="dep" role="group" aria-label="Heure de départ">${DUR.map((d,i)=>`<button aria-label="Départ ${DEP[i]}, ${fmt(Math.round(d*r.m))}" aria-pressed="${i===S.dep}" data-i="${i}"><i style="height:${d/mx*100}%"></i></button>`).join('')}</div>
+  <div class="dep-axis"><span>17:45</span><span>18:45</span><span>19:45</span><span>21:00</span></div>
+  <p class="g-sub">${S.dep===0?`Partir à 19:15 : seulement ${fmt(Math.round(DUR[6]*r.m))} dans les bouchons, mais arrivée à ${addMin('19:15',Math.round(DUR[6]*r.m))}. À toi de choisir.`:`Tu passes ${fmt(Math.round(DUR[0]*r.m)-dur)} de moins dans les bouchons qu'en partant maintenant, mais tu arrives à ${addMin(DEP[S.dep],dur)} au lieu de ${addMin(DEP[0],Math.round(DUR[0]*r.m))}.`}</p>
+ </div>
+ <div class="row between" style="margin:14px 2px 8px"><span class="g-h">Itinéraires</span><span class="demo">mesurés il y a 1 min</span></div>
+ <div class="stack">${ROUTES.map((o,i)=>{const t=Math.round(base*o.m);return `<button class="route" data-r="${i}" aria-pressed="${i===S.route}"><span class="dot" style="background:${COL[o.c]}"></span><span><b style="font-size:12.5px">${o.n}</b><br><span class="g-sub">${o.why}</span></span><span style="text-align:right"><b class="num">${fmt(t)}</b><br>${i?`<span class="save">−${base-t} min</span>`:'<span class="g-sub">habituel</span>'}</span></button>`}).join('')}</div>
+ <button class="g-btn" style="width:100%;margin-top:12px;background:var(--g-star)" id="chal">${I('flame')}${S.challenge?'Défi en cours · voir la carte':`Lancer le défi : arrive avant ${addMin(DEP[S.dep],dur)} · +40 ★`}</button>`;
+ view.querySelectorAll('.dep button').forEach(b=>b.onclick=()=>{S.dep=+b.dataset.i;renderCommute()});
+ view.querySelectorAll('.route').forEach(b=>b.onclick=()=>{S.route=+b.dataset.r;renderCommute()});
+ $('chal').onclick=()=>{if(!S.challenge){S.challenge=true;S.route=1;bumpMission('smart');toast('Défi lancé · suis le tracé jaune')}go('map')};
+}
+
+/* ---------- REPORT ---------- */
+const RTYPES=[['car','Bouchon'],['alert','Accident'],['flood','Inondation'],['shield','Police / contrôle'],['siren','Cortège officiel'],['lights','Feux en panne']];
+function renderReport(){
+ const sent=S.report&&S.report.sent;
+ view.innerHTML=`
+ <div class="stack">
+  <div><div class="g-h" style="font-size:17px">Qu'est-ce qui bloque ?</div><div class="g-sub">${I('gps').replace('class="ic"','class="ic" style="width:13px;height:13px;vertical-align:-2px"')} Rond-point Ngaba, Lemba · GPS ±20 m</div></div>
+  <div class="rgrid">${RTYPES.map(([ic,l],i)=>`<button class="rbtn" data-i="${i}" aria-pressed="${S.report&&S.report.i===i}">${I(ic)}${l}</button>`).join('')}</div>
+  <button class="mic${S.rec?' rec':''}" id="mic">${I('mic')}${S.rec?'Enregistrement… « Nzela ya Ngaba ekangami na mai »':'Maintiens pour parler (lingala ou français)'}</button>
+  ${S.rec?`<div class="g-card g-sub">Compris : <b style="color:var(--g-fg)">Inondation</b> · Rond-point Ngaba · « route coupée par l'eau »</div>`:''}
+  ${sent?`<div class="g-card stack" style="border-color:var(--g-star)"><div class="row">${I('clock')}<b>Signalement envoyé</b></div><div class="g-sub">${RTYPES[S.report.i][1]} · Rond-point Ngaba. Visible pour les conducteurs à moins de 3 km.</div>
+   <div class="mission"><span>Confirmations reçues</span><span class="num">${S.report.conf}/2</span><div class="prog"><i style="width:${S.report.conf/2*100}%"></i></div></div>
+   <div class="g-sub">${S.report.conf>=2?'Validé par 2 conducteurs. <b style="color:var(--g-star)">+25 ★ gagnées.</b>':'Tes +25 ★ arrivent quand 2 autres conducteurs confirment.'}</div></div>`
+   :`<button class="g-btn" id="send" ${S.report?'':'disabled'}>Envoyer le signalement</button>`}
+  <div class="row g-card" style="gap:12px"><div class="conf num" style="color:var(--s-ok)">94%</div><div class="g-sub">Ta fiabilité. Tes signalements apparaissent plus vite parce qu'ils sont presque toujours confirmés.</div></div>
+ </div>`;
+ view.querySelectorAll('.rbtn').forEach(b=>b.onclick=()=>{if(sent)return;S.report={i:+b.dataset.i};renderReport()});
+ $('mic').onclick=()=>{if(sent)return;S.rec=!S.rec;if(S.rec)S.report={i:2};renderReport()};
+ const sb=$('send');if(sb&&S.report)sb.onclick=()=>{S.report.sent=true;S.report.conf=0;S.rec=false;toast('Envoyé · en attente de confirmations');renderReport();
+  setTimeout(()=>{if(S.report){S.report.conf=1;if(S.view==='report')renderReport()}},1600);
+  setTimeout(()=>{if(S.report){S.report.conf=2;bumpMission('report');reward(25,140,'Signalement validé');if(S.view==='report')renderReport()}},3200)};
+}
+
+/* ---------- QUESTS ---------- */
+function renderQuests(){
+ const shop=[['100 Mo','Vodacom, Airtel, Orange, Africell',300],['1 000 FC','crédit d\'appel',500],['Lavage −20%','station partenaire',250],['2 L carburant','offert par un sponsor',1500]];
+ view.innerHTML=`
+ <div class="stack">
+  <div class="g-card player"><div class="avatar">KP<em>${S.level}</em></div><div><div class="g-h">Kin_Pilote</div><div class="g-sub">${rankOf(S.level)} · Lemba</div><div class="row g-sub" style="margin-top:4px;color:var(--s-dense)">${I('flame')}<b>12 jours</b>&nbsp;de suite</div></div></div>
+  <div class="g-card"><div class="g-sub">Temps gagné ce mois</div><div class="saved"><b>6 h 40</b><span class="g-sub">sur 31 trajets</span></div><div class="g-sub">C'est 2 soirées de plus à la maison.</div></div>
+  <div class="row between" style="margin-top:4px"><span class="g-h">Missions du jour</span><span class="demo">se renouvellent à 05:00</span></div>
+  <div class="g-card stack">${S.missions.map(m=>`<div class="mission${m.n>=m.of?' done':''}"><span>${m.n>=m.of?'✓ ':''}${m.txt}</span><span class="num" style="color:var(--g-star)">+${m.r} ★</span><div class="prog"><i style="width:${m.n/m.of*100}%"></i></div><span class="g-sub">${m.n}/${m.of}</span></div>`).join('')}</div>
+  <span class="g-h">Badges</span>
+  <div class="badges">${[['eye','Œil de Limete',1],['rain','Roi de la pluie',1],['shield','Sentinelle UPN',1],['flame','Série de 10',1],['siren','Chasseur de cortège',0],['bolt','Feux rouges',0],['users','Chef d\'équipe',0],['trophy','Champion commune',0]].map(([ic,l,on])=>`<div class="badge${on?'':' off'}"><i>${I(ic)}</i>${l}</div>`).join('')}</div>
+  <div class="row between"><span class="g-h">Boutique</span><span class="pill star">${I('star')}<span class="num">${S.stars.toLocaleString('fr-FR')}</span></span></div>
+  <div class="shop">${shop.map(([t,s,c])=>`<div class="item"><div class="row">${I('gift')}<b>${t}</b></div><span class="g-sub">${s}</span><button class="g-btn ${S.stars>=c?'':'ghost'}" data-c="${c}" data-t="${t}" style="padding:8px">${c} ★</button></div>`).join('')}</div>
+ </div>`;
+ view.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>{const c=+b.dataset.c;if(S.stars<c){toast(`Encore ${c-S.stars} ★ à gagner`);return}S.stars-=c;hud();toast(`${b.dataset.t} envoyé sur ton numéro (démo)`);renderQuests()});
+}
+
+/* ---------- RANKS ---------- */
+function renderRanks(){
+ const communes=[['Lemba',18420,1],['Limete',17960],['Ngaliema',15300],['Kalamu',13870],['Masina',12400],['Gombe',9850],['Matete',8900],['Bandalungwa',7420]];
+ const drivers=[['Papa Wewa','Masina',3210],['Ya Mado Taxi','Kalamu',2980],['Sentinelle UPN','Ngaliema',2710],['Tonton 207','Limete',2550],['Bijou Ride','Gombe',2390],['Kin_Pilote (toi)','Lemba',1840,1]];
+ const list=S.rankTab==='communes'?communes:drivers;const mx=S.rankTab==='communes'?list[0][1]:list[0][2];
+ view.innerHTML=`
+ <div class="stack">
+  <div class="g-card stack"><div class="row between"><span class="g-h">Bataille de la semaine</span><span class="demo">fin dans 2 j 6 h</span></div>
+   <div class="vs"><div><b>Lemba</b><div class="num g-sub">18 420</div></div><span class="pill star">VS</span><div><b>Limete</b><div class="num g-sub">17 960</div></div></div>
+   <div class="xpbar" style="margin:0;height:8px"><i style="width:50.6%"></i></div>
+   <div class="g-sub">Prix : 50 Go de data partagés entre les 20 meilleurs Kinois de la commune gagnante (sponsor).</div></div>
+  <div class="seg" role="group"><button data-k="communes" aria-pressed="${S.rankTab==='communes'}">Communes</button><button data-k="drivers" aria-pressed="${S.rankTab==='drivers'}">Chauffeurs</button></div>
+  <div class="g-card lb">${list.map((r,i)=>{const sc=S.rankTab==='communes'?r[1]:r[2];const me=S.rankTab==='communes'?r[2]:r[3];
+    return `<div class="lbr${me?' me':''}"><span class="num g-sub">${me&&S.rankTab!=='communes'?14:i+1}</span><span><b>${r[0]}</b>${S.rankTab==='communes'?'':` <span class="g-sub">· ${r[1]}</span>`}</span><span class="num">${sc.toLocaleString('fr-FR')}</span><div class="barw"><i style="width:${sc/mx*100}%"></i></div></div>`}).join('')}</div>
+  <p class="g-sub" style="text-align:center">Points = signalements confirmés + trajets malins. Noms d'exemple.</p>
+ </div>`;
+ view.querySelectorAll('.seg button').forEach(b=>b.onclick=()=>{S.rankTab=b.dataset.k;renderRanks()});
+}
+
+function render(){if(anim)cancelAnimationFrame(anim);hud();({map:renderMap,commute:renderCommute,report:renderReport,quests:renderQuests,ranks:renderRanks})[S.view]();if(!S.node)setNote(S.view)}
+render();
+})();
+</script>

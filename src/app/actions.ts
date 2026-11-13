@@ -11,8 +11,27 @@ import * as nodemailer from 'nodemailer';
 import { getServerFirestore } from "@/firebase/server";
 import { collection, getDocs, query, where, Timestamp, limit, orderBy, doc, getDoc, setDoc, updateDoc, runTransaction, serverTimestamp, addDoc } from "firebase/firestore";
 import { CONFIG } from "@/lib/config";
+import { kinshasaNow, voteSlot } from "@/lib/kinshasa-time";
+import { adminDb, verifyCaller, verifyAdmin, AuthError } from "@/firebase/admin";
+import { FieldValue } from "firebase-admin/firestore";
+import { STAR_PACK_CATALOG, PASS_CATALOG, DATA_PACK_CATALOG, REWARD_CDF, DAILY_REWARD_CAP_CDF, MIN_CASHOUT_CDF, CDF_PER_USD } from "@/lib/pricing";
+import { fulfillVerifiedFlexPayPayment, markPaymentFailed } from "@/lib/payments-server";
+import { loadRecentProbeSpeeds, statusFromSpeed } from "@/lib/probes-server";
+import { BLACK_SPOTS, MEASURED_SEGMENTS, segMid } from "@/lib/corridors";
+import { XP, DAILY_MISSIONS, BADGES, COMMUNES, levelFromXp, rankFor, kinshasaDayKey, kinshasaWeekId, type MissionKind } from "@/lib/game";
+
+/** Identifiants SMTP lus dans l'environnement uniquement (les mots de passe ne doivent plus être dans le code). */
+function smtpCredentials() {
+    const smtpUser = process.env.SMTP_USER;
+    const smtpPass = (process.env.SMTP_PASS || '').replace(/"/g, '');
+    if (!smtpUser || !smtpPass) throw new Error("SMTP_USER / SMTP_PASS non configurés sur le serveur.");
+    return { smtpUser, smtpPass };
+}
+
+function authErrorMessage(err: any, fallback: string) {
+    return err instanceof AuthError ? err.message : (err?.message || fallback);
+}
 import { initiateFlexPayMobileMoney, initiateFlexPayCard, checkFlexPayTransactionStatus, detectDRCOperator } from "@/lib/flexpay";
-import { getKinshasaTimeParts } from "@/lib/kinshasa-time";
 
 const GOOGLE_API_KEY = process.env.GOOGLE_ROUTES_API_KEY || CONFIG.GOOGLE_MAPS_API_KEY;
 
@@ -21,96 +40,206 @@ const GOOGLE_API_KEY = process.env.GOOGLE_ROUTES_API_KEY || CONFIG.GOOGLE_MAPS_A
  */
 const trafficCache = new Map<string, { data: any, expires: number }>();
 
-let weatherCache: { data: { isRaining: boolean; rainMm: number; weatherLabel: string } | null; expires: number } | null = null;
-let incidentsCache: { data: { roadReports: any[]; events: any[]; policeReports: any[] }; expires: number } | null = null;
+/** Un signalement citoyen n'est plus considéré comme « en direct » après ce délai. */
+const REPORT_FRESH_MINUTES = 60;
+
+function tsToMillis(ts: any): number | null {
+    if (!ts) return null;
+    if (typeof ts.toMillis === 'function') return ts.toMillis();
+    if (typeof ts.seconds === 'number') return ts.seconds * 1000;
+    const n = new Date(ts).getTime();
+    return Number.isNaN(n) ? null : n;
+}
 
 /**
- * Météo temps réel de Kinshasa via Open-Meteo (sans clé API, cache 5 min).
+ * Signalements récents (< REPORT_FRESH_MINUTES) et non expirés, sous forme d'objets simples
+ * (sérialisables par les Server Actions). Les vieux signalements restés « active » ne doivent
+ * plus colorer la carte ni servir de cause.
  */
-async function fetchKinshasaWeather(): Promise<{ isRaining: boolean; rainMm: number; weatherLabel: string } | null> {
-  const now = Date.now();
-  if (weatherCache && weatherCache.expires > now) return weatherCache.data;
+async function loadFreshReports(): Promise<any[]> {
+    try {
+        const firestore = getServerFirestore();
+        const snap = await getDocs(query(collection(firestore, 'road_condition_reports'), orderBy('createdAt', 'desc'), limit(60)));
+        const nowMs = Date.now();
+        const cutoff = nowMs - REPORT_FRESH_MINUTES * 60 * 1000;
+        return snap.docs
+            .map(d => ({ id: d.id, ...(d.data() as any) }))
+            .filter(r => r.status !== 'expired' && r.coords && (tsToMillis(r.createdAt) ?? 0) >= cutoff)
+            .map(r => ({
+                id: r.id,
+                type: r.type ?? null,
+                description: r.description ?? '',
+                locationName: r.locationName ?? null,
+                coords: { lat: Number(r.coords.lat), lng: Number(r.coords.lng) },
+                ageMin: Math.max(0, Math.round((nowMs - (tsToMillis(r.createdAt) ?? nowMs)) / 60000)),
+            }));
+    } catch (err) {
+        console.warn('[Reports] lecture impossible:', err);
+        return [];
+    }
+}
 
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 2500);
-    const res = await fetch(
-      "https://api.open-meteo.com/v1/forecast?latitude=-4.33&longitude=15.31&current=precipitation,rain,weather_code&timezone=Africa%2FKinshasa",
-      { signal: ctrl.signal }
-    );
-    clearTimeout(t);
-    if (!res.ok) return null;
-    const json = await res.json();
-    const cur = json?.current;
-    if (!cur) return null;
+/** Votes 1-tap « toujours bloqué / c'est dégagé » des 30 à 60 dernières minutes, groupés par nœud. */
+async function loadRecentVotes(): Promise<Record<string, { still: number; clear: number; lastAgeMin: number | null }>> {
+    const out: Record<string, { still: number; clear: number; lastAtMs: number }> = {};
+    try {
+        const firestore = getServerFirestore();
+        const snap = await getDocs(query(collection(firestore, 'traffic_votes'), where('slot', '>=', voteSlot() - 1), limit(500)));
+        snap.docs.forEach(d => {
+            const v = d.data() as any;
+            if (!v.nodeId || (v.vote !== 'still' && v.vote !== 'clear')) return;
+            const agg = out[v.nodeId] ??= { still: 0, clear: 0, lastAtMs: 0 };
+            agg[v.vote as 'still' | 'clear']++;
+            agg.lastAtMs = Math.max(agg.lastAtMs, tsToMillis(v.createdAt) ?? 0);
+        });
+    } catch (err) {
+        console.warn('[Votes] lecture impossible:', err);
+    }
+    const nowMs = Date.now();
+    return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, {
+        still: v.still,
+        clear: v.clear,
+        lastAgeMin: v.lastAtMs ? Math.max(0, Math.round((nowMs - v.lastAtMs) / 60000)) : null,
+    }]));
+}
 
-    const rainMm = Number(cur.rain || cur.precipitation || 0);
-    const code = Number(cur.weather_code || 0);
-    const isRaining = rainMm > 0 || (code >= 51 && code <= 99);
-    let weatherLabel = "Temps sec";
-    if (code >= 95) weatherLabel = `Orage actif à Kinshasa (${rainMm} mm/h)`;
-    else if (isRaining) weatherLabel = `Pluie en cours à Kinshasa (${rainMm} mm/h)`;
-    else if (code >= 1 && code <= 3) weatherLabel = "Ciel nuageux";
+/**
+ * Score de confiance 0–100 affiché à côté de chaque chiffre.
+ * Mesure en direct = base élevée ; estimation horaire = base basse. Les signalements et votes
+ * récents qui vont dans le même sens que le statut l'augmentent, les contradictions la baissent.
+ */
+function confidenceScore(isLive: boolean, congested: boolean, reports: number, votes?: { still: number; clear: number }) {
+    let c = isLive ? 70 : 25;
+    c += Math.min(20, reports * 10);
+    if (votes) {
+        const agree = congested ? votes.still : votes.clear;
+        const disagree = congested ? votes.clear : votes.still;
+        c += Math.min(20, agree * 5) - Math.min(30, disagree * 10);
+    }
+    return Math.max(5, Math.min(98, Math.round(c)));
+}
 
-    const data = { isRaining, rainMm, weatherLabel };
-    weatherCache = { data, expires: now + 5 * 60 * 1000 };
+/** Pluie à Kinshasa (Open-Meteo, gratuit, sans clé). Cache 10 min. null si indisponible. */
+let weatherCache: { data: { rainMmH: number; rainProbNext2h: number } | null; expires: number } | null = null;
+async function loadKinshasaWeather() {
+    if (weatherCache && weatherCache.expires > Date.now()) return weatherCache.data;
+    let data: { rainMmH: number; rainProbNext2h: number } | null = null;
+    try {
+        const url = 'https://api.open-meteo.com/v1/forecast?latitude=-4.33&longitude=15.31&current=precipitation&hourly=precipitation_probability&forecast_hours=3&timezone=Africa%2FKinshasa';
+        const res = await fetch(url, { cache: 'no-store' });
+        if (res.ok) {
+            const w = await res.json();
+            const probs: number[] = (w?.hourly?.precipitation_probability || []).slice(0, 2);
+            data = {
+                rainMmH: Number(w?.current?.precipitation ?? 0),
+                rainProbNext2h: probs.length ? Math.max(...probs.map(Number)) : 0,
+            };
+        }
+    } catch (err) {
+        console.warn('[Météo] indisponible:', err);
+    }
+    weatherCache = { data, expires: Date.now() + 10 * 60 * 1000 };
     return data;
-  } catch {
-    return null;
-  }
 }
 
 /**
- * Récupère les incidents récents (accidents, travaux, coupures, police, nids-de-poule) depuis Firestore (cache 45s).
+ * Événements qui bloquent les routes : matchs, cortèges, rassemblements, travaux, coupures SNEL.
+ * Collection `traffic_events` saisie par les admins : { title, type, lat, lng, radiusKm, startsAt, endsAt }.
  */
-async function fetchLiveIncidentsContext() {
-  const now = Date.now();
-  if (incidentsCache && incidentsCache.expires > now) return incidentsCache.data;
-
-  const data = { roadReports: [] as any[], events: [] as any[], policeReports: [] as any[] };
-  try {
-    const firestore = getServerFirestore();
-    const sixHoursAgo = Timestamp.fromDate(new Date(now - 6 * 3600 * 1000));
-    const threeHoursAgo = Timestamp.fromDate(new Date(now - 3 * 3600 * 1000));
-
-    const [repSnap, evtSnap, polSnap] = await Promise.all([
-      getDocs(query(collection(firestore, 'road_condition_reports'), where('status', '==', 'active'), limit(30))).catch(() => null),
-      getDocs(query(collection(firestore, 'events'), where('createdAt', '>=', sixHoursAgo), orderBy('createdAt', 'desc'), limit(30))).catch(() => null),
-      getDocs(query(collection(firestore, 'police_reports'), where('timestamp', '>=', threeHoursAgo), orderBy('timestamp', 'desc'), limit(20))).catch(() => null),
-    ]);
-
-    if (repSnap) data.roadReports = repSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-    if (evtSnap) data.events = evtSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-    if (polSnap) data.policeReports = polSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-    incidentsCache = { data, expires: now + 45 * 1000 };
-  } catch (err) {
-    console.warn('[LiveIncidents] Firestore bypass:', err);
-  }
-  return data;
+async function loadActiveTrafficEvents(): Promise<Array<{ title: string; type: string; lat: number; lng: number; radiusKm: number }>> {
+    try {
+        const firestore = getServerFirestore();
+        const snap = await getDocs(query(collection(firestore, 'traffic_events'), orderBy('endsAt', 'desc'), limit(40)));
+        const now = Date.now();
+        return snap.docs.map(d => d.data() as any).filter(e => {
+            const start = tsToMillis(e.startsAt) ?? 0;
+            const end = tsToMillis(e.endsAt) ?? 0;
+            // actif d'une heure avant le début à une heure après la fin
+            return typeof e.lat === 'number' && typeof e.lng === 'number' && now >= start - 3600e3 && now <= end + 3600e3;
+        }).map(e => ({ title: String(e.title || 'Événement'), type: String(e.type || 'autre'), lat: e.lat, lng: e.lng, radiusKm: Number(e.radiusKm || 1.5) }));
+    } catch (err) {
+        console.warn('[Événements] lecture impossible:', err);
+        return [];
+    }
 }
 
-function matchLocalIncidents(
-  coords: { lat: number; lng: number },
-  keywords: string[],
-  ctx: { roadReports: any[]; events: any[]; policeReports: any[] }
-) {
-  const norm = (s: string) => (s || '').toLowerCase();
-  const hasKeyword = (text: string) => {
-    const t = norm(text);
-    return keywords.some(k => k && t.includes(k.toLowerCase()));
-  };
+function distanceKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
+    const dLat = (a.lat - b.lat) * 111;
+    const dLng = (a.lng - b.lng) * 111 * Math.cos((a.lat * Math.PI) / 180);
+    return Math.sqrt(dLat * dLat + dLng * dLng);
+}
 
-  const roadReports = ctx.roadReports.filter(
-    r =>
-      (r.coords && Math.abs(r.coords.lat - coords.lat) < 0.02 && Math.abs(r.coords.lng - coords.lng) < 0.02) ||
-      hasKeyword(r.locationName) ||
-      hasKeyword(r.description)
-  );
-  const events = ctx.events.filter(e => hasKeyword(e.location) || hasKeyword(e.description));
-  const police = ctx.policeReports.filter(p => hasKeyword(p.location) || hasKeyword(p.note));
+const REPORT_TYPE_LABEL: Record<string, string> = {
+    blockage: 'Blocage signalé',
+    police: 'Contrôle de police',
+    pothole: 'Nid-de-poule',
+    damaged_road: 'Chaussée abîmée',
+};
+const EVENT_ICON: Record<string, string> = { match: 'calendar', cortege: 'siren', eglise: 'users', travaux: 'construction', coupure: 'bolt', autre: 'calendar' };
 
-  return { roadReports, events, police };
+/**
+ * Panneau « Pourquoi ça bloque » : chaque cause avec sa preuve et son poids.
+ * Seules les sources réelles comptent ; la cause habituelle n'apparaît que s'il n'y a rien d'autre,
+ * et elle est marquée « non confirmée ».
+ */
+function buildWhy(node: any, ctx: { weather: { rainMmH: number; rainProbNext2h: number } | null; events: Awaited<ReturnType<typeof loadActiveTrafficEvents>> }) {
+    const items: Array<{ icon: string; label: string; evidence: string; weight: number; confirmed: boolean }> = [];
+    for (const r of node.activeIncidents || []) {
+        items.push({ icon: r.type === 'police' ? 'shield' : 'alert', label: r.description || REPORT_TYPE_LABEL[r.type] || 'Signalement', evidence: `${REPORT_TYPE_LABEL[r.type] || 'Signalement'} · il y a ${r.ageMin} min`, weight: 3, confirmed: true });
+    }
+    for (const e of ctx.events) {
+        if (distanceKm(node.coords, e) <= e.radiusKm) {
+            items.push({ icon: EVENT_ICON[e.type] || 'calendar', label: e.title, evidence: 'Calendrier des événements', weight: 3, confirmed: true });
+        }
+    }
+    if (node.probe && node.probe.speedKmh < 15) {
+        const n = node.probe.contributors;
+        items.push({ icon: 'gps', label: `${n} conducteur${n > 1 ? 's' : ''} roule${n > 1 ? 'nt' : ''} à ${node.probe.speedKmh} km/h ici`, evidence: 'GPS anonyme · 15 dernières minutes', weight: n >= 3 ? 2 : 1, confirmed: n >= 3 });
+    }
+    const v = node.votes || { still: 0, clear: 0, lastAgeMin: null };
+    if (v.still > v.clear && v.still > 0) {
+        items.push({ icon: 'users', label: `${v.still} Kinois sur place disent que c'est toujours bloqué`, evidence: v.lastAgeMin !== null ? `dernier vote il y a ${v.lastAgeMin} min` : 'votes récents', weight: 2, confirmed: true });
+    }
+    const congested = node.status === 'BLOQUÉ' || node.status === 'EMBOUTEILLAGE';
+    if (ctx.weather && ctx.weather.rainMmH >= 0.5) {
+        items.push({ icon: 'rain', label: `Pluie en ce moment (${ctx.weather.rainMmH.toFixed(1)} mm/h)`, evidence: 'Météo Open-Meteo', weight: congested ? 2 : 1, confirmed: true });
+    } else if (ctx.weather && ctx.weather.rainProbNext2h >= 60) {
+        items.push({ icon: 'rain', label: `Pluie probable dans les 2 h (${ctx.weather.rainProbNext2h}%)`, evidence: 'Prévision Open-Meteo', weight: 1, confirmed: false });
+    }
+    if (congested && !items.some(i => i.confirmed)) {
+        items.push({ icon: 'clock', label: node.typicalCause, evidence: "Cause habituelle à cette heure, non confirmée aujourd'hui", weight: 1, confirmed: false });
+    }
+    const total = items.reduce((a, i) => a + i.weight, 0) || 1;
+    return items
+        .sort((a, b) => b.weight - a.weight)
+        .map(i => ({ ...i, pct: Math.round((i.weight / total) * 100) }));
+}
+
+/** Contrôles / roulages signalés ces 3 dernières heures (repris de main, cache 45 s). */
+let policeCache: { data: any[]; expires: number } | null = null;
+async function loadRecentPoliceReports(): Promise<any[]> {
+    const now = Date.now();
+    if (policeCache && policeCache.expires > now) return policeCache.data;
+    let data: any[] = [];
+    try {
+        const firestore = getServerFirestore();
+        const since = Timestamp.fromDate(new Date(now - 3 * 3600 * 1000));
+        const snap = await getDocs(query(collection(firestore, 'police_reports'), where('timestamp', '>=', since), orderBy('timestamp', 'desc'), limit(20)));
+        data = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+    } catch (err) {
+        console.warn('[Police] lecture impossible:', err);
+    }
+    policeCache = { data, expires: now + 45 * 1000 };
+    return data;
+}
+
+/** Contrôle signalé près d'un point (coordonnées si présentes, sinon nom de lieu). */
+function matchPolice(reports: any[], coords: { lat: number; lng: number }, words: string[]) {
+    const norm = (t: any) => String(t || '').toLowerCase();
+    return reports.find(r =>
+        (r.coords && Math.abs(Number(r.coords.lat) - coords.lat) < 0.015 && Math.abs(Number(r.coords.lng) - coords.lng) < 0.015) ||
+        words.some(w => w.length >= 4 && (norm(r.location).includes(w) || norm(r.note).includes(w)))
+    ) ?? null;
 }
 
 export async function checkTrafficAction(input: { lat: number, lng: number, address?: string }) {
@@ -122,17 +251,21 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
     }
 
     try {
-        const [incidentsCtx, weather] = await Promise.all([
-            fetchLiveIncidentsContext(),
-            fetchKinshasaWeather()
-        ]);
-        const addrWords = (input.address || "").split(/[\s,()/➔-]+/).filter(w => w.length >= 4);
-        const matched = matchLocalIncidents({ lat: input.lat, lng: input.lng }, addrWords, incidentsCtx);
-        const localReport = matched.roadReports[0] || null;
-        const localEvent = matched.events[0] || null;
-        const localPolice = matched.police[0] || null;
+        // 1. Initialisation Firebase prudente sur le serveur
+        let localReport: any = null;
+        try {
+            const recentReports = await loadFreshReports();
+            // Signalement récent dans un rayon de ~1.5 km
+            localReport = recentReports.find(r => 
+                Math.abs(r.coords.lat - input.lat) < 0.015 && 
+                Math.abs(r.coords.lng - input.lng) < 0.015
+            );
+        } catch (dbError) {
+            console.warn("[TrafficCheck] Firestore bypass:", dbError);
+        }
 
-        // Appel à Google Routes API v2
+        // 2. Appel à Google Routes API v2
+        // Sondage de ~1.5km pour une portion de route significative
         const url = "https://routes.googleapis.com/directions/v2:computeRoutes";
         const body = {
             origin: { location: { latLng: { latitude: input.lat, longitude: input.lng } } },
@@ -145,7 +278,8 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
 
         let data: any = null;
         let route: any = null;
-        let isEstimated = false;
+        // true quand la durée vient d'OSRM (route vide) × facteur horaire : c'est une estimation, pas une mesure.
+        let isEstimate = false;
 
         try {
             const res = await fetch(url, {
@@ -166,9 +300,8 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
             console.warn('[checkTrafficAction] Google Routes call bypassed:', apiErr);
         }
 
-        // Estimation OSRM uniquement si Google Routes n'a pas répondu (marquée explicitement isEstimated = true)
+        // Live OSRM Real-Time Telemetry Fallback if Google was blocked
         if (!route) {
-            isEstimated = true;
             try {
                 const destLat = input.lat + 0.015;
                 const destLng = input.lng + 0.015;
@@ -178,34 +311,39 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
                     const osrmData = await osrmRes.json();
                     if (osrmData.code === 'Ok' && osrmData.routes?.[0]) {
                         const r = osrmData.routes[0];
-                        const { hourOfDay: kinshasaHour } = getKinshasaTimeParts();
-                        const isRush = (kinshasaHour >= 7 && kinshasaHour <= 9) || (kinshasaHour >= 16 && kinshasaHour <= 20);
-                        const rushMult = isRush ? (kinshasaHour >= 17 && kinshasaHour <= 19 ? 2.4 : 1.9) : 1.15;
+                        const { hour: kinshasaHour, isPeakHour: isRush } = kinshasaNow();
+                        const rushMult = isRush ? (kinshasaHour >= 17 && kinshasaHour <= 19 ? 2.8 : 2.1) : 1.15;
                         const durSec = Math.round(r.duration * rushMult);
                         const staticSec = Math.round(r.duration);
                         route = {
                             distanceMeters: r.distance,
                             duration: `${durSec}s`,
                             staticDuration: `${staticSec}s`,
-                            description: "Estimation horaire (Google Routes indisponible)"
+                            description: "Itinéraire via OSRM Live Telemetry"
                         };
                         data = { routes: [route] };
+                        isEstimate = true;
                     }
                 }
             } catch (osrmErr) {
                 console.warn('[checkTrafficAction] OSRM fallback error:', osrmErr);
             }
         }
-
+        
         let result: any = {
             status: "INCONNU",
-            source: isEstimated ? "estimate" : "google",
-            isEstimated,
-            verdict: "Données temps réel indisponibles — soyez prudent sur cet axe.",
+            verdict: "Analyse en cours — soyez prudent sur cet axe.",
             lingala: "Tozali kotala nzela — keba na tamboli na yo.",
             delay: 0,
             ratio: 1,
-            alternatives: []
+            alternatives: [],
+            source: 'none',
+            isLive: false,
+            confidence: 0,
+            cause: null,
+            typicalCause: null,
+            typicalAlternative: null,
+            reportAgeMin: null
         };
 
         if (route) {
@@ -214,73 +352,101 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
             const ratio = dur / statDur;
             const delay = Math.round(Math.max(0, dur - statDur) / 60);
 
+            // Ajustement des seuils de sensibilité pour Kinshasa (Précision accrue)
+            // Un ratio > 1.6 ou un retard de 5 min sur une courte distance indique souvent un blocage
             if (ratio > 1.6 || delay >= 5) result.status = "BLOQUÉ";
             else if (ratio > 1.25 || delay >= 2) result.status = "EMBOUTEILLÉ";
             else if (ratio > 1.1 || delay >= 1) result.status = "MODÉRÉ";
             else result.status = "FLUIDE";
 
-            const prefix = isEstimated ? "[Estimation] " : "";
-            if (localEvent) {
-                result.verdict = `${prefix}Signalement récent : ${localEvent.description}`;
-                result.lingala = "Bato balobi incident ezali na nzela, keba mingi.";
-            } else if (localReport) {
-                result.verdict = `${prefix}Signalement voirie : ${localReport.description}`;
+            if (localReport) {
+                result.verdict = `Signalement communautaire : ${localReport.description}`;
                 result.lingala = "Bato balobi nzela eza pasi, keba mingi.";
             } else {
                 if (result.status === "FLUIDE") {
-                    result.verdict = `${prefix}Axe fluide mesuré (${delay} min de retard).`;
+                    result.verdict = "Axe fluide : Circulation libre constatée.";
                     result.lingala = "Nzela eza kitoko, kotambola eza pasi te.";
                 } else if (result.status === "MODÉRÉ") {
-                    result.verdict = `${prefix}Trafic modéré : ralentissement de +${delay || 1} min.`;
+                    result.verdict = `Trafic modéré : Prévoyez un ralentissement de ${delay || 1} min.`;
                     result.lingala = "Nzela eza pasi moke, zela mwa moke.";
                 } else {
-                    result.verdict = `${prefix}${input.address || 'Cet axe'} est ${result.status.toLowerCase()} (+${delay} min).`;
+                    result.verdict = `${input.address || 'Cet axe'} est actuellement ${result.status.toLowerCase()} (Retard estimé : ${delay} min).`;
                     result.lingala = "Nzela eza bloqué, luka nzela mosusu soki likoki eza.";
                 }
             }
 
             result.delay = delay;
             result.ratio = ratio;
-
-            // Construction honnête de la cause observée (sans texte inventé)
-            const reasons: string[] = [];
-            if (localEvent) reasons.push(`Incident usager : ${localEvent.description}`);
-            if (localReport) reasons.push(`État chaussée : ${localReport.description}`);
-            if (localPolice) reasons.push(`Contrôle / roulage signalé : ${localPolice.note || localPolice.location}`);
-            if (weather?.isRaining) reasons.push(weather.weatherLabel);
-
-            if (reasons.length > 0) {
-                result.cause = reasons.join(" • ");
-            } else if (isEstimated) {
-                result.cause = "Estimation selon l'heure locale de Kinshasa (Google Routes indisponible, aucun incident signalé).";
-            } else if (result.status === "FLUIDE") {
-                result.cause = "Circulation fluide mesurée en direct par Google Routes. Aucun incident signalé.";
-            } else {
-                result.cause = `Ralentissement mesuré en direct (+${delay} min vs trafic fluide). Aucun incident spécifique signalé par les usagers.`;
+            result.source = isEstimate ? 'estimate' : 'google';
+            result.isLive = !isEstimate;
+            result.confidence = confidenceScore(!isEstimate, result.status !== 'FLUIDE', localReport ? 1 : 0);
+            if (isEstimate && !localReport) {
+                result.verdict = `Estimation selon l'heure, pas de mesure en direct pour l'instant. ${result.verdict}`;
             }
 
-            if (data?.routes?.length > 1) {
-                const altRoutes = data.routes.slice(1, 3).map((r: any) => {
+            // Déduction contextuelle de la cause exacte du ralentissement (Hyper-local Kinshasa)
+            const addrLower = (input.address || "").toLowerCase();
+            let cause = "Ralentissement habituel de forte affluence.";
+            let certifiedAlternative = "Avenue secondaire parallèle recommandée.";
+
+            if (localReport) {
+                cause = localReport.description;
+            } else if (result.status === "BLOQUÉ" || result.status === "EMBOUTEILLÉ") {
+                if (addrLower.includes("lumumba") || addrLower.includes("limete") || addrLower.includes("pascal")) {
+                    cause = "Goulot de l\'Échangeur et arrêts de minibus 207 sur la chaussée.";
+                    certifiedAlternative = "Av. des Poids Lourds via Kingabwa (évite l\'Échangeur).";
+                } else if (addrLower.includes("magasin") || addrLower.includes("mondjiba") || addrLower.includes("kintambo")) {
+                    cause = "Régulation manuelle intense des roulages et refoulement vers Ngaliema.";
+                    certifiedAlternative = "Av. du Tourisme le long des berges du fleuve.";
+                } else if (addrLower.includes("matadi") || addrLower.includes("upn") || addrLower.includes("pompage")) {
+                    cause = "Chaussée rétrécie par nids-de-poule et stationnement anarchique de taxis-motos.";
+                    certifiedAlternative = "Avenue de la Montagne ou déviation vers Météo.";
+                } else if (addrLower.includes("by-pass") || addrLower.includes("triangle") || addrLower.includes("lemba")) {
+                    cause = "Déversement de marché de rue et bus en arrêt sauvage au Rond-Point.";
+                    certifiedAlternative = "Avenue Elengesa (nouvelle voie asphaltée fluide).";
+                } else if (addrLower.includes("victoire") || addrLower.includes("kasa-vubu") || addrLower.includes("kalamu")) {
+                    cause = "Forte affluence piétonne et embouteillage en nœud de papillon.";
+                    certifiedAlternative = "Avenue de la Victoire vers Avenue du Stade.";
+                } else if (delay >= 6) {
+                    cause = "Cause inconnue : aucun signalement récent sur cet axe.";
+                    certifiedAlternative = "Contourner par la première ruelle carrossable à droite.";
+                } else {
+                    cause = "Trafic dense en accordéon aux heures de pointe.";
+                    certifiedAlternative = "Consultez les itinéraires bis sur le GPS K-Flow.";
+                }
+            } else if (result.status === "MODÉRÉ") {
+                cause = "Ralentissement passager, circulation en accordéon.";
+                certifiedAlternative = "Cet axe reste praticable, restez sur la voie du milieu.";
+            } else {
+                cause = "Voie totalement dégagée, aucun obstacle signalé.";
+                certifiedAlternative = "Itinéraire principal optimal.";
+            }
+
+            // Seul un signalement récent est une cause confirmée ; le reste est la cause habituelle de l'axe.
+            result.cause = localReport ? localReport.description : null;
+            result.reportAgeMin = localReport ? localReport.ageMin : null;
+            result.typicalCause = localReport ? null : cause;
+            result.typicalAlternative = certifiedAlternative;
+
+            if (data.routes.length > 1) {
+                // Itinéraires bis renvoyés par Google : on donne aussi leur retard mesuré (repris de main)
+                result.alternatives = data.routes.slice(1, 3).map((r: any) => {
                     const aDur = parseInt((r.duration || "0s").replace('s', '')) || 0;
                     const aStat = parseInt((r.staticDuration || r.duration || "0s").replace('s', '')) || aDur;
-                    const aDelay = Math.max(0, Math.round((aDur - aStat) / 60));
                     return {
-                        description: r.description || "Itinéraire bis Google Routes",
+                        description: r.description || "Itinéraire bis",
                         duration: Math.round(aDur / 60) + " min",
-                        delay: aDelay
+                        delay: isEstimate ? null : Math.max(0, Math.round((aDur - aStat) / 60)),
                     };
                 });
-                result.alternatives = altRoutes;
-                result.certifiedAlternative = `${altRoutes[0].description} (${altRoutes[0].duration}, +${altRoutes[0].delay} min mesuré en direct)`;
-            } else {
-                result.certifiedAlternative = isEstimated
-                    ? "Aucune alternative vérifiée en direct (Google Routes indisponible)."
-                    : "Aucune déviation plus rapide détectée sur Google Routes pour ce tronçon.";
             }
 
-            result.bestDepartureTime = result.status === "FLUIDE"
-                ? "Circulation fluide actuellement — vous pouvez partir maintenant."
-                : `Congestion actuelle (+${delay} min). Consultez les prévisions horaires ci-dessous avant de partir.`;
+            // Contrôle / roulage signalé tout près : cause observée si aucun signalement de voirie
+            const police = matchPolice(await loadRecentPoliceReports(), input, (input.address || '').toLowerCase().split(/[\s,()/➔-]+/));
+            if (police && !localReport) {
+                result.cause = `Contrôle / roulage signalé : ${police.note || police.location || 'sur cet axe'}`;
+                result.typicalCause = null;
+            }
         }
 
         trafficCache.set(cacheKey, { data: result, expires: now + 90000 });
@@ -289,9 +455,7 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
     } catch (e: any) {
         console.error("Critical Traffic Check Error:", e);
         return { 
-            status: "ERREUR",
-            source: "error",
-            isEstimated: true,
+            status: "ERREUR", 
             verdict: `Erreur d'analyse : ${e.message || "Service indisponible."}`,
             lingala: "Pasi mwa moke na machine, zela moke."
         };
@@ -321,6 +485,7 @@ export async function getGoogleTrafficStatusAction(axes: any[]) {
                     body: JSON.stringify(body)
                 });
 
+                if (!res.ok) return { road: axis.name, status: "INCONNU", speed: 0, delay: 0 };
                 const data = await res.json();
                 const route = data?.routes?.[0];
                 
@@ -342,17 +507,18 @@ export async function getGoogleTrafficStatusAction(axes: any[]) {
 
                 // Enregistrement passif dans traffic_history pour alimenter le modèle d'apprentissage IA
                 try {
-                    const firestore = getServerFirestore();
-                    const { dayOfWeek, hourOfDay } = getKinshasaTimeParts();
-                    addDoc(collection(firestore, 'traffic_history'), {
+                    const kin = kinshasaNow();
+                    // Écriture serveur (Admin SDK) : traffic_history n'est plus modifiable par les clients.
+                    adminDb().collection('traffic_history').add({
                         road: axis.name,
                         status,
                         speed,
                         delay,
-                        dayOfWeek,
-                        hourOfDay,
-                        timezone: 'Africa/Kinshasa',
-                        timestamp: serverTimestamp()
+                        dayOfWeek: kin.dayOfWeek,
+                        hourOfDay: kin.hour,
+                        minuteOfHour: kin.minute,
+                        tz: 'Africa/Kinshasa',
+                        timestamp: FieldValue.serverTimestamp()
                     }).catch(() => {});
                 } catch (logErr) {
                     // Silencieux pour ne pas impacter le flux principal
@@ -431,9 +597,9 @@ export async function sendTestPushNotificationAction(subscription: PushSubscript
   }
 }
 
-export async function sendTestEmailAction() {
-  const smtpUser = "kinshasaflow@gmail.com";
-  const smtpPass = "dazr vpou tslb tsok"; 
+export async function sendTestEmailAction(idToken: string) {
+  try { await verifyAdmin(idToken); } catch (err: any) { return { success: false, error: authErrorMessage(err, 'Non autorisé.') }; }
+  const { smtpUser, smtpPass } = smtpCredentials();
 
   const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
@@ -470,10 +636,17 @@ export async function broadcastEmailAction(params: {
   userName: string,
   type: 'chat' | 'alert' | 'hazard' | 'report',
   location?: string,
-  recipientEmails?: string[]
+  recipientEmails?: string[],
+  idToken: string
 }) {
-  const smtpUser = "kinshasaflow@gmail.com";
-  const smtpPass = "dazr vpou tslb tsok"; 
+  // Appelable depuis le navigateur : on exige un compte connecté, et seuls les admins
+  // peuvent choisir les destinataires.
+  let caller;
+  try { caller = await verifyCaller(params.idToken); } catch (err: any) { return { success: false, error: authErrorMessage(err, 'Non autorisé.') }; }
+  if (params.recipientEmails?.length && !caller.isAdmin) {
+    return { success: false, error: 'Réservé aux administrateurs.' };
+  }
+  const { smtpUser, smtpPass } = smtpCredentials();
 
   // Initialisation dynamique des destinataires
   let recipientList: string[] = ['drnduwa@gmail.com']; 
@@ -482,9 +655,8 @@ export async function broadcastEmailAction(params: {
       recipientList = Array.from(new Set([...recipientList, ...params.recipientEmails]));
   } else {
       try {
-        const firestore = getServerFirestore();
-        const usersSnap = await getDocs(collection(firestore, 'users'));
-        
+        const usersSnap = await adminDb().collection('users').get();
+
         if (!usersSnap.empty) {
             const userEmails = usersSnap.docs
               .map(doc => doc.data().email)
@@ -553,9 +725,15 @@ export async function broadcastEmailAction(params: {
   }
 }
 
-export async function sendWelcomeEmailAction(params: { email: string, userName: string }) {
-  const smtpUser = "kinshasaflow@gmail.com";
-  const smtpPass = "dazr vpou tslb tsok"; 
+export async function sendWelcomeEmailAction(params: { email: string, userName: string, idToken: string }) {
+  // Uniquement vers l'adresse du compte qui vient de s'inscrire (sinon : envoi de spam vers n'importe qui).
+  try {
+    const caller = await verifyCaller(params.idToken);
+    if (!caller.email || caller.email.toLowerCase() !== String(params.email).toLowerCase()) {
+      return { success: false, error: 'Adresse non autorisée.' };
+    }
+  } catch (err: any) { return { success: false, error: authErrorMessage(err, 'Non autorisé.') }; }
+  const { smtpUser, smtpPass } = smtpCredentials();
 
   const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
@@ -604,19 +782,20 @@ export async function sendWelcomeEmailAction(params: { email: string, userName: 
   }
 }
 
-export async function sendAlertEmailAction(params: { type: string, location: string, userName: string }) {
+export async function sendAlertEmailAction(params: { type: string, location: string, userName: string, idToken: string }) {
   return broadcastEmailAction({
       title: params.type.toUpperCase(),
       message: `${params.type} signalé par ${params.userName}`,
       userName: params.userName,
       type: 'alert',
-      location: params.location
+      location: params.location,
+      idToken: params.idToken
   });
 }
 
-export async function sendRelanceGiftEmailAction(recipientEmails: string[]) {
-  const smtpUser = process.env.SMTP_USER || "kinshasaflow@gmail.com";
-  const smtpPass = (process.env.SMTP_PASS || "jrgl kgjl qlqj vmfc").replace(/"/g, '');
+export async function sendRelanceGiftEmailAction(idToken: string, recipientEmails: string[]) {
+  try { await verifyAdmin(idToken); } catch (err: any) { return { success: false, error: authErrorMessage(err, 'Non autorisé.') }; }
+  const { smtpUser, smtpPass } = smtpCredentials();
 
   if (!recipientEmails || recipientEmails.length === 0) {
     return { success: false, error: "Aucun email destinataire spécifié." };
@@ -701,107 +880,9 @@ export async function sendRelanceGiftEmailAction(recipientEmails: string[]) {
   }
 }
 
-export async function fulfillFlexPayPayment(orderNumber: string): Promise<{ success: boolean; error?: string }> {
-  try {
-    const firestore = getServerFirestore();
-    const paymentRef = doc(firestore, 'payments', orderNumber);
-    
-    let alreadySuccess = false;
-    await runTransaction(firestore, async (transaction) => {
-      const paymentSnap = await transaction.get(paymentRef);
-      if (!paymentSnap.exists()) {
-        throw new Error(`Paiement ${orderNumber} introuvable dans la base.`);
-      }
-
-      const paymentData = paymentSnap.data() as PaymentRecord;
-      if (paymentData.status === 'success') {
-        alreadySuccess = true;
-        return;
-      }
-
-      const userRef = doc(firestore, 'users', paymentData.userId);
-      const userSnap = await transaction.get(userRef);
-      if (!userSnap.exists()) {
-        throw new Error(`Utilisateur ${paymentData.userId} introuvable.`);
-      }
-
-      const userData = userSnap.data() as UserProfile;
-
-      // 1. Mettre à jour le statut du paiement
-      transaction.update(paymentRef, {
-        status: 'success',
-        completedAt: serverTimestamp(),
-      });
-
-      // 2. Créditer les Stars ou activer le Pass Illimité
-      if (paymentData.itemType === 'pack' && paymentData.stars) {
-        const addedStars = Number(paymentData.stars);
-        const newBalance = (userData.currentStarsBalance || 0) + addedStars;
-        const newPurchased = (userData.totalStarsPurchased || 0) + addedStars;
-
-        transaction.update(userRef, {
-          currentStarsBalance: newBalance,
-          totalStarsPurchased: newPurchased,
-        });
-
-        // Historique de transaction utilisateur
-        const starTransRef = doc(collection(userRef, 'star_transactions'));
-        transaction.set(starTransRef, {
-          userId: paymentData.userId,
-          type: 'purchase',
-          starsChange: addedStars,
-          balanceAfterTransaction: newBalance,
-          description: `Achat Pack ${addedStars} Stars FlexPay (${paymentData.amount} ${paymentData.currency})`,
-          relatedObjectId: orderNumber,
-          relatedObjectType: 'flexpay_pack',
-          timestamp: serverTimestamp(),
-        });
-      } else if (paymentData.itemType === 'pass' && paymentData.passType) {
-        const daysToAdd = paymentData.passType === 'weekly' ? 7 : 30;
-        let baseDate = new Date();
-        if (userData.hasActivePass && userData.passExpiresAt) {
-          const currentExpiry = userData.passExpiresAt.toDate ? userData.passExpiresAt.toDate() : new Date(userData.passExpiresAt);
-          if (currentExpiry > baseDate) {
-            baseDate = currentExpiry; // Prolonge l'abonnement en cours
-          }
-        }
-
-        const newExpiryDate = new Date(baseDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000);
-
-        transaction.update(userRef, {
-          hasActivePass: true,
-          passExpiresAt: Timestamp.fromDate(newExpiryDate),
-          passType: paymentData.passType,
-        });
-
-        const starTransRef = doc(collection(userRef, 'star_transactions'));
-        transaction.set(starTransRef, {
-          userId: paymentData.userId,
-          type: 'purchase',
-          starsChange: 0,
-          balanceAfterTransaction: userData.currentStarsBalance || 0,
-          description: `Activation Pass Illimité (${paymentData.passType === 'weekly' ? '7 Jours' : '30 Jours'})`,
-          relatedObjectId: orderNumber,
-          relatedObjectType: 'flexpay_pass',
-          timestamp: serverTimestamp(),
-        });
-      }
-    });
-
-    return { success: true };
-  } catch (err: any) {
-    console.error(`[FlexPay] Erreur lors du fulfillment ${orderNumber}:`, err);
-    return { success: false, error: err.message || 'Erreur lors du crédit de la commande.' };
-  }
-}
-
 export async function initiateFlexPayPaymentAction(params: {
-  userId: string;
-  itemType: 'pack' | 'pass';
+  idToken: string;
   itemId: string;
-  stars?: number;
-  passType?: 'weekly' | 'monthly';
-  amount: number;
   currency: 'CDF' | 'USD';
   channel: 'mobile_money' | 'card';
   phone?: string;
@@ -814,6 +895,18 @@ export async function initiateFlexPayPaymentAction(params: {
   error?: string;
 }> {
   try {
+    const { uid } = await verifyCaller(params.idToken);
+
+    // Prix, Stars et durée du Pass viennent du catalogue serveur, jamais du navigateur.
+    const pack = STAR_PACK_CATALOG[params.itemId];
+    const pass = PASS_CATALOG[params.itemId];
+    if (!pack && !pass) return { success: false, error: 'Article inconnu.' };
+    if (params.currency !== 'CDF' && params.currency !== 'USD') return { success: false, error: 'Devise non prise en charge.' };
+    const itemType: 'pack' | 'pass' = pack ? 'pack' : 'pass';
+    const amount = (pack ?? pass)!.prices[params.currency];
+    const stars = pack ? pack.stars : 0;
+    const passType = pass ? pass.passType : null;
+
     const reference = `KF_${Date.now()}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
     let result: { success: boolean; orderNumber?: string; url?: string; message?: string; error?: string };
@@ -824,18 +917,18 @@ export async function initiateFlexPayPaymentAction(params: {
       }
       result = await initiateFlexPayMobileMoney({
         phone: params.phone,
-        amount: params.amount,
+        amount,
         currency: params.currency,
         reference,
       });
     } else {
       result = await initiateFlexPayCard({
-        amount: params.amount,
+        amount,
         currency: params.currency,
         reference,
-        description: params.itemType === 'pass'
-          ? `Pass Illimité Kinshasa Flow (${params.passType})`
-          : `Pack ${params.stars} Stars Kinshasa Flow`,
+        description: itemType === 'pass'
+          ? `Pass Illimité Kinshasa Flow (${passType})`
+          : `Pack ${stars} Stars Kinshasa Flow`,
       });
     }
 
@@ -843,27 +936,23 @@ export async function initiateFlexPayPaymentAction(params: {
       return { success: false, error: result.error || 'Impossible d\'initier le paiement.' };
     }
 
-    // Sauvegarder dans Firestore
-    const firestore = getServerFirestore();
-    const paymentRef = doc(firestore, 'payments', result.orderNumber);
     const network = params.phone ? detectDRCOperator(params.phone) : undefined;
-
-    await setDoc(paymentRef, {
+    await adminDb().collection('payments').doc(result.orderNumber).set({
       id: result.orderNumber,
       orderNumber: result.orderNumber,
       reference,
-      userId: params.userId,
-      itemType: params.itemType,
+      userId: uid,
+      itemType,
       itemId: params.itemId,
-      stars: params.stars || 0,
-      passType: params.passType || null,
-      amount: params.amount,
+      stars,
+      passType,
+      amount,
       currency: params.currency,
       channel: params.channel,
       network: network || null,
       phone: params.phone || null,
       status: 'pending',
-      createdAt: serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
 
     return {
@@ -875,7 +964,7 @@ export async function initiateFlexPayPaymentAction(params: {
     };
   } catch (err: any) {
     console.error('[FlexPay] Exception in initiateFlexPayPaymentAction:', err);
-    return { success: false, error: err.message || 'Erreur lors de l\'initiation du paiement.' };
+    return { success: false, error: authErrorMessage(err, 'Erreur lors de l\'initiation du paiement.') };
   }
 }
 
@@ -893,7 +982,7 @@ export async function checkFlexPayStatusAction(orderNumber: string): Promise<{
     }
 
     if (checkRes.status === '0') {
-      const fulfillment = await fulfillFlexPayPayment(orderNumber);
+      const fulfillment = await fulfillVerifiedFlexPayPayment(orderNumber);
       return {
         success: true,
         status: '0',
@@ -901,9 +990,7 @@ export async function checkFlexPayStatusAction(orderNumber: string): Promise<{
         fulfilled: fulfillment.success,
       };
     } else if (checkRes.status === '1') {
-      const firestore = getServerFirestore();
-      const paymentRef = doc(firestore, 'payments', orderNumber);
-      await updateDoc(paymentRef, { status: 'failed', failedAt: serverTimestamp() }).catch(() => {});
+      await markPaymentFailed(orderNumber);
       return {
         success: true,
         status: '1',
@@ -926,7 +1013,8 @@ import { TrafficForecast, HourlyForecast } from '@/lib/types';
 import { MAJOR_AXES } from '@/lib/constants';
 
 export async function getTrafficForecastAction(routeName: string): Promise<TrafficForecast> {
-  const { hourOfDay: currentHour, dayOfWeek: currentDayOfWeek } = getKinshasaTimeParts();
+  // Heure et jour de Kinshasa (le serveur tourne en UTC)
+  const { hour: currentHour, dayOfWeek: currentDayOfWeek } = kinshasaNow();
   
   // 1. État Actuel (Données en temps réel Google)
   const axis = MAJOR_AXES.find(a => a.name === routeName);
@@ -971,10 +1059,18 @@ export async function getTrafficForecastAction(routeName: string): Promise<Traff
       const q = query(
         historyCol,
         where('road', '==', routeName),
-        limit(100)
+        limit(500)
       );
       const snap = await getDocs(q);
-      historicalDocs = snap.docs.map(d => d.data());
+      // Les anciens relevés (sans champ `tz`) ont été enregistrés à l'heure UTC du serveur :
+      // on les recale sur l'heure de Kinshasa (UTC+1).
+      historicalDocs = snap.docs.map(d => {
+        const h = d.data() as any;
+        if (h.tz === 'Africa/Kinshasa' || typeof h.hourOfDay !== 'number') return h;
+        const hour = (h.hourOfDay + 1) % 24;
+        const dayOfWeek = hour === 0 && typeof h.dayOfWeek === 'number' ? (h.dayOfWeek + 1) % 7 : h.dayOfWeek;
+        return { ...h, hourOfDay: hour, dayOfWeek };
+      });
     } catch (dbErr) {
       console.warn('[Forecast] Erreur lecture traffic_history:', dbErr);
     }
@@ -1037,57 +1133,26 @@ export async function getTrafficForecastAction(routeName: string): Promise<Traff
     }
   }
 
-  // 3. Vérification RÉELLE des itinéraires bis (plus d'estimation à 60%)
-  const DETOUR_SEGMENTS: Record<string, Array<{ road: string; origin: { lat: number; lng: number }; dest: { lat: number; lng: number } }>> = {
-    'Boulevard Lumumba': [
-      { road: 'Avenue des Poids Lourds', origin: { lat: -4.3150, lng: 15.3400 }, dest: { lat: -4.3350, lng: 15.3550 } },
-      { road: 'Av. Ndjoku (Masina)', origin: { lat: -4.3750, lng: 15.4100 }, dest: { lat: -4.3900, lng: 15.4300 } }
-    ],
-    'Boulevard du 30 Juin': [
-      { road: 'Avenue de la Justice', origin: { lat: -4.3030, lng: 15.2940 }, dest: { lat: -4.3070, lng: 15.3020 } },
-      { road: 'Avenue de la Science', origin: { lat: -4.3140, lng: 15.3020 }, dest: { lat: -4.3180, lng: 15.3060 } }
-    ],
-    'Route de Matadi': [
-      { road: 'Avenue By Pass', origin: { lat: -4.4100, lng: 15.3150 }, dest: { lat: -4.4250, lng: 15.3250 } },
-      { road: 'Avenue de la Montagne', origin: { lat: -4.3450, lng: 15.2650 }, dest: { lat: -4.3300, lng: 15.2600 } }
-    ],
-    'Avenue Kasa-Vubu': [
-      { road: "Avenue de l'Enseignement", origin: { lat: -4.3400, lng: 15.3050 }, dest: { lat: -4.3480, lng: 15.3150 } },
-      { road: 'Avenue Gambela', origin: { lat: -4.3450, lng: 15.3080 }, dest: { lat: -4.3350, lng: 15.3020 } }
-    ]
-  };
-
-  const matchedAxis = MAJOR_AXES.find(a => a.name === routeName);
-  const candidateDetours = DETOUR_SEGMENTS[routeName] || (
-    matchedAxis
-      ? MAJOR_AXES.filter(a => a.district === matchedAxis.district && a.name !== matchedAxis.name)
-          .slice(0, 2)
-          .map(a => ({ road: a.name, origin: a.origin, dest: a.destination }))
-      : [
-          { road: 'Avenue des Poids Lourds (Kingabwa)', origin: { lat: -4.3150, lng: 15.3400 }, dest: { lat: -4.3350, lng: 15.3550 } },
-          { road: 'Avenue de la Justice', origin: { lat: -4.3030, lng: 15.2940 }, dest: { lat: -4.3070, lng: 15.3020 } }
-        ]
-  );
-
-  const isPeak = (currentHour >= 7 && currentHour <= 9) || (currentHour >= 16 && currentHour <= 20);
-  const alternatives = await Promise.all(
-    candidateDetours.map(async (alt) => {
-      try {
-        const seg = await fetchSegmentTelemetry(alt.origin, alt.dest, 1.5, isPeak);
-        return {
-          road: seg.source === 'google' ? alt.road : `${alt.road} (Estimation)`,
-          delay: seg.delayMin,
-          status: delayToStatus(seg.delayMin)
-        };
-      } catch {
-        return {
-          road: `${alt.road} (Non vérifié)`,
-          delay: currentDelay,
-          status: 'DENSE' as const
-        };
-      }
-    })
-  );
+  // 3. Alternatives : mesurées en direct quand l'axe est connu, sinon marquées « non mesuré ».
+  const alternativesMap: Array<[string, string[]]> = [
+    ['Lumumba', ['Poids Lourds', 'Ndjoku']],
+    ['30 Juin', ['Justice', 'Mondjiba']],
+    ['Matadi', ['Montagne', 'Tourisme']],
+    ['Kasa-Vubu', ['Enseignement', 'Gambela']],
+    ['Victoire', ['Enseignement', 'Gambela']],
+    ['Mondjiba', ['Tourisme', 'École']],
+    ['Université', ['Kapela', 'Kimwenza']],
+  ];
+  const altTerms = alternativesMap.find(([k]) => routeName.includes(k))?.[1] ?? [];
+  const altAxes = altTerms
+    .map(term => MAJOR_AXES.find(a => a.name.includes(term) && a.name !== routeName))
+    .filter((a): a is (typeof MAJOR_AXES)[number] => Boolean(a));
+  const measuredAlts = altAxes.length ? await getGoogleTrafficStatusAction(altAxes) : [];
+  const alternatives = measuredAlts.map(m => ({
+    road: m.road,
+    delay: m.status === 'INCONNU' ? null : m.delay,
+    status: m.status === 'INCONNU' ? 'NON MESURÉ' : m.status,
+  }));
 
   return {
     road: routeName,
@@ -1104,19 +1169,18 @@ export async function getTrafficForecastAction(routeName: string): Promise<Traff
  * ============================================================================
  */
 
-export async function getWalletTransactionsAction(userId: string) {
+export async function getWalletTransactionsAction(idToken: string) {
   try {
-    const firestore = getServerFirestore();
-    const transRef = collection(firestore, 'users', userId, 'wallet_transactions');
-    const q = query(transRef, orderBy('timestamp', 'desc'), limit(15));
-    const snap = await getDocs(q);
+    const { uid } = await verifyCaller(idToken);
+    const snap = await adminDb().collection('users').doc(uid).collection('wallet_transactions')
+      .orderBy('timestamp', 'desc').limit(15).get();
     return {
       success: true,
       transactions: snap.docs.map(d => {
         const data = d.data();
         return {
           id: d.id,
-          userId: data.userId || userId,
+          userId: uid,
           type: data.type || 'earning',
           source: data.source || 'incident_report',
           amountCDF: data.amountCDF || 0,
@@ -1135,207 +1199,294 @@ export async function getWalletTransactionsAction(userId: string) {
   }
 }
 
+/**
+ * Récompense une contribution RÉELLE et vérifiée, une seule fois :
+ *  - 'upvote'         : refId = id du document traffic_votes créé par l'usager (vote 1-tap)
+ *  - 'incident_report': refId = id d'un road_condition_reports créé par l'usager il y a moins de 2 h
+ *
+ * Elle donne :
+ *  - des FC, dans la limite de DAILY_REWARD_CAP_CDF par jour (au-delà : 0 FC, mais l'XP reste) ;
+ *  - de l'XP, la progression des missions du jour, la série de jours, les badges ;
+ *  - des points de la semaine pour l'usager et sa commune (classement).
+ * Tout est écrit dans une seule transaction serveur (Admin SDK) ; le client ne peut rien modifier.
+ */
 export async function awardWalletContributionAction(params: {
-  userId: string;
-  type: 'incident_report' | 'upvote' | 'voice_memo' | 'telemetry';
+  idToken: string;
+  type: 'incident_report' | 'upvote';
+  refId: string;
   road?: string;
-  note?: string;
 }) {
   try {
-    const firestore = getServerFirestore();
-    const userRef = doc(firestore, 'users', params.userId);
-    const userSnap = await getDoc(userRef);
+    const { uid } = await verifyCaller(params.idToken);
+    const fullReward = REWARD_CDF[params.type];
+    if (!fullReward || !params.refId) return { success: false, error: "Contribution non reconnue." };
 
-    if (!userSnap.exists()) {
-      return { success: false, error: "Utilisateur introuvable." };
-    }
+    const db = adminDb();
+    const day = kinshasaDayKey();
+    const week = kinshasaWeekId();
+    const sourceRef = params.type === 'upvote'
+      ? db.collection('traffic_votes').doc(params.refId)
+      : db.collection('road_condition_reports').doc(params.refId);
+    const claimRef = db.collection('reward_claims').doc(`${params.type}_${params.refId}`);
+    const userRef = db.collection('users').doc(uid);
+    const dailyRef = db.collection('reward_daily').doc(`${uid}_${day}`);
+    const missionRef = db.collection('missions').doc(`${uid}_${day}`);
 
-    const userData = userSnap.data();
-    const currentCDF = userData.walletBalanceCDF || 0;
-    const currentContribs = userData.totalContributionsCount || 0;
-    const currentTrust = userData.trustScore || 95;
+    const outcome = await db.runTransaction(async (tx) => {
+      const [sourceSnap, claimSnap, userSnap, dailySnap, missionSnap] = await Promise.all([
+        tx.get(sourceRef), tx.get(claimRef), tx.get(userRef), tx.get(dailyRef), tx.get(missionRef),
+      ]);
+      if (!sourceSnap.exists) return { ok: false as const, error: "Contribution introuvable." };
+      const source = sourceSnap.data() as any;
+      if (source.userId !== uid) return { ok: false as const, error: "Cette contribution n'est pas la vôtre." };
+      const createdMs = source.createdAt?.toMillis ? source.createdAt.toMillis() : 0;
+      if (!createdMs || Date.now() - createdMs > 2 * 3600 * 1000) return { ok: false as const, error: "Contribution trop ancienne." };
+      if (claimSnap.exists) return { ok: false as const, error: "Déjà récompensé." };
+      if (!userSnap.exists) return { ok: false as const, error: "Utilisateur introuvable." };
+      const user = userSnap.data() as any;
+      if (user.isBlocked) return { ok: false as const, error: "Compte suspendu." };
 
-    // Barème des gains en Francs Congolais (CDF)
-    const REWARD_MAP: Record<string, number> = {
-      incident_report: 200,
-      voice_memo: 100,
-      upvote: 25,
-      telemetry: 100
-    };
+      // --- FC (plafonnés)
+      const earnedToday = dailySnap.exists ? Number(dailySnap.data()!.amountCDF || 0) : 0;
+      const rewardCDF = earnedToday + fullReward <= DAILY_REWARD_CAP_CDF ? fullReward : 0;
+      const newCDF = (user.walletBalanceCDF || 0) + rewardCDF;
+      const newUSD = parseFloat((newCDF / CDF_PER_USD).toFixed(2));
 
-    const rewardCDF = REWARD_MAP[params.type] || 25;
-    const newCDF = currentCDF + rewardCDF;
-    const newUSD = parseFloat((newCDF / 2800).toFixed(2));
-    const newContribs = currentContribs + 1;
-    const newTrust = Math.min(100, currentTrust + 1);
+      // --- Jeu : missions du jour
+      const kind: MissionKind = params.type === 'incident_report' ? 'report' : 'vote';
+      const mission = missionSnap.exists ? (missionSnap.data() as any) : { progress: {}, completed: [] };
+      const progress: Record<string, number> = { ...(mission.progress || {}) };
+      progress[kind] = (progress[kind] || 0) + 1;
+      if (params.type === 'upvote' && source.vote === 'clear') progress.clearVote = (progress.clearVote || 0) + 1;
+      const completed: string[] = [...(mission.completed || [])];
+      let missionXp = 0;
+      const newlyCompleted: string[] = [];
+      for (const m of DAILY_MISSIONS) {
+        if (!completed.includes(m.id) && (progress[m.kind] || 0) >= m.target) {
+          completed.push(m.id);
+          newlyCompleted.push(m.label);
+          missionXp += m.xp;
+        }
+      }
 
-    const descMap: Record<string, string> = {
-      incident_report: "Signalement trafic qualifié (" + (params.road || "Axe kinois") + ")",
-      voice_memo: "Note vocale info trafic (" + (params.road || "Kinshasa") + ")",
-      upvote: "Confirmation état de la route (" + (params.road || "Direct") + ")",
-      telemetry: "Télémétrie passive de vitesse aux heures de pointe"
-    };
+      // --- Série de jours (1er geste de la journée)
+      const yesterday = kinshasaDayKey(new Date(Date.now() - 24 * 3600 * 1000));
+      const firstToday = user.lastActiveDay !== day;
+      const streak = !firstToday ? (user.streakDays || 1) : user.lastActiveDay === yesterday ? (user.streakDays || 0) + 1 : 1;
+      const streakXp = firstToday ? XP.streakDay : 0;
 
-    // Transaction Firestore
-    await updateDoc(userRef, {
-      walletBalanceCDF: newCDF,
-      walletBalanceUSD: newUSD,
-      totalContributionsCount: newContribs,
-      trustScore: newTrust,
-      lastEarningTimestamp: serverTimestamp()
+      // --- XP, niveau, badges
+      const gainedXp = (params.type === 'incident_report' ? XP.report : XP.vote) + missionXp + streakXp;
+      const xp = (user.xp || 0) + gainedXp;
+      const level = levelFromXp(xp);
+      const votes = (user.gameVotes || 0) + (params.type === 'upvote' ? 1 : 0);
+      const reports = (user.gameReports || 0) + (params.type === 'incident_report' ? 1 : 0);
+      const owned: string[] = user.badges || [];
+      const newBadges = BADGES.filter(b => !owned.includes(b.id) && b.test({ votes, reports, streak, level }));
+      const levelUp = level > levelFromXp(user.xp || 0);
+
+      tx.create(claimRef, { userId: uid, type: params.type, refId: params.refId, amountCDF: rewardCDF, xp: gainedXp, createdAt: FieldValue.serverTimestamp() });
+      if (rewardCDF > 0) tx.set(dailyRef, { userId: uid, amountCDF: earnedToday + rewardCDF, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      tx.set(missionRef, { userId: uid, day, progress, completed, updatedAt: FieldValue.serverTimestamp() });
+      tx.update(userRef, {
+        walletBalanceCDF: newCDF,
+        walletBalanceUSD: newUSD,
+        totalContributionsCount: (user.totalContributionsCount || 0) + 1,
+        lastEarningTimestamp: FieldValue.serverTimestamp(),
+        xp,
+        level,
+        gameVotes: votes,
+        gameReports: reports,
+        streakDays: streak,
+        lastActiveDay: day,
+        badges: [...owned, ...newBadges.map(b => b.id)],
+      });
+      if (rewardCDF > 0) {
+        tx.set(userRef.collection('wallet_transactions').doc(), {
+          userId: uid,
+          type: 'earning',
+          source: params.type,
+          amountCDF: rewardCDF,
+          amountUSD: parseFloat((rewardCDF / CDF_PER_USD).toFixed(3)),
+          description: params.type === 'upvote'
+            ? `Confirmation état de la route (${params.road || 'carrefour'})`
+            : `Signalement trafic (${params.road || 'Kinshasa'})`,
+          road: params.road || null,
+          refId: params.refId,
+          status: 'completed',
+          balanceAfterCDF: newCDF,
+          timestamp: FieldValue.serverTimestamp(),
+        });
+      }
+
+      // --- Classement de la semaine (points = XP gagnés cette semaine)
+      const weekRef = db.collection('leaderboards').doc(week);
+      tx.set(weekRef.collection('players').doc(uid), {
+        uid,
+        // Prénom seulement : le classement est visible par tous les usagers connectés.
+        name: String(user.name || 'Kinois').trim().split(/\s+/)[0].slice(0, 20),
+        commune: user.commune || null,
+        isSentinel: user.isSentinel === true,
+        points: FieldValue.increment(gainedXp),
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+      if (user.commune && COMMUNES.includes(user.commune)) {
+        tx.set(weekRef.collection('communes').doc(user.commune), {
+          commune: user.commune,
+          points: FieldValue.increment(gainedXp),
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+
+      return { ok: true as const, newCDF, newUSD, rewardCDF, gainedXp, xp, level, levelUp, streak, newlyCompleted, newBadges: newBadges.map(b => b.label) };
     });
 
-    // Enregistrement dans l'historique du portefeuille
-    const transRef = collection(firestore, 'users', params.userId, 'wallet_transactions');
-    await addDoc(transRef, {
-      userId: params.userId,
-      type: 'earning',
-      source: params.type,
-      amountCDF: rewardCDF,
-      amountUSD: parseFloat((rewardCDF / 2800).toFixed(3)),
-      description: descMap[params.type] || "Contribution K-Flow",
-      road: params.road || null,
-      status: 'completed',
-      balanceAfterCDF: newCDF,
-      timestamp: serverTimestamp()
-    });
-
+    if (!outcome.ok) return { success: false, error: outcome.error };
     return {
       success: true,
-      rewardCDF,
-      newBalanceCDF: newCDF,
-      newBalanceUSD: newUSD,
-      trustScore: newTrust,
-      message: "Bravo ! +" + rewardCDF + " FC crédités sur votre E-Wallet K-Flow."
+      rewardCDF: outcome.rewardCDF,
+      newBalanceCDF: outcome.newCDF,
+      newBalanceUSD: outcome.newUSD,
+      xpGained: outcome.gainedXp,
+      xp: outcome.xp,
+      level: outcome.level,
+      levelUp: outcome.levelUp,
+      rank: rankFor(outcome.level),
+      streak: outcome.streak,
+      missionsCompleted: outcome.newlyCompleted,
+      badgesUnlocked: outcome.newBadges,
+      message: outcome.rewardCDF > 0
+        ? `Bravo ! +${outcome.rewardCDF} FC et +${outcome.gainedXp} XP.`
+        : `+${outcome.gainedXp} XP. Plafond de ${DAILY_REWARD_CAP_CDF} FC atteint aujourd'hui, merci quand même !`
     };
   } catch (err: any) {
     console.error('[E-Wallet Earning Error]:', err);
-    return { success: false, error: err.message || "Erreur lors du versement de la récompense." };
+    return { success: false, error: authErrorMessage(err, "Erreur lors du versement de la récompense.") };
   }
 }
 
+/**
+ * Demande de retrait Mobile Money. Le solde est débité tout de suite (transaction), et la demande
+ * est enregistrée « en attente » : aucun virement automatique n'existe encore, l'équipe paie à la main.
+ * (Avant : le statut était « completed » et le message annonçait un virement qui n'avait jamais lieu.)
+ */
 export async function requestWalletCashoutAction(params: {
-  userId: string;
+  idToken: string;
   amountCDF: number;
   phone: string;
   operator: string;
 }) {
   try {
-    const MIN_CASHOUT_CDF = 1000;
-    if (params.amountCDF < MIN_CASHOUT_CDF) {
+    const { uid } = await verifyCaller(params.idToken);
+    const amount = Math.floor(Number(params.amountCDF));
+    if (!Number.isFinite(amount) || amount < MIN_CASHOUT_CDF) {
       return { success: false, error: "Le montant minimum de retrait est de " + MIN_CASHOUT_CDF + " FC." };
     }
+    const phone = String(params.phone || '').replace(/\s+/g, '');
+    if (!/^\+?\d{9,13}$/.test(phone)) return { success: false, error: "Numéro de téléphone invalide." };
 
-    const firestore = getServerFirestore();
-    const userRef = doc(firestore, 'users', params.userId);
-    const userSnap = await getDoc(userRef);
+    const db = adminDb();
+    const userRef = db.collection('users').doc(uid);
+    const requestRef = db.collection('cashout_requests').doc();
 
-    if (!userSnap.exists()) {
-      return { success: false, error: "Compte introuvable." };
-    }
-
-    const userData = userSnap.data();
-    const currentCDF = userData.walletBalanceCDF || 0;
-
-    if (currentCDF < params.amountCDF) {
-      return { success: false, error: "Solde insuffisant. Vous possédez " + currentCDF + " FC." };
-    }
-
-    const newCDF = currentCDF - params.amountCDF;
-    const newUSD = parseFloat((newCDF / 2800).toFixed(2));
-
-    await updateDoc(userRef, {
-      walletBalanceCDF: newCDF,
-      walletBalanceUSD: newUSD
+    const outcome = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(userRef);
+      if (!snap.exists) return { ok: false as const, error: "Compte introuvable." };
+      const user = snap.data() as any;
+      if (user.isBlocked) return { ok: false as const, error: "Compte suspendu." };
+      const current = user.walletBalanceCDF || 0;
+      if (current < amount) return { ok: false as const, error: "Solde insuffisant. Vous possédez " + current + " FC." };
+      const newCDF = current - amount;
+      tx.update(userRef, { walletBalanceCDF: newCDF, walletBalanceUSD: parseFloat((newCDF / CDF_PER_USD).toFixed(2)) });
+      tx.set(requestRef, {
+        userId: uid,
+        amountCDF: amount,
+        amountUSD: parseFloat((amount / CDF_PER_USD).toFixed(2)),
+        phone,
+        operator: String(params.operator || ''),
+        status: 'pending',
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      tx.set(userRef.collection('wallet_transactions').doc(), {
+        userId: uid,
+        type: 'cashout',
+        source: 'mobile_money_withdrawal',
+        amountCDF: -amount,
+        amountUSD: -parseFloat((amount / CDF_PER_USD).toFixed(3)),
+        description: "Retrait Mobile Money vers " + params.operator + " (" + phone + ")",
+        phone,
+        operator: params.operator,
+        requestId: requestRef.id,
+        status: 'pending',
+        balanceAfterCDF: newCDF,
+        timestamp: FieldValue.serverTimestamp(),
+      });
+      return { ok: true as const, newCDF };
     });
 
-    // Enregistrement de la demande de cashout Mobile Money (FlexPay Payout)
-    await addDoc(collection(firestore, 'cashout_requests'), {
-      userId: params.userId,
-      amountCDF: params.amountCDF,
-      amountUSD: parseFloat((params.amountCDF / 2800).toFixed(2)),
-      phone: params.phone,
-      operator: params.operator,
-      status: 'completed',
-      createdAt: serverTimestamp()
-    });
-
-    // Enregistrement dans l'historique du portefeuille
-    const transRef = collection(firestore, 'users', params.userId, 'wallet_transactions');
-    await addDoc(transRef, {
-      userId: params.userId,
-      type: 'cashout',
-      source: 'mobile_money_withdrawal',
-      amountCDF: -params.amountCDF,
-      amountUSD: -parseFloat((params.amountCDF / 2800).toFixed(3)),
-      description: "Retrait Mobile Money vers " + params.operator + " (" + params.phone + ")",
-      phone: params.phone,
-      operator: params.operator,
-      status: 'completed',
-      balanceAfterCDF: newCDF,
-      timestamp: serverTimestamp()
-    });
-
+    if (!outcome.ok) return { success: false, error: outcome.error };
     return {
       success: true,
-      newBalanceCDF: newCDF,
-      message: "Retrait de " + params.amountCDF + " FC validé vers " + params.operator + " (" + params.phone + "). Virement en cours via FlexPay !"
+      newBalanceCDF: outcome.newCDF,
+      message: "Demande de retrait de " + amount + " FC enregistrée vers " + params.operator + " (" + phone + "). Vous serez payé après vérification par l'équipe Kinshasa Flow."
     };
   } catch (err: any) {
     console.error('[Cashout Error]:', err);
-    return { success: false, error: err.message || "Erreur lors du retrait." };
+    return { success: false, error: authErrorMessage(err, "Erreur lors du retrait.") };
   }
 }
 
+/** Forfait data payé avec le solde E-Wallet : prix du catalogue serveur, demande « en attente » de traitement manuel. */
 export async function rechargeDataFromWalletAction(params: {
-  userId: string;
-  amountCDF: number;
+  idToken: string;
   phone: string;
   dataPack: string;
 }) {
   try {
-    const firestore = getServerFirestore();
-    const userRef = doc(firestore, 'users', params.userId);
-    const userSnap = await getDoc(userRef);
+    const { uid } = await verifyCaller(params.idToken);
+    const price = DATA_PACK_CATALOG[params.dataPack];
+    if (!price) return { success: false, error: "Forfait inconnu." };
+    const phone = String(params.phone || '').replace(/\s+/g, '');
+    if (!/^\+?\d{9,13}$/.test(phone)) return { success: false, error: "Ajoutez un numéro de téléphone valide à votre profil." };
 
-    if (!userSnap.exists()) {
-      return { success: false, error: "Compte introuvable." };
-    }
+    const db = adminDb();
+    const userRef = db.collection('users').doc(uid);
+    const requestRef = db.collection('data_recharge_requests').doc();
 
-    const userData = userSnap.data();
-    const currentCDF = userData.walletBalanceCDF || 0;
-
-    if (currentCDF < params.amountCDF) {
-      return { success: false, error: "Solde insuffisant pour ce forfait (" + params.amountCDF + " FC)." };
-    }
-
-    const newCDF = currentCDF - params.amountCDF;
-    await updateDoc(userRef, {
-      walletBalanceCDF: newCDF,
-      walletBalanceUSD: parseFloat((newCDF / 2800).toFixed(2))
+    const outcome = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(userRef);
+      if (!snap.exists) return { ok: false as const, error: "Compte introuvable." };
+      const user = snap.data() as any;
+      if (user.isBlocked) return { ok: false as const, error: "Compte suspendu." };
+      const current = user.walletBalanceCDF || 0;
+      if (current < price) return { ok: false as const, error: "Solde insuffisant pour ce forfait (" + price + " FC)." };
+      const newCDF = current - price;
+      tx.update(userRef, { walletBalanceCDF: newCDF, walletBalanceUSD: parseFloat((newCDF / CDF_PER_USD).toFixed(2)) });
+      tx.set(requestRef, { userId: uid, dataPack: params.dataPack, amountCDF: price, phone, status: 'pending', createdAt: FieldValue.serverTimestamp() });
+      tx.set(userRef.collection('wallet_transactions').doc(), {
+        userId: uid,
+        type: 'conversion',
+        source: 'data_recharge',
+        amountCDF: -price,
+        description: "Recharge Forfait Internet : " + params.dataPack + " pour " + phone,
+        phone,
+        requestId: requestRef.id,
+        status: 'pending',
+        balanceAfterCDF: newCDF,
+        timestamp: FieldValue.serverTimestamp(),
+      });
+      return { ok: true as const, newCDF };
     });
 
-    // Historique
-    await addDoc(collection(firestore, 'users', params.userId, 'wallet_transactions'), {
-      userId: params.userId,
-      type: 'conversion',
-      source: 'data_recharge',
-      amountCDF: -params.amountCDF,
-      description: "Recharge Forfait Internet : " + params.dataPack + " pour " + params.phone,
-      phone: params.phone,
-      status: 'completed',
-      balanceAfterCDF: newCDF,
-      timestamp: serverTimestamp()
-    });
-
+    if (!outcome.ok) return { success: false, error: outcome.error };
     return {
       success: true,
-      newBalanceCDF: newCDF,
-      message: "Forfait " + params.dataPack + " activé avec succès sur le numéro " + params.phone + " !"
+      newBalanceCDF: outcome.newCDF,
+      message: "Demande de forfait " + params.dataPack + " enregistrée pour le " + phone + ". Il sera activé après traitement par l'équipe."
     };
   } catch (err: any) {
     console.error('[Data Recharge Error]:', err);
-    return { success: false, error: err.message || "Erreur lors de la recharge de mégas." };
+    return { success: false, error: authErrorMessage(err, "Erreur lors de la recharge de mégas.") };
   }
 }
 
@@ -1349,15 +1500,14 @@ export async function rechargeDataFromWalletAction(params: {
 let dashboardCache: { data: any; expires: number } | null = null;
 
 /**
- * Récupère la télémétrie routière d'un segment :
- * - Google Routes API v2 (TRAFFIC_AWARE_OPTIMAL) -> source: 'google', isEstimated: false
- * - Fallback OSRM + facteur horaire -> source: 'estimate', isEstimated: true (jamais présenté comme live)
+ * Récupère la télémétrie routière temps réel d'un segment (Google Routes API v2 en priorité, fallback OSRM).
  */
 async function fetchSegmentTelemetry(
   origin: { lat: number; lng: number },
   dest: { lat: number; lng: number },
   rushMult: number,
-  isPeakHour: boolean
+  isPeakHour: boolean,
+  opts: { via?: { lat: number; lng: number }; preference?: "TRAFFIC_AWARE" | "TRAFFIC_AWARE_OPTIMAL" } = {}
 ) {
   if (GOOGLE_API_KEY) {
     try {
@@ -1371,8 +1521,10 @@ async function fetchSegmentTelemetry(
         body: JSON.stringify({
           origin: { location: { latLng: { latitude: origin.lat, longitude: origin.lng } } },
           destination: { location: { latLng: { latitude: dest.lat, longitude: dest.lng } } },
+          // point de passage (sans arrêt) pour que l'itinéraire reste sur l'avenue mesurée
+          ...(opts.via ? { intermediates: [{ via: true, location: { latLng: { latitude: opts.via.lat, longitude: opts.via.lng } } }] } : {}),
           travelMode: "DRIVE",
-          routingPreference: "TRAFFIC_AWARE_OPTIMAL",
+          routingPreference: opts.preference ?? "TRAFFIC_AWARE_OPTIMAL",
           languageCode: "fr-FR"
         })
       });
@@ -1392,11 +1544,12 @@ async function fetchSegmentTelemetry(
         }
       }
     } catch (err) {
-      console.warn("[Dashboard] Google Routes bypass -> OSRM estimate:", err);
+      console.warn("[Dashboard] Google Routes bypass -> OSRM:", err);
     }
   }
 
-  const url = `https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${dest.lng},${dest.lat}?overview=false`;
+  const viaPart = opts.via ? `${opts.via.lng},${opts.via.lat};` : "";
+  const url = `https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${viaPart}${dest.lng},${dest.lat}?overview=false`;
   const res = await fetch(url, { headers: { "User-Agent": "KinshasaFlow/2.0" } });
   const data = await res.json();
   const r = data?.routes?.[0];
@@ -1407,7 +1560,65 @@ async function fetchSegmentTelemetry(
   const durationMin = Math.max(1, Math.round(baseDurationMin * multiplier));
   const delayMin = Math.max(0, durationMin - Math.round(baseDurationMin));
   const speedKmh = Math.max(4, Math.round(distKm / (durationMin / 60)));
+  // Pas de mesure de trafic : durée « route vide » OSRM × facteur horaire. C'est une estimation.
   return { distKm, durationMin, delayMin, speedKmh, ratio: multiplier, source: "estimate" as const, isEstimated: true };
+}
+
+/**
+ * Mesure en direct des 20 axes chargés (lib/corridors) qui n'ont pas de carrefour mesuré,
+ * plus les points noirs sans carrefour. Cache de 5 min, indépendant du tableau de bord (90 s)
+ * et jamais forcé par un vote : ~14 appels Google Routes toutes les 5 minutes au plus.
+ */
+type CorridorState = {
+  status: string; delayMin: number | null; speedKmh: number | null; distKm: number | null;
+  source: string; isLive: boolean; confidence: number; reportType?: string | null;
+};
+let corridorCache: { data: Record<string, CorridorState>; expires: number } | null = null;
+
+function corridorStatus(delayMin: number, ratio: number) {
+  // tronçons courts (1 à 3 km) : on regarde surtout le rapport temps réel / temps à vide
+  if (ratio >= 2.2 || delayMin >= 10) return "BLOQUÉ";
+  if (ratio >= 1.6 || delayMin >= 5) return "EMBOUTEILLAGE";
+  if (ratio >= 1.25 || delayMin >= 2) return "MODÉRÉ";
+  return "FLUIDE";
+}
+
+async function getCorridorStates(isPeakHour: boolean, activeReports: any[]): Promise<Record<string, CorridorState>> {
+  const now = Date.now();
+  if (!corridorCache || corridorCache.expires <= now) {
+    const targets = [
+      ...MEASURED_SEGMENTS.map(c => ({ id: c.id, seg: c.seg! })),
+      ...BLACK_SPOTS.filter(b => b.seg && !b.nodeId).map(b => ({ id: b.id, seg: b.seg! })),
+    ];
+    const pt = (p: [number, number]) => ({ lat: p[0], lng: p[1] });
+    const entries = await Promise.all(targets.map(async ({ id, seg }) => {
+      try {
+        const m = await fetchSegmentTelemetry(pt(seg.o), pt(seg.d), 2.0, isPeakHour, { via: seg.v ? pt(seg.v) : undefined, preference: "TRAFFIC_AWARE" });
+        const isLive = m.source === "google";
+        const status = corridorStatus(m.delayMin, m.ratio);
+        const congested = status === "BLOQUÉ" || status === "EMBOUTEILLAGE";
+        return [id, { status, delayMin: m.delayMin, speedKmh: m.speedKmh, distKm: m.distKm, source: m.source, isLive, confidence: confidenceScore(isLive, congested, 0) }] as const;
+      } catch {
+        return [id, { status: "INCONNU", delayMin: null, speedKmh: null, distKm: null, source: "none", isLive: false, confidence: 0 }] as const;
+      }
+    }));
+    corridorCache = { data: Object.fromEntries(entries), expires: now + 5 * 60 * 1000 };
+  }
+
+  // Signalements récents à moins de ~1 km du milieu du tronçon : appliqués à chaque appel (pas mis en cache).
+  const out: Record<string, CorridorState> = {};
+  const mids: Record<string, [number, number]> = Object.fromEntries([
+    ...MEASURED_SEGMENTS.map(c => [c.id, segMid(c.seg!)] as const),
+    ...BLACK_SPOTS.filter(b => b.seg && !b.nodeId).map(b => [b.id, segMid(b.seg!)] as const),
+  ]);
+  for (const [id, st] of Object.entries(corridorCache.data)) {
+    const mid = mids[id];
+    const near = mid ? activeReports.find(r => Math.abs(r.coords.lat - mid[0]) < 0.009 && Math.abs(r.coords.lng - mid[1]) < 0.009) : null;
+    let status = st.status;
+    if (near && near.type === 'blockage' && (status === "FLUIDE" || status === "MODÉRÉ")) status = "EMBOUTEILLAGE";
+    out[id] = { ...st, status, reportType: near?.type ?? null };
+  }
+  return out;
 }
 
 export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
@@ -1416,215 +1627,226 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
     return dashboardCache.data;
   }
 
-  const { hourOfDay: kinshasaHour, formattedTime } = getKinshasaTimeParts();
-  const isPeakHour = (kinshasaHour >= 7 && kinshasaHour <= 9) || (kinshasaHour >= 16 && kinshasaHour <= 20);
+  const kin = kinshasaNow();
+  const kinshasaHour = kin.hour;
+  const isPeakHour = kin.isPeakHour;
 
-  // 1. Chargement parallèle : Incidents Firestore (reports, events, police) + Météo Kinshasa live
-  const [incidentsCtx, weather] = await Promise.all([
-    fetchLiveIncidentsContext(),
-    fetchKinshasaWeather(),
-  ]);
+  // 1. Signalements récents (< 1 h) et votes 1-tap de la dernière heure
+  const [activeReports, votesByNode] = await Promise.all([loadFreshReports(), loadRecentVotes()]);
 
-  // 2. 8 nœuds stratégiques avec coordonnées réelles + coordonnées réelles de leur itinéraire de contournement
+  // 2. Définition des 8 goulots stratégiques avec coordonnées exactes
   const BOTTLENECK_NODES = [
     {
       id: "limete-echangeur",
       name: "Échangeur de Limete",
       district: "Limete / Nœud Est",
-      keywords: ["limete", "echangeur", "échangeur", "lumumba"],
       origin: { lat: -4.3570, lng: 15.3580 },
       dest: { lat: -4.3350, lng: 15.3350 },
-      baseRushFactor: 2.6,
-      altName: "Av. des Poids Lourds via Kingabwa",
-      altOrigin: { lat: -4.3150, lng: 15.3400 },
-      altDest: { lat: -4.3350, lng: 15.3550 },
-      lingala: "Leka na Poids Lourds soki Echangeur ekangami."
+      baseRushFactor: 2.9,
+      escape: "Av. des Poids Lourds via Kingabwa (dégagée)",
+      defaultCause: "Ralentissement important causé par la manœuvre de minibus et rétrécissement du pont.",
+      lingala: "Echangeur eza bloqué, leka na Kingabwa soki likoki eza."
     },
     {
       id: "kintambo-magasin",
       name: "Kintambo Magasin",
       district: "Ngaliema / Nœud Ouest",
-      keywords: ["kintambo", "magasin", "mondjiba"],
       origin: { lat: -4.3270, lng: 15.2740 },
       dest: { lat: -4.3120, lng: 15.2980 },
-      baseRushFactor: 2.3,
-      altName: "Av. du Tourisme (Berges du fleuve)",
-      altOrigin: { lat: -4.3310, lng: 15.2420 },
-      altDest: { lat: -4.3250, lng: 15.2650 },
-      lingala: "Tala nzela ya Berges soki Magasin eza pasi."
+      baseRushFactor: 2.5,
+      escape: "Av. du Tourisme le long des berges du fleuve",
+      defaultCause: "Régulation manuelle intense des roulages et refoulement vers Mondjiba.",
+      lingala: "Magasin eza pasi na ba roulages, leka na Berges."
     },
     {
       id: "matadi-upn",
       name: "Route de Matadi (UPN)",
       district: "Ngaliema / Sortie Ouest",
-      keywords: ["upn", "matadi", "binza"],
       origin: { lat: -4.3800, lng: 15.2580 },
       dest: { lat: -4.3400, lng: 15.2680 },
-      baseRushFactor: 2.4,
-      altName: "Avenue de la Montagne (Météo)",
-      altOrigin: { lat: -4.3450, lng: 15.2650 },
-      altDest: { lat: -4.3300, lng: 15.2600 },
-      lingala: "Keba na Route de Matadi, tala nzela ya Montagne."
+      baseRushFactor: 2.6,
+      escape: "Avenue de la Montagne vers Météo",
+      defaultCause: "Chaussée dégradée, nids-de-poule et stationnements anarchiques de motards.",
+      lingala: "UPN nzela ebeba, mituka ezali kotambola malembe."
     },
     {
       id: "lumumba-pascal",
       name: "Boulevard Lumumba (Pascal)",
       district: "Masina / Tchangu",
-      keywords: ["pascal", "masina", "tchangu", "lumumba"],
       origin: { lat: -4.3850, lng: 15.4200 },
       dest: { lat: -4.3570, lng: 15.3580 },
-      baseRushFactor: 2.8,
-      altName: "Av. Ndjoku (Masina)",
-      altOrigin: { lat: -4.3750, lng: 15.4100 },
-      altDest: { lat: -4.3900, lng: 15.4300 },
-      lingala: "Boulevard Lumumba na Pascal ezali na ba mesures ya sika."
+      baseRushFactor: 3.1,
+      escape: "Route Mokali vers Kimbanseke ou rail Transco",
+      defaultCause: "Déversement du marché de rue et arrêts de minibus 207 en double file.",
+      lingala: "Pascal eza tcha, mituka etelemi mobimba."
     },
     {
       id: "bypass-triangle",
       name: "Avenue By-Pass (Triangle)",
       district: "Lemba / Mont-Ngafula",
-      keywords: ["bypass", "by-pass", "triangle", "lemba"],
       origin: { lat: -4.4100, lng: 15.3150 },
       dest: { lat: -4.3550, lng: 15.3180 },
       baseRushFactor: 2.0,
-      altName: "Av. Kimwenza / Elengesa",
-      altOrigin: { lat: -4.3520, lng: 15.3200 },
-      altDest: { lat: -4.3600, lng: 15.3350 },
-      lingala: "Tala trafic ya Triangle liboso ya kobima."
+      escape: "Avenue Elengesa (récemment asphaltée et fluide)",
+      defaultCause: "Affluence piétonne marchande et taxis en stationnement sauvage.",
+      lingala: "Triangle eza modéré, leka na Elengesa soki okomi."
     },
     {
       id: "mandela-30juin",
       name: "Rond-point Mandela (Blvd 30 Juin)",
       district: "Gombe / Cœur de ville",
-      keywords: ["mandela", "30 juin", "gombe", "batetela"],
       origin: { lat: -4.3120, lng: 15.2980 },
       dest: { lat: -4.3042, lng: 15.3150 },
       baseRushFactor: 1.9,
-      altName: "Avenue de la Justice",
-      altOrigin: { lat: -4.3030, lng: 15.2940 },
-      altDest: { lat: -4.3070, lng: 15.3020 },
-      lingala: "Banzela ya Gombe (Justice) ekoki kosalisa soki 30 Juin ekangami."
+      escape: "Avenue de la Justice ou Avenue de la Science",
+      defaultCause: "Sorties des ministères et flux vers Batetela.",
+      lingala: "30 Juin eza mwa pasi moke, banzela ya pembeni eza liboso."
     },
     {
       id: "kalamu-victoire",
       name: "Avenue Kasa-Vubu (Victoire)",
       district: "Kalamu / Centre",
-      keywords: ["victoire", "kasa-vubu", "kalamu"],
       origin: { lat: -4.3430, lng: 15.3120 },
       dest: { lat: -4.3140, lng: 15.3020 },
-      baseRushFactor: 2.1,
-      altName: "Avenue de l'Enseignement",
-      altOrigin: { lat: -4.3400, lng: 15.3050 },
-      altDest: { lat: -4.3480, lng: 15.3150 },
-      lingala: "Tala soki Enseignement ezali polele liboso ya kokende Victoire."
+      baseRushFactor: 2.2,
+      escape: "Avenue de l'Enseignement vers Stade des Martyrs",
+      defaultCause: "Forte affluence piétonne et commerces de rue aux abords du carrefour.",
+      lingala: "Victoire bato baza mingi na nzela, zela moke."
     },
     {
       id: "universite-pontgabu",
       name: "Av. de l'Université (Pont Gabu)",
       district: "Kalamu / Limete",
-      keywords: ["université", "universite", "gabu", "pont"],
       origin: { lat: -4.3550, lng: 15.3180 },
       dest: { lat: -4.3400, lng: 15.3350 },
-      baseRushFactor: 1.5,
-      altName: "Av. Kapela",
-      altOrigin: { lat: -4.3500, lng: 15.3100 },
-      altDest: { lat: -4.3650, lng: 15.3150 },
-      lingala: "Pont Gabu ezali na ba mesures ya sika."
+      baseRushFactor: 1.4,
+      escape: "Axe direct praticable",
+      defaultCause: "Circulation libre à modérée, aucun incident majeur signalé sur le pont.",
+      lingala: "Pont Gabu eza kitoko lelo, nzela efungwami."
     }
   ];
 
-  // Calcul télémétrique live en parallèle pour les 8 goulots + leurs 8 déviations vérifiées
+  // Calcul télémétrique en parallèle pour les 8 goulots
   const bottlenecks = await Promise.all(BOTTLENECK_NODES.map(async (node) => {
-    try {
-      const [seg, altSeg] = await Promise.all([
-        fetchSegmentTelemetry(node.origin, node.dest, node.baseRushFactor, isPeakHour),
-        fetchSegmentTelemetry(node.altOrigin, node.altDest, Math.max(1.2, node.baseRushFactor * 0.7), isPeakHour)
-      ]);
+    const activeIncidents = activeReports.filter(rep =>
+      Math.abs(rep.coords.lat - node.origin.lat) < 0.025 &&
+      Math.abs(rep.coords.lng - node.origin.lng) < 0.025
+    );
+    const matchingReport = activeIncidents[0];
+    const votes = votesByNode[node.id] ?? { still: 0, clear: 0, lastAgeMin: null };
+    const base = {
+      id: node.id,
+      name: node.name,
+      district: node.district,
+      coords: node.origin,
+      activeIncidents,
+      votes,
+      // Cause confirmée seulement si un signalement récent existe ; sinon on affiche la cause habituelle, marquée comme telle.
+      cause: matchingReport ? matchingReport.description : null,
+      causeAgeMin: matchingReport ? matchingReport.ageMin : null,
+      typicalCause: node.defaultCause,
+      certifiedAlt: node.escape,
+      lingala: node.lingala
+    };
 
-      const matched = matchLocalIncidents(node.origin, node.keywords, incidentsCtx);
-      const activeIncidents = [
-        ...matched.events.map((e: any) => ({ id: e.id, kind: 'event', label: e.description })),
-        ...matched.roadReports.map((r: any) => ({ id: r.id, kind: 'report', label: r.description })),
-        ...matched.police.map((p: any) => ({ id: p.id, kind: 'police', label: p.note || 'Contrôle / roulage' })),
-      ];
+    try {
+      const seg = await fetchSegmentTelemetry(node.origin, node.dest, node.baseRushFactor, isPeakHour);
+      const isLive = seg.source === "google";
 
       let status = "FLUIDE";
-      if (seg.delayMin >= 15 || seg.ratio >= 2.0) status = "BLOQUÉ";
-      else if (seg.delayMin >= 6 || seg.ratio >= 1.45 || activeIncidents.length > 0) status = "EMBOUTEILLAGE";
-      else if (seg.delayMin >= 2 || seg.ratio >= 1.15) status = "MODÉRÉ";
+      if (seg.delayMin >= 20 || seg.ratio >= 2.2) status = "BLOQUÉ";
+      else if (seg.delayMin >= 8 || seg.ratio >= 1.6) status = "EMBOUTEILLAGE";
+      else if (seg.delayMin >= 3 || seg.ratio >= 1.2) status = "MODÉRÉ";
 
-      // Cause HONNÊTE basée uniquement sur des faits observés (jamais un texte inventé)
-      const causes: string[] = [];
-      if (matched.events[0]) causes.push(`Incident usager : ${matched.events[0].description}`);
-      if (matched.roadReports[0]) causes.push(`Voirie signalée : ${matched.roadReports[0].description}`);
-      if (matched.police[0]) causes.push(`Roulage/contrôle signalé : ${matched.police[0].note || matched.police[0].location}`);
-      if (weather?.isRaining) causes.push(weather.weatherLabel);
+      // Un signalement de blocage récent l'emporte sur une mesure fluide.
+      if (matchingReport && matchingReport.type === 'blockage' && (status === "FLUIDE" || status === "MODÉRÉ")) status = "EMBOUTEILLAGE";
 
-      let cause: string;
-      if (causes.length > 0) {
-        cause = causes.join(" • ");
-      } else if (seg.isEstimated) {
-        cause = `Estimation horaire (${kinshasaHour}h Kinshasa) — Google Routes indisponible, aucun incident signalé.`;
-      } else if (status === "FLUIDE") {
-        cause = `Circulation fluide mesurée en direct (${seg.speedKmh} km/h). Aucun incident signalé.`;
-      } else {
-        cause = `Ralentissement mesuré en direct par Google Routes (+${seg.delayMin} min, ${seg.speedKmh} km/h). Aucun incident spécifique signalé par les usagers.`;
+      // Sans mesure en direct, les votes récents des usagers sur place (≥ 2) décident du statut.
+      if (!isLive && votes.still + votes.clear >= 2) {
+        if (votes.clear > votes.still) status = "FLUIDE";
+        else if (votes.still > votes.clear && (status === "FLUIDE" || status === "MODÉRÉ")) status = "EMBOUTEILLAGE";
       }
 
-      const altIsBetter = altSeg.delayMin < seg.delayMin && altSeg.speedKmh > seg.speedKmh;
-      const altStatusLabel = altSeg.isEstimated
-        ? `${node.altName} : +${altSeg.delayMin} min • ${altSeg.speedKmh} km/h (Estimation)`
-        : altIsBetter
-          ? `${node.altName} : vérifiée plus rapide (+${altSeg.delayMin} min • ${altSeg.speedKmh} km/h)`
-          : `${node.altName} : également chargée (+${altSeg.delayMin} min • ${altSeg.speedKmh} km/h)`;
-
+      const congested = status === "BLOQUÉ" || status === "EMBOUTEILLAGE";
       return {
-        id: node.id,
-        name: node.name,
-        district: node.district,
-        coords: node.origin,
+        ...base,
+        // La phrase en lingala du nœud décrit un blocage : on ne la dit que si c'est bloqué.
+        lingala: congested ? node.lingala : "Nzela efungwami awa, kende malamu.",
         distKm: seg.distKm,
         durationMin: seg.durationMin,
         delayMin: seg.delayMin,
         speedKmh: seg.speedKmh,
         source: seg.source,
-        isEstimated: seg.isEstimated,
-        activeIncidents,
-        status,
-        cause,
-        certifiedAlt: altStatusLabel,
-        altDelayMin: altSeg.delayMin,
-        altSpeedKmh: altSeg.speedKmh,
-        altSource: altSeg.source,
-        altIsBetter,
-        lingala: node.lingala
+        isLive,
+        confidence: confidenceScore(isLive, congested, activeIncidents.length, votes),
+        status
       };
-    } catch {
+    } catch (err) {
+      // Aucune source disponible : on le dit, au lieu d'inventer un « modéré +10 min ».
       return {
-        id: node.id,
-        name: node.name,
-        district: node.district,
-        coords: node.origin,
-        distKm: 5.0,
-        durationMin: 0,
-        delayMin: 0,
-        speedKmh: 0,
-        source: "unavailable",
-        isEstimated: true,
-        activeIncidents: [],
-        status: "INCONNU",
-        cause: "Mesure indisponible pour ce nœud actuellement.",
-        certifiedAlt: `${node.altName} (non vérifiée)`,
-        altDelayMin: 0,
-        altSpeedKmh: 0,
-        altSource: "unavailable",
-        altIsBetter: false,
-        lingala: node.lingala
+        ...base,
+        distKm: null,
+        durationMin: null,
+        delayMin: null,
+        speedKmh: null,
+        source: "none",
+        isLive: false,
+        confidence: 0,
+        status: "INCONNU"
       };
     }
   }));
 
-  // 3. Calcul des 4 trajets quotidiens (1-Tap Commutes) + comparaison avec déviation réelle
+  // GPS anonyme des usagers volontaires et des flottes partenaires (15 dernières minutes).
+  // À partir de 3 contributeurs distincts, c'est une mesure en direct à part entière.
+  const probes = await loadRecentProbeSpeeds();
+  for (const b of bottlenecks as any[]) {
+    const p = probes[b.id];
+    if (!p) continue;
+    b.probe = p;
+    if (p.contributors >= 3) {
+      if (!b.isLive) {
+        b.status = statusFromSpeed(p.speedKmh);
+        b.speedKmh = p.speedKmh;
+        b.delayMin = null; // pas de temps « route vide » fiable pour calculer un retard
+        b.source = 'gps';
+        b.isLive = true;
+      }
+      b.confidence = Math.min(98, Math.max(b.confidence || 0, 60) + 15);
+    }
+  }
+
+  // Détours vérifiés en direct (repris de main) : mesurés seulement quand le carrefour est chargé,
+  // pour ne pas doubler les appels Google quand tout roule.
+  const DETOURS: Record<string, { name: string; o: { lat: number; lng: number }; d: { lat: number; lng: number } }> = {
+    "limete-echangeur": { name: "Av. des Poids Lourds via Kingabwa", o: { lat: -4.3150, lng: 15.3400 }, d: { lat: -4.3350, lng: 15.3550 } },
+    "kintambo-magasin": { name: "Av. du Tourisme (berges)", o: { lat: -4.3310, lng: 15.2420 }, d: { lat: -4.3250, lng: 15.2650 } },
+    "matadi-upn": { name: "Avenue de la Montagne", o: { lat: -4.3450, lng: 15.2650 }, d: { lat: -4.3300, lng: 15.2600 } },
+    "lumumba-pascal": { name: "Av. Ndjoku (Masina)", o: { lat: -4.3750, lng: 15.4100 }, d: { lat: -4.3900, lng: 15.4300 } },
+    "bypass-triangle": { name: "Avenue Elengesa", o: { lat: -4.3520, lng: 15.3200 }, d: { lat: -4.3600, lng: 15.3350 } },
+    "mandela-30juin": { name: "Avenue de la Justice", o: { lat: -4.3030, lng: 15.2940 }, d: { lat: -4.3070, lng: 15.3020 } },
+    "kalamu-victoire": { name: "Avenue de l'Enseignement", o: { lat: -4.3400, lng: 15.3050 }, d: { lat: -4.3480, lng: 15.3150 } },
+    "universite-pontgabu": { name: "Avenue Kapela", o: { lat: -4.3500, lng: 15.3100 }, d: { lat: -4.3650, lng: 15.3150 } },
+  };
+  await Promise.all((bottlenecks as any[]).map(async b => {
+    const det = DETOURS[b.id];
+    if (!det || !(b.status === "BLOQUÉ" || b.status === "EMBOUTEILLAGE")) return;
+    try {
+      const alt = await fetchSegmentTelemetry(det.o, det.d, 1.6, isPeakHour);
+      const mainDelay = typeof b.delayMin === "number" ? b.delayMin : Infinity;
+      b.altName = det.name;
+      b.altDelayMin = alt.delayMin;
+      b.altSpeedKmh = alt.speedKmh;
+      b.altSource = alt.source;
+      b.altIsBetter = alt.delayMin < mainDelay && (typeof b.speedKmh !== "number" || alt.speedKmh > b.speedKmh);
+    } catch { /* détour non vérifié : on garde la voie bis habituelle */ }
+  }));
+
+  // Panneau « Pourquoi » : signalements, événements, votes, GPS et météo réels
+  const [weather, trafficEvents] = await Promise.all([loadKinshasaWeather(), loadActiveTrafficEvents()]);
+  for (const b of bottlenecks as any[]) b.why = buildWhy(b, { weather, events: trafficEvents });
+
+  // 3. Calcul des 4 trajets quotidiens (1-Tap Commutes) en télémétrie live
   const COMMUTE_NODES = [
     {
       id: "upn-gombe",
@@ -1632,10 +1854,8 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
       via: "Route de Matadi & 30 Juin",
       origin: { lat: -4.3800, lng: 15.2580 },
       dest: { lat: -4.3042, lng: 15.3150 },
-      rushMult: 2.5,
-      altOrigin: { lat: -4.3310, lng: 15.2420 },
-      altDest: { lat: -4.3042, lng: 15.3150 },
-      escapeName: "Av. du Tourisme via les Berges"
+      rushMult: 2.7,
+      escape: "Prendre Av. du Tourisme via les Berges du Fleuve"
     },
     {
       id: "masina-gombe",
@@ -1643,10 +1863,8 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
       via: "Boulevard Lumumba & Limete",
       origin: { lat: -4.3850, lng: 15.4200 },
       dest: { lat: -4.3042, lng: 15.3150 },
-      rushMult: 2.8,
-      altOrigin: { lat: -4.3150, lng: 15.3400 },
-      altDest: { lat: -4.3042, lng: 15.3150 },
-      escapeName: "Av. des Poids Lourds à Kingabwa"
+      rushMult: 3.1,
+      escape: "Bifurquer vers Poids Lourds à Kingabwa"
     },
     {
       id: "lemba-gombe",
@@ -1654,10 +1872,8 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
       via: "By-Pass & Av. Université",
       origin: { lat: -4.4100, lng: 15.3150 },
       dest: { lat: -4.3042, lng: 15.3150 },
-      rushMult: 2.0,
-      altOrigin: { lat: -4.3520, lng: 15.3200 },
-      altDest: { lat: -4.3042, lng: 15.3150 },
-      escapeName: "Av. Kimwenza / Elengesa"
+      rushMult: 2.1,
+      escape: "Emprunter la nouvelle Avenue Elengesa"
     },
     {
       id: "kintambo-gombe",
@@ -1665,36 +1881,48 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
       via: "Avenue Mondjiba",
       origin: { lat: -4.3270, lng: 15.2740 },
       dest: { lat: -4.3042, lng: 15.3150 },
-      rushMult: 2.2,
-      altOrigin: { lat: -4.3220, lng: 15.2700 },
-      altDest: { lat: -4.3042, lng: 15.3150 },
-      escapeName: "Avenue de l'OUA"
+      rushMult: 2.4,
+      escape: "Prendre l'Avenue de l'OUA ou Av. du Port"
     }
   ];
 
+  const COMMUTE_DETOURS: Record<string, { o: { lat: number; lng: number }; d: { lat: number; lng: number } }> = {
+    "upn-gombe": { o: { lat: -4.3310, lng: 15.2420 }, d: { lat: -4.3042, lng: 15.3150 } },
+    "masina-gombe": { o: { lat: -4.3150, lng: 15.3400 }, d: { lat: -4.3042, lng: 15.3150 } },
+    "lemba-gombe": { o: { lat: -4.3520, lng: 15.3200 }, d: { lat: -4.3042, lng: 15.3150 } },
+    "kintambo-gombe": { o: { lat: -4.3220, lng: 15.2700 }, d: { lat: -4.3042, lng: 15.3150 } },
+  };
+
   const commutes = await Promise.all(COMMUTE_NODES.map(async (c) => {
     try {
-      const [seg, altSeg] = await Promise.all([
-        fetchSegmentTelemetry(c.origin, c.dest, c.rushMult, isPeakHour),
-        fetchSegmentTelemetry(c.altOrigin, c.altDest, Math.max(1.2, c.rushMult * 0.7), isPeakHour)
-      ]);
+      const seg = await fetchSegmentTelemetry(c.origin, c.dest, c.rushMult, isPeakHour);
+      const isLive = seg.source === "google";
 
       let status = "FLUIDE";
       let badgeColor = "bg-emerald-500";
-      if (seg.delayMin >= 20 || seg.ratio >= 2.0) {
+      if (seg.delayMin >= 25 || seg.ratio >= 2.3) {
         status = "BLOQUÉ";
         badgeColor = "bg-purple-600";
-      } else if (seg.delayMin >= 8 || seg.ratio >= 1.45) {
+      } else if (seg.delayMin >= 10 || seg.ratio >= 1.6) {
         status = "EMBOUTEILLAGE";
         badgeColor = "bg-red-500";
-      } else if (seg.delayMin >= 3 || seg.ratio >= 1.15) {
+      } else if (seg.delayMin >= 3 || seg.ratio >= 1.2) {
         status = "MODÉRÉ";
         badgeColor = "bg-amber-500";
       }
 
-      const escapeSummary = altSeg.isEstimated
-        ? `${c.escapeName} : ~+${altSeg.delayMin} min (Estimation)`
-        : `${c.escapeName} : ${altSeg.durationMin} min (+${altSeg.delayMin} min live)`;
+      // Échappatoire vérifiée en direct quand le trajet est chargé (repris de main)
+      let escape = c.escape;
+      const det = COMMUTE_DETOURS[c.id];
+      if (det && (status === "BLOQUÉ" || status === "EMBOUTEILLAGE")) {
+        try {
+          const alt = await fetchSegmentTelemetry(det.o, det.d, Math.max(1.2, c.rushMult * 0.7), isPeakHour);
+          const tag = alt.source === "google" ? "mesuré en direct" : "estimation";
+          escape = alt.durationMin < seg.durationMin
+            ? `${c.escape} — vérifié plus rapide : ${alt.durationMin} min au lieu de ${seg.durationMin} (${tag})`
+            : `${c.escape} — aussi chargé : ${alt.durationMin} min (${tag})`;
+        } catch { /* on garde l'échappatoire habituelle */ }
+      }
 
       return {
         id: c.id,
@@ -1704,12 +1932,13 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
         distKm: seg.distKm,
         durMin: seg.durationMin,
         delayMin: seg.delayMin,
-        delayText: seg.delayMin > 0 ? `+${seg.delayMin} min` : "Fluide",
+        delayText: seg.delayMin > 0 ? `${isLive ? '' : '~'}+${seg.delayMin} min` : "Fluide",
         status,
         badgeColor,
         source: seg.source,
-        isEstimated: seg.isEstimated,
-        escape: escapeSummary
+        isLive,
+        confidence: confidenceScore(isLive, status === "BLOQUÉ" || status === "EMBOUTEILLAGE", 0),
+        escape
       };
     } catch {
       return {
@@ -1717,55 +1946,176 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
         title: c.title,
         via: c.via,
         coords: c.origin,
-        distKm: 0,
-        durMin: 0,
-        delayMin: 0,
-        delayText: "Indisponible",
+        distKm: null,
+        durMin: null,
+        delayMin: null,
+        delayText: "Pas de données",
         status: "INCONNU",
-        badgeColor: "bg-slate-500",
-        source: "unavailable",
-        isEstimated: true,
-        escape: `${c.escapeName} (non vérifiée)`
+        badgeColor: "bg-slate-400",
+        source: "none",
+        isLive: false,
+        confidence: 0,
+        escape: c.escape
       };
     }
   }));
 
-  // 4. Synthèse globale honnête de la ville
-  const validSpeeds = bottlenecks.filter(b => b.speedKmh > 0).map(b => b.speedKmh);
-  const avgSpeed = validSpeeds.length > 0 ? Math.round(validSpeeds.reduce((a, b) => a + b, 0) / validSpeeds.length) : 0;
-  const blockedCount = bottlenecks.filter(b => b.status === "BLOQUÉ" || b.status === "EMBOUTEILLAGE").length;
-  const congestionIndex = Math.round((blockedCount / bottlenecks.length) * 100);
-  const liveGoogleCount = bottlenecks.filter(b => b.source === "google").length;
-  const totalLiveIncidents = incidentsCtx.events.length + incidentsCtx.roadReports.length + incidentsCtx.policeReports.length;
+  // 4. Synthèse globale de la ville (uniquement sur les nœuds qui ont une donnée)
+  const known = bottlenecks.filter(b => b.status !== "INCONNU" && typeof b.speedKmh === "number");
+  const avgSpeed = known.length ? Math.round(known.reduce((a, b) => a + (b.speedKmh as number), 0) / known.length) : null;
+  const blockedCount = known.filter(b => b.status === "BLOQUÉ" || b.status === "EMBOUTEILLAGE").length;
+  const congestionIndex = known.length ? Math.round((blockedCount / known.length) * 100) : null;
+  const liveCount = bottlenecks.filter(b => b.isLive).length;
+  const totalVotes = Object.values(votesByNode).reduce((a, v) => a + v.still + v.clear, 0);
 
-  const telemetrySource = liveGoogleCount === bottlenecks.length
-    ? `${liveGoogleCount}/${bottlenecks.length} axes Google Live`
-    : liveGoogleCount > 0
-      ? `${liveGoogleCount}/${bottlenecks.length} Google Live (autres estimés)`
-      : `Estimation horaire (Google Routes indisponible)`;
+  const telemetrySource = liveCount === bottlenecks.length
+    ? `Mesure en direct Google Routes (${liveCount}/${bottlenecks.length})`
+    : liveCount > 0
+      ? `Mesure en direct sur ${liveCount}/${bottlenecks.length} nœuds, estimations ailleurs`
+      : "Estimations selon l'heure : mesure en direct indisponible";
 
-  const worstNode = bottlenecks.find(b => b.status === "BLOQUÉ") || bottlenecks.find(b => b.status === "EMBOUTEILLAGE") || bottlenecks[0];
-  const audioFlashText = `Flash Info Kinshasa Flow. Il est ${kinshasaHour} heures à Kinshasa. ${weather?.isRaining ? weather.weatherLabel + '. ' : ''}Point le plus ralenti : ${worstNode.name}, statut ${worstNode.status.toLowerCase()} avec ${worstNode.delayMin} minutes de retard. ${worstNode.cause} Alternative vérifiée : ${worstNode.certifiedAlt}.`;
+  // Flash vocal : ne dit « cause » que si elle est confirmée par un signalement récent.
+  const worstNode = known.find(b => b.status === "BLOQUÉ") || known.find(b => b.status === "EMBOUTEILLAGE") || known[0] || bottlenecks[0];
+  const causeText = worstNode.cause
+    ? `Cause signalée il y a ${worstNode.causeAgeMin} minutes : ${worstNode.cause}.`
+    : `Aucune cause signalée pour l'instant ; d'habitude : ${worstNode.typicalCause}`;
+  const delayText = typeof worstNode.delayMin === "number"
+    ? `${worstNode.isLive ? '' : 'environ '}${worstNode.delayMin} minutes de retard`
+    : "pas de mesure disponible";
+  const worstCongested = worstNode.status === "BLOQUÉ" || worstNode.status === "EMBOUTEILLAGE";
+  const audioFlashText = worstCongested
+    ? `Flash Info Kinshasa Flow. À ${kinshasaHour} heures, ${worstNode.name} est ${worstNode.status.toLowerCase()}, ${delayText}. ${causeText} Alternative conseillée : ${worstNode.certifiedAlt}. ${worstNode.lingala}`
+    : `Flash Info Kinshasa Flow. À ${kinshasaHour} heures, aucun des ${bottlenecks.length} grands carrefours suivis n'est embouteillé. ${liveCount} sur ${bottlenecks.length} sont mesurés en direct. Nzela efungwami, kende malamu.`;
+
+  const corridors = await getCorridorStates(isPeakHour, activeReports);
 
   const payload = {
     success: true,
     bottlenecks,
     commutes,
+    corridors,
     globalMetrics: {
       kinshasaHour,
       isPeakHour,
       avgSpeed,
       congestionIndex,
-      activeIncidentsCount: totalLiveIncidents,
-      liveGoogleCount,
-      totalNodes: bottlenecks.length,
+      activeIncidentsCount: activeReports.length,
+      votesLastHour: totalVotes,
       weather,
+      activeEventsCount: trafficEvents.length,
+      liveCount,
+      nodeCount: bottlenecks.length,
       telemetrySource,
-      updatedAt: formattedTime,
+      updatedAt: kin.timeLabel,
       audioFlashText
     }
   };
 
   dashboardCache = { data: payload, expires: Date.now() + 90 * 1000 };
   return payload;
+}
+
+/**
+ * Trouve les coordonnées d'une avenue tapée par l'usager.
+ * 1) référentiel interne MAJOR_AXES (sans accents ni casse) ; 2) Google Geocoding limité à Kinshasa.
+ * Avant ce correctif, toute recherche analysait le même point fixe (-4.325, 15.31).
+ */
+export async function locateAxisAction(rawQuery: string): Promise<
+  { found: true; name: string; lat: number; lng: number; source: 'référentiel' | 'google' } | { found: false }
+> {
+  const norm = (t: string) => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const q = norm(rawQuery || '');
+  if (q.length < 2) return { found: false };
+
+  const words = q.split(' ').filter(w => w.length > 2 && !['avenue', 'boulevard', 'blvd', 'route', 'rue'].includes(w));
+  const scored = MAJOR_AXES
+    .map(a => {
+      const n = norm(`${a.name} ${a.district}`);
+      const score = n.includes(q) ? 100 : words.filter(w => n.includes(w)).length;
+      return { a, score };
+    })
+    .filter(x => x.score > 0)
+    // À score égal, le nom le plus court est le plus précis (« Av. des Poids Lourds » avant « Blvd Lumumba (Poids Lourds Junction) »).
+    .sort((x, y) => y.score - x.score || x.a.name.length - y.a.name.length);
+  if (scored.length) {
+    const a = scored[0].a;
+    return { found: true, name: a.name, lat: a.origin.lat, lng: a.origin.lng, source: 'référentiel' };
+  }
+
+  try {
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(rawQuery + ', Kinshasa')}` +
+      `&bounds=-4.55,15.15|-4.25,15.60&region=cd&language=fr&key=${GOOGLE_API_KEY}`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      const hit = data?.results?.[0];
+      const loc = hit?.geometry?.location;
+      // On refuse un résultat hors de Kinshasa, ou la ville entière (réponse de Google quand il ne trouve pas la rue).
+      const tooVague = (hit?.types || []).some((t: string) => ['locality', 'political', 'administrative_area_level_1', 'administrative_area_level_2', 'country'].includes(t));
+      if (loc && !tooVague && loc.lat < -4.25 && loc.lat > -4.6 && loc.lng > 15.1 && loc.lng < 15.65) {
+        return { found: true, name: hit.formatted_address?.split(',')[0] || rawQuery, lat: loc.lat, lng: loc.lng, source: 'google' };
+      }
+    }
+  } catch (err) {
+    console.warn('[locateAxis] géocodage indisponible:', err);
+  }
+  return { found: false };
+}
+
+/** Nœud de la carte → axe enregistré dans traffic_history (MAJOR_AXES). */
+const NODE_HISTORY_AXIS: Record<string, string> = {
+  'limete-echangeur': 'Échangeur de Limete (Nœud)',
+  'kintambo-magasin': 'Av. Mondjiba (Kintambo Magasin)',
+  'matadi-upn': 'Route de Matadi (UPN)',
+  'lumumba-pascal': 'Blvd Lumumba (Masina Pascal)',
+  'bypass-triangle': 'Av. By-Pass (Triangle)',
+  'mandela-30juin': 'Blvd 30 Juin (Rond-point Mandela)',
+  'kalamu-victoire': 'Av. Kasa-Vubu (Victoire)',
+  'universite-pontgabu': "Av. de l'Université (Pont Gabu)",
+};
+
+let cityForecastCache: { data: any; expires: number } | null = null;
+
+/**
+ * Prévision +1 h / +2 h pour les 8 nœuds de la carte, à partir de l'historique réel
+ * (même heure, même jour de semaine en priorité, heure de Kinshasa).
+ * Sans assez de relevés (< 3), on renvoie delay = null : la carte affiche « pas assez d'historique »
+ * au lieu d'inventer une couleur.
+ */
+export async function getCityForecastAction(): Promise<{
+  generatedAt: string;
+  nodes: Record<string, Array<{ offsetH: number; hour: number; delay: number | null; samples: number }>>;
+}> {
+  if (cityForecastCache && cityForecastCache.expires > Date.now()) return cityForecastCache.data;
+  const kin = kinshasaNow();
+  const firestore = getServerFirestore();
+  const nodes: Record<string, Array<{ offsetH: number; hour: number; delay: number | null; samples: number }>> = {};
+
+  await Promise.all(Object.entries(NODE_HISTORY_AXIS).map(async ([nodeId, road]) => {
+    let docs: any[] = [];
+    try {
+      const snap = await getDocs(query(collection(firestore, 'traffic_history'), where('road', '==', road), limit(500)));
+      docs = snap.docs.map(d => {
+        const h = d.data() as any;
+        if (h.tz === 'Africa/Kinshasa' || typeof h.hourOfDay !== 'number') return h;
+        const hour = (h.hourOfDay + 1) % 24; // anciens relevés en UTC
+        return { ...h, hourOfDay: hour, dayOfWeek: hour === 0 && typeof h.dayOfWeek === 'number' ? (h.dayOfWeek + 1) % 7 : h.dayOfWeek };
+      });
+    } catch (err) {
+      console.warn('[CityForecast] lecture impossible:', road, err);
+    }
+    nodes[nodeId] = [1, 2].map(offsetH => {
+      const hour = (kin.hour + offsetH) % 24;
+      const dow = kin.hour + offsetH >= 24 ? (kin.dayOfWeek + 1) % 7 : kin.dayOfWeek;
+      let match = docs.filter(d => d.hourOfDay === hour && d.dayOfWeek === dow && typeof d.delay === 'number');
+      if (match.length < 3) match = docs.filter(d => d.hourOfDay === hour && typeof d.delay === 'number');
+      if (match.length < 3) return { offsetH, hour, delay: null, samples: match.length };
+      const delay = Math.round(match.reduce((a, d) => a + Number(d.delay), 0) / match.length);
+      return { offsetH, hour, delay, samples: match.length };
+    });
+  }));
+
+  const data = { generatedAt: kin.timeLabel, nodes };
+  cityForecastCache = { data, expires: Date.now() + 10 * 60 * 1000 };
+  return data;
 }

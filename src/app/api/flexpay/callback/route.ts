@@ -1,44 +1,34 @@
 import { NextResponse } from 'next/server';
-import { fulfillFlexPayPayment } from '@/app/actions';
-import { getServerFirestore } from '@/firebase/server';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { fulfillVerifiedFlexPayPayment, markPaymentFailed } from '@/lib/payments-server';
+import { checkFlexPayTransactionStatus } from '@/lib/flexpay';
 
 /**
- * Webhook callback route for FlexPay (Mobile Money & Card notifications)
+ * Webhook FlexPay (Mobile Money & carte).
+ * Le corps du webhook n'est pas signé : on ne s'y fie pas. Il sert seulement à savoir quelle
+ * commande revérifier ; le crédit n'a lieu que si FlexPay confirme lui-même le paiement.
  */
 export async function POST(request: Request) {
   try {
     const payload = await request.json();
-    console.log('[FlexPay Webhook] Received callback payload:', payload);
-
     const orderNumber = payload.orderNumber || payload.order_number;
-    const statusCode = String(payload.code ?? payload.status ?? '');
 
-    if (!orderNumber) {
-      console.warn('[FlexPay Webhook] Missing orderNumber in payload');
+    if (!orderNumber || typeof orderNumber !== 'string') {
       return NextResponse.json({ error: 'Missing orderNumber' }, { status: 400 });
     }
 
-    // Status "0" indicates successful transaction in FlexPay
-    if (statusCode === '0') {
-      console.log(`[FlexPay Webhook] Fulfilling order ${orderNumber}...`);
-      const result = await fulfillFlexPayPayment(orderNumber);
+    const check = await checkFlexPayTransactionStatus(orderNumber);
+    if (check.success && check.status === '0') {
+      const result = await fulfillVerifiedFlexPayPayment(orderNumber);
       if (!result.success) {
-        console.error(`[FlexPay Webhook] Fulfillment failed for ${orderNumber}:`, result.error);
+        console.error(`[FlexPay Webhook] Crédit impossible pour ${orderNumber}:`, result.error);
       }
-    } else if (statusCode === '1') {
-      console.log(`[FlexPay Webhook] Order ${orderNumber} failed or declined`);
-      const firestore = getServerFirestore();
-      const paymentRef = doc(firestore, 'payments', orderNumber);
-      await updateDoc(paymentRef, {
-        status: 'failed',
-        failedAt: serverTimestamp(),
-      }).catch(() => {});
+    } else if (check.success && check.status === '1') {
+      await markPaymentFailed(orderNumber);
     }
 
     return NextResponse.json({ received: true, orderNumber }, { status: 200 });
   } catch (error: any) {
     console.error('[FlexPay Webhook] Error processing callback:', error);
-    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

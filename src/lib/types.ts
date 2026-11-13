@@ -641,9 +641,10 @@ export interface TrafficForecast {
   currentStatus: "EMBOUTEILLAGE" | "DENSE" | "MODÉRÉ" | "FLUIDE" | "INCONNU";
   currentDelay: number;
   hourlyForecast: HourlyForecast[];
+  /** delay = null quand l'alternative n'a pas pu être mesurée en direct */
   alternatives: {
     road: string;
-    delay: number;
+    delay: number | null;
     status: string;
   }[];
 }

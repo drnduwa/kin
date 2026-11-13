@@ -39,62 +39,197 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { checkTrafficAction, getTrafficForecastAction, awardWalletContributionAction, getRealtimeCommandDashboardAction } from '@/app/actions';
+import { checkTrafficAction, awardWalletContributionAction, getRealtimeCommandDashboardAction, locateAxisAction, getCityForecastAction } from '@/app/actions';
+import { levelFromStatus, levelFromDelay, type MapNode } from '@/components/game/live-city-map';
+import PlayerHud from '@/components/game/player-hud';
+import { CloudRain, CalendarDays } from 'lucide-react';
+import { voteSlot } from '@/lib/kinshasa-time';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import { CONFIG } from '@/lib/config';
 import { useUser, useFirebase, useDoc, useMemoFirebase } from '@/firebase';
-import { doc } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { UserProfile } from '@/lib/types';
+import { YaFlowSays } from '@/components/kin/street';
+import KinshasaCityMap, { type CityMapNode, type CorridorLive } from '@/components/kin/city-map';
+import { MOOD_LINES, moodFromClock, type Mood } from '@/lib/kin-slang';
 
 const STATUS_CONFIG = {
   BLOQUÉ: { color: "bg-purple-600 text-white", border: "border-purple-300", icon: "🔴", label: "Bloqué", badgeBg: "bg-purple-600" },
   EMBOUTEILLAGE: { color: "bg-red-600 text-white", border: "border-red-300", icon: "🔴", label: "Embouteillé", badgeBg: "bg-red-600" },
-  EMBOUTEILLÉ: { color: "bg-red-600 text-white", border: "border-red-300", icon: "🔴", label: "Embouteillé", badgeBg: "bg-red-600" },
   MODÉRÉ: { color: "bg-amber-500 text-slate-950", border: "border-amber-300", icon: "🟡", label: "Modéré", badgeBg: "bg-amber-500" },
   FLUIDE: { color: "bg-emerald-500 text-white", border: "border-emerald-300", icon: "🟢", label: "Fluide", badgeBg: "bg-emerald-500" },
-  INCONNU: { color: "bg-slate-400 text-white", border: "border-slate-300", icon: "⏳", label: "Mesure...", badgeBg: "bg-slate-400" },
+  INCONNU: { color: "bg-slate-400 text-white", border: "border-slate-300", icon: "⚪", label: "Pas de données", badgeBg: "bg-slate-400" },
   ERREUR: { color: "bg-red-900 text-white", border: "border-red-800", icon: "⚠️", label: "Erreur", badgeBg: "bg-red-900" },
 };
 
-// Squelettes initiaux sans valeurs fictives — remplacés immédiatement par la télémétrie serveur
-const INITIAL_BOTTLENECKS = [
-  { id: "limete-echangeur", name: "Échangeur de Limete", district: "Limete / Nœud Est", coords: { lat: -4.3570, lng: 15.3580 }, lingala: "Leka na Poids Lourds soki Echangeur ekangami." },
-  { id: "kintambo-magasin", name: "Kintambo Magasin", district: "Ngaliema / Nœud Ouest", coords: { lat: -4.3270, lng: 15.2740 }, lingala: "Tala nzela ya Berges soki Magasin eza pasi." },
-  { id: "matadi-upn", name: "Route de Matadi (UPN)", district: "Ngaliema / Sortie Ouest", coords: { lat: -4.3800, lng: 15.2580 }, lingala: "Keba na Route de Matadi, tala nzela ya Montagne." },
-  { id: "lumumba-pascal", name: "Boulevard Lumumba (Pascal)", district: "Masina / Tchangu", coords: { lat: -4.3850, lng: 15.4200 }, lingala: "Boulevard Lumumba na Pascal ezali na ba mesures ya sika." },
-  { id: "bypass-triangle", name: "Avenue By-Pass (Triangle)", district: "Lemba / Mont-Ngafula", coords: { lat: -4.4100, lng: 15.3150 }, lingala: "Tala trafic ya Triangle liboso ya kobima." },
-  { id: "mandela-30juin", name: "Rond-point Mandela (Blvd 30 Juin)", district: "Gombe / Cœur de ville", coords: { lat: -4.3120, lng: 15.2980 }, lingala: "Banzela ya Gombe (Justice) ekoki kosalisa soki 30 Juin ekangami." },
-  { id: "kalamu-victoire", name: "Avenue Kasa-Vubu (Victoire)", district: "Kalamu / Centre", coords: { lat: -4.3430, lng: 15.3120 }, lingala: "Tala soki Enseignement ezali polele liboso ya kokende Victoire." },
-  { id: "universite-pontgabu", name: "Av. de l'Université (Pont Gabu)", district: "Kalamu / Limete", coords: { lat: -4.3550, lng: 15.3180 }, lingala: "Pont Gabu ezali na ba mesures ya sika." }
-].map(b => ({
-  ...b,
-  speedKmh: 0,
-  delayMin: 0,
-  status: "INCONNU",
-  source: "loading",
-  isEstimated: true,
-  cause: "Synchronisation des mesures en cours...",
-  certifiedAlt: "Vérification de la déviation en cours...",
-  activeIncidents: [] as any[],
-}));
+/** Dit d'où vient un chiffre : mesure en direct, estimation horaire ou aucune donnée. */
+function SourceChip({ source, confidence }: { source?: string; confidence?: number }) {
+  const live = source === 'google' || source === 'gps';
+  const estimate = source === 'estimate' || source === 'osrm';
+  const label = source === 'gps' ? 'Mesuré en direct · GPS usagers' : live ? 'Mesuré en direct' : estimate ? "Estimation selon l'heure" : 'Pas de données';
+  return (
+    <span
+      title={live ? 'Temps de trajet mesuré par Google Routes avec le trafic actuel' : estimate ? "Pas de mesure en direct : temps sur route vide multiplié par un facteur d'heure de pointe" : 'Aucune source disponible'}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-wide border",
+        live ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30"
+          : estimate ? "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30"
+          : "bg-slate-500/10 text-slate-500 border-slate-400/30"
+      )}
+    >
+      <span className={cn("h-1.5 w-1.5 rounded-full", live ? "bg-emerald-500" : estimate ? "bg-amber-500" : "bg-slate-400")} />
+      {label}
+      {typeof confidence === 'number' && confidence > 0 && <span className="opacity-70">· confiance {confidence}%</span>}
+    </span>
+  );
+}
 
-const INITIAL_COMMUTES = [
-  { id: "upn-gombe", title: "UPN ➔ Gombe (Centre-Ville)", via: "Route de Matadi & 30 Juin", coords: { lat: -4.3800, lng: 15.2580 } },
-  { id: "masina-gombe", title: "Masina / Tchangu ➔ Gombe", via: "Boulevard Lumumba & Limete", coords: { lat: -4.3850, lng: 15.4200 } },
-  { id: "lemba-gombe", title: "Lemba / Triangle ➔ Gombe", via: "By-Pass & Av. Université", coords: { lat: -4.4100, lng: 15.3150 } },
-  { id: "kintambo-gombe", title: "Kintambo Magasin ➔ Gombe", via: "Avenue Mondjiba", coords: { lat: -4.3270, lng: 15.2740 } }
-].map(c => ({
-  ...c,
-  status: "INCONNU",
-  delayText: "Mesure...",
-  badgeColor: "bg-slate-400",
-  source: "loading",
-  isEstimated: true,
-  escape: "Vérification de l'itinéraire bis...",
-}));
+// 8 Goulots d'étranglement stratégiques de Kinshasa (Plan 1)
+const STRATEGIC_BOTTLENECKS = [
+  {
+    id: "limete-echangeur",
+    name: "Échangeur de Limete",
+    district: "Limete / Nœud Est",
+    coords: { lat: -4.3570, lng: 15.3580 },
+    initialStatus: "BLOQUÉ",
+    delay: 35,
+    speed: 8,
+    cause: "Panne de minibus 207 sur voie de droite et rétrécissement vers le pont.",
+    certifiedAlt: "Av. des Poids Lourds via Kingabwa (dégagée).",
+    lingala: "Echangeur eza bloqué makasi, loba na chauffeur aleka na Kingabwa."
+  },
+  {
+    id: "kintambo-magasin",
+    name: "Kintambo Magasin",
+    district: "Ngaliema / Nœud Ouest",
+    coords: { lat: -4.3270, lng: 15.2740 },
+    initialStatus: "EMBOUTEILLAGE",
+    delay: 25,
+    speed: 12,
+    cause: "Régulation manuelle intense des roulages et refoulement vers Mondjiba.",
+    certifiedAlt: "Av. du Tourisme le long des berges du fleuve.",
+    lingala: "Magasin eza pasi na ba roulages, leka na Tourisme."
+  },
+  {
+    id: "matadi-upn",
+    name: "Route de Matadi (UPN)",
+    district: "Ngaliema / Sortie Ouest",
+    coords: { lat: -4.3800, lng: 15.2580 },
+    initialStatus: "EMBOUTEILLAGE",
+    delay: 30,
+    speed: 10,
+    cause: "Chaussée dégradée, nids-de-poule et stationnement sauvage de wewas.",
+    certifiedAlt: "Avenue de la Montagne vers Météo.",
+    lingala: "UPN nzela ebeba, mituka ezali kotambola malembe."
+  },
+  {
+    id: "lumumba-pascal",
+    name: "Boulevard Lumumba (Pascal)",
+    district: "Masina / Tchangu",
+    coords: { lat: -4.3850, lng: 15.4200 },
+    initialStatus: "BLOQUÉ",
+    delay: 45,
+    speed: 6,
+    cause: "Déversement du marché de rue et bus 207 en double file.",
+    certifiedAlt: "Route Mokali vers Kimbanseke ou rail Transco.",
+    lingala: "Pascal eza tcha, wewa to marche à pied nde nzela."
+  },
+  {
+    id: "bypass-triangle",
+    name: "Avenue By-Pass (Triangle)",
+    district: "Lemba / Mont-Ngafula",
+    coords: { lat: -4.4100, lng: 15.3150 },
+    initialStatus: "MODÉRÉ",
+    delay: 15,
+    speed: 22,
+    cause: "Ralentissement au rond-point, chargements anarchiques.",
+    certifiedAlt: "Avenue Elengesa (nouvellement asphaltée et fluide).",
+    lingala: "Triangle eza mwa bien, kotambola eza te pasi mingi."
+  },
+  {
+    id: "mandela-30juin",
+    name: "Rond-point Mandela (Blvd 30 Juin)",
+    district: "Gombe / Cœur de ville",
+    coords: { lat: -4.3120, lng: 15.2980 },
+    initialStatus: "MODÉRÉ",
+    delay: 12,
+    speed: 25,
+    cause: "Sorties des ministères et flux vers Batetela.",
+    certifiedAlt: "Avenue de la Justice ou Avenue de la Science.",
+    lingala: "30 Juin eza modéré, banzela ya pembeni eza liboso."
+  },
+  {
+    id: "kalamu-victoire",
+    name: "Avenue Kasa-Vubu (Victoire)",
+    district: "Kalamu / Centre",
+    coords: { lat: -4.3430, lng: 15.3120 },
+    initialStatus: "EMBOUTEILLAGE",
+    delay: 20,
+    speed: 14,
+    cause: "Forte affluence piétonne et commerces de rue.",
+    certifiedAlt: "Avenue de l'Enseignement vers Stade des Martyrs.",
+    lingala: "Victoire bato baza mingi na nzela, keba na ralentissement."
+  },
+  {
+    id: "universite-pontgabu",
+    name: "Av. de l'Université (Pont Gabu)",
+    district: "Kalamu / Limete",
+    coords: { lat: -4.3550, lng: 15.3180 },
+    initialStatus: "FLUIDE",
+    delay: 3,
+    speed: 40,
+    cause: "Circulation fluide, aucun incident signalé sur le pont.",
+    certifiedAlt: "Axe direct praticable.",
+    lingala: "Pont Gabu eza kitoko, kende na yo esika olingi."
+  }
+];
+
+// Trajets quotidiens prédéfinis 1-Tap (Plan 1)
+const QUICK_COMMUTES = [
+  {
+    id: "upn-gombe",
+    title: "UPN ➔ Gombe (Centre-Ville)",
+    via: "Route de Matadi & 30 Juin",
+    coords: { lat: -4.3800, lng: 15.2580 },
+    status: "EMBOUTEILLAGE",
+    delay: "+35 min",
+    badgeColor: "bg-red-500",
+    escape: "Prendre Av. du Tourisme via les Berges du Fleuve"
+  },
+  {
+    id: "masina-gombe",
+    title: "Masina / Tchangu ➔ Gombe",
+    via: "Boulevard Lumumba & Limete",
+    coords: { lat: -4.3850, lng: 15.4200 },
+    status: "BLOQUÉ",
+    delay: "+50 min",
+    badgeColor: "bg-purple-600",
+    escape: "Bifurquer vers Poids Lourds à Kingabwa"
+  },
+  {
+    id: "lemba-gombe",
+    title: "Lemba / Triangle ➔ Gombe",
+    via: "By-Pass & Av. Université",
+    coords: { lat: -4.4100, lng: 15.3150 },
+    status: "MODÉRÉ",
+    delay: "+15 min",
+    badgeColor: "bg-amber-500",
+    escape: "Emprunter la nouvelle Avenue Elengesa"
+  },
+  {
+    id: "kintambo-gombe",
+    title: "Kintambo Magasin ➔ Gombe",
+    via: "Avenue Mondjiba",
+    coords: { lat: -4.3270, lng: 15.2740 },
+    status: "EMBOUTEILLAGE",
+    delay: "+25 min",
+    badgeColor: "bg-red-500",
+    escape: "Prendre l'Avenue de l'OUA ou Av. du Port"
+  }
+];
 
 export default function TrafficCommandDashboard() {
   const { user } = useUser();
@@ -105,31 +240,119 @@ export default function TrafficCommandDashboard() {
   const { data: profile } = useDoc<UserProfile>(userRef);
 
   const [search, setSearch] = useState('');
+  const [selectedHotspot, setSelectedHotspot] = useState<any>(STRATEGIC_BOTTLENECKS[0]);
   const [activeAnalysis, setActiveAnalysis] = useState<any>(null);
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
-  const [confirmedNodes, setConfirmedNodes] = useState<Record<string, boolean>>({});
+  const [votedNodes, setVotedNodes] = useState<Record<string, 'still' | 'clear'>>({});
 
-  // Données temps réel transparentes (distinction claire entre Google Live et Estimation)
-  const [bottlenecks, setBottlenecks] = useState<any[]>(INITIAL_BOTTLENECKS);
-  const [commutes, setCommutes] = useState<any[]>(INITIAL_COMMUTES);
+  // Données temps réel réactives (OSRM + Firestore, pas de mock data)
+  // Avant la première réponse serveur : noms et lieux seulement, aucun chiffre inventé.
+  const [bottlenecks, setBottlenecks] = useState<any[]>(
+    STRATEGIC_BOTTLENECKS.map(b => ({
+      id: b.id,
+      name: b.name,
+      district: b.district,
+      coords: b.coords,
+      speedKmh: null,
+      delayMin: null,
+      status: "INCONNU",
+      source: "none",
+      confidence: 0,
+      cause: null,
+      typicalCause: b.cause,
+      certifiedAlt: b.certifiedAlt,
+      lingala: "Tozali kotala nzela…",
+      votes: { still: 0, clear: 0, lastAgeMin: null },
+      activeIncidents: []
+    }))
+  );
+  const [commutes, setCommutes] = useState<any[]>(
+    QUICK_COMMUTES.map(c => ({ ...c, status: "INCONNU", delay: "…", delayText: "Chargement…", badgeColor: "bg-slate-400", source: "none" }))
+  );
   const [globalMetrics, setGlobalMetrics] = useState<{
     kinshasaHour: number;
     isPeakHour: boolean;
-    avgSpeed: number;
-    congestionIndex: number;
+    avgSpeed: number | null;
+    congestionIndex: number | null;
     activeIncidentsCount: number;
-    liveGoogleCount?: number;
-    totalNodes?: number;
-    weather?: { isRaining: boolean; rainMm: number; weatherLabel: string } | null;
+    votesLastHour?: number;
+    liveCount?: number;
+    nodeCount?: number;
+    weather?: { rainMmH: number; rainProbNext2h: number } | null;
+    activeEventsCount?: number;
     telemetrySource?: string;
     updatedAt: string;
     audioFlashText: string;
   } | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [corridorStates, setCorridorStates] = useState<Record<string, CorridorLive> | undefined>(undefined);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string>('');
 
-  const walletBalanceCDF = profile?.walletBalanceCDF ?? 850;
+  const walletBalanceCDF = profile?.walletBalanceCDF ?? 0;
+
+  // --- Carte vivante : moment affiché (0 = maintenant, 1 = +1 h, 2 = +2 h) et nœud choisi
+  const [timeOffset, setTimeOffset] = useState<0 | 1 | 2>(0);
+  const [cityForecast, setCityForecast] = useState<Awaited<ReturnType<typeof getCityForecastAction>> | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
+  useEffect(() => {
+    getCityForecastAction().then(setCityForecast).catch(() => setCityForecast(null));
+  }, []);
+
+  const mapNodes: MapNode[] = bottlenecks.map(b => {
+    const f = timeOffset > 0 ? cityForecast?.nodes?.[b.id]?.[timeOffset - 1] : null;
+    return {
+      id: b.id,
+      name: b.name,
+      coords: b.coords,
+      level: timeOffset === 0 ? levelFromStatus(b.status) : levelFromDelay(f?.delay ?? null),
+      isLive: b.isLive,
+      hasIncident: (b.activeIncidents?.length ?? 0) > 0,
+    };
+  });
+  const forecastKnown = timeOffset > 0 ? mapNodes.filter(n => n.level !== 'none').length : 0;
+
+  // Données enrichies pour la carte illustrée (fiche au toucher, signalements à leur vraie position).
+  const cityNodes: CityMapNode[] = mapNodes.map((n, i) => {
+    const b = bottlenecks[i];
+    const f = timeOffset > 0 ? cityForecast?.nodes?.[b.id]?.[timeOffset - 1] : null;
+    return {
+      ...n,
+      district: b.district,
+      speedKmh: timeOffset === 0 ? b.speedKmh : null,
+      delayMin: timeOffset === 0 ? b.delayMin : (typeof f?.delay === 'number' ? f.delay : null),
+      cause: timeOffset === 0 ? b.cause : null,
+      typicalCause: b.typicalCause,
+      alt: b.certifiedAlt,
+      lingala: timeOffset === 0 && b.status !== 'INCONNU' ? b.lingala : null,
+      source: timeOffset === 0 ? b.source : 'estimate',
+      incidents: timeOffset === 0 ? b.activeIncidents : [],
+    };
+  });
+
+  // Humeur de Ya Flow : pluie d'abord, puis la pire situation sur la carte, sinon l'heure.
+  const blockedNodes = mapNodes.filter(n => n.level === 'block');
+  const denseNodes = mapNodes.filter(n => n.level === 'dense' || n.level === 'mod');
+  const okNodes = mapNodes.filter(n => n.level === 'ok');
+  const narratorMood: Mood =
+    (globalMetrics?.weather?.rainMmH ?? 0) >= 0.5 ? 'pluie'
+      : blockedNodes.length > 0 ? 'bloque'
+        : denseNodes.length > okNodes.length ? 'dense'
+          : okNodes.length > 0 ? 'fluide'
+            : moodFromClock();
+  const narratorLines = [
+    ...(blockedNodes.length > 0 ? [`Keba ! ${blockedNodes.slice(0, 2).map(n => n.name).join(' et ')} : nzela ekangami.`] : []),
+    ...(okNodes.length > 0 && narratorMood !== 'bloque' ? [`${okNodes[0].name} ezali polele. Tokende !`] : []),
+    ...MOOD_LINES[narratorMood],
+  ];
+
+  const selectNode = (id: string) => {
+    setSelectedNodeId(id);
+    if (typeof document !== 'undefined') {
+      document.getElementById(`node-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
 
   // Récupération dynamique en direct (Google Routes Live + OSRM + Firestore)
   const fetchRealtimeTraffic = useCallback(async (showToast = false) => {
@@ -143,6 +366,7 @@ export default function TrafficCommandDashboard() {
         if (res.commutes && res.commutes.length > 0) {
           setCommutes(res.commutes);
         }
+        if (res.corridors) setCorridorStates(res.corridors);
         if (res.globalMetrics) {
           setGlobalMetrics(res.globalMetrics);
           setLastRefreshedAt(res.globalMetrics.updatedAt);
@@ -176,8 +400,7 @@ export default function TrafficCommandDashboard() {
     setActiveAnalysis(null);
     try {
       const data = await checkTrafficAction({ ...coords, address: name });
-      const fData = await getTrafficForecastAction(name);
-      setActiveAnalysis({ ...data, name, forecast: fData });
+      setActiveAnalysis({ ...data, name });
     } catch (e: any) {
       toast({ title: "Erreur", description: "Impossible d'analyser cet axe.", variant: "destructive" });
     } finally {
@@ -185,33 +408,71 @@ export default function TrafficCommandDashboard() {
     }
   };
 
-  // Confirmation rémunérée (+25 FC)
-  const handleRewardConfirm = async (nodeId: string, nodeName: string) => {
+  // Recherche d'une avenue : on localise d'abord l'avenue tapée, puis on l'analyse à cet endroit.
+  const handleSearch = async () => {
+    const q = search.trim();
+    if (!q) return;
+    setIsLoadingAnalysis(true);
+    try {
+      const loc = await locateAxisAction(q);
+      if (!loc.found) {
+        setIsLoadingAnalysis(false);
+        toast({ title: "Avenue introuvable", description: `Nous ne trouvons pas « ${q} » à Kinshasa. Essayez un nom plus court (ex. : Huileries, Poids Lourds).`, variant: "destructive" });
+        return;
+      }
+      await handleInspectAxis({ lat: loc.lat, lng: loc.lng }, loc.name);
+    } catch {
+      setIsLoadingAnalysis(false);
+      toast({ title: "Erreur", description: "Impossible de localiser cette avenue.", variant: "destructive" });
+    }
+  };
+
+  // Vote 1-tap « toujours bloqué / c'est dégagé ». Un vote par usager, par nœud, par créneau de 30 min
+  // (garanti par l'id du document et les règles Firestore). Le vote met à jour la carte de tout le monde.
+  const handleVote = async (nodeId: string, nodeName: string, vote: 'still' | 'clear') => {
     if (!user) {
-      toast({
-        title: "Connexion requise",
-        description: "Connectez-vous pour recevoir vos +25 FC sur votre E-Wallet.",
-        variant: "destructive"
-      });
+      toast({ title: "Connexion requise", description: "Connectez-vous pour voter et recevoir vos +25 FC.", variant: "destructive" });
       return;
     }
+    const slot = voteSlot();
+    const voteId = `${user.uid}_${nodeId}_${slot}`;
+    try {
+      await setDoc(doc(firestore, 'traffic_votes', voteId), {
+        userId: user.uid,
+        nodeId,
+        vote,
+        slot,
+        createdAt: serverTimestamp()
+      });
+    } catch {
+      // Document déjà créé pour ce créneau : les règles refusent la réécriture.
+      setVotedNodes(prev => ({ ...prev, [nodeId]: vote }));
+      toast({ title: "Déjà voté", description: "Vous avez déjà donné l'état de ce carrefour. Revenez dans 30 minutes." });
+      return;
+    }
+    setVotedNodes(prev => ({ ...prev, [nodeId]: vote }));
+    fetchRealtimeTraffic(true);
     try {
       const res = await awardWalletContributionAction({
-        userId: user.uid,
+        idToken: await user.getIdToken(),
         type: 'upvote',
+        refId: voteId,
         road: nodeName,
-        note: 'Validation 1-Tap depuis le Tableau de Bord'
       });
       if (res.success) {
-        setConfirmedNodes(prev => ({ ...prev, [nodeId]: true }));
+        const extras = [
+          ...(res.missionsCompleted?.length ? [`Mission réussie : ${res.missionsCompleted.join(', ')}`] : []),
+          ...(res.badgesUnlocked?.length ? [`Badge : ${res.badgesUnlocked.join(', ')}`] : []),
+        ];
         toast({
-          title: "Gain Immédiat ! 🎉 (+25 FC)",
-          description: `Merci ! Vos +25 FC ont été versés sur votre portefeuille. Solde actuel : ${res.newBalanceCDF} FC.`,
-          className: "bg-emerald-600 text-white font-bold"
+          title: res.levelUp ? `Niveau ${res.level} ! Rang : ${res.rank}` : `+${res.xpGained} XP`,
+          description: [res.message, ...extras].join(' · '),
         });
+      } else {
+        toast({ title: "Merci, la carte est à jour", description: res.error || "Votre vote est compté." });
       }
-    } catch (err: any) {
-      toast({ title: "Erreur", description: err.message, variant: "destructive" });
+    } catch {
+      toast({ title: "Merci, la carte est à jour", description: "Votre vote est compté." });
     }
   };
 
@@ -307,33 +568,36 @@ export default function TrafficCommandDashboard() {
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                 </span>
-                <span className="font-bold text-slate-300">Kinshasa :</span>
+                <span className="font-bold text-slate-300">Télémétrie :</span>
                 <span className="font-extrabold text-emerald-400">
-                  {globalMetrics
-                    ? `${globalMetrics.isPeakHour ? "Heure de Pointe" : "Heure Normale"} (${globalMetrics.kinshasaHour}h)`
-                    : "Chargement..."}
+                  {globalMetrics ? `${globalMetrics.isPeakHour ? "Heure de pointe" : "Heure normale"} (${globalMetrics.kinshasaHour}h)` : "Chargement…"}
                 </span>
               </div>
 
               <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700/80">
                 <Flame className="h-3.5 w-3.5 text-amber-400" />
                 <span className="font-bold text-slate-300">Congestion :</span>
-                <span className="font-extrabold text-amber-400">
-                  {globalMetrics ? `${globalMetrics.congestionIndex}%` : "--"}
-                </span>
+                <span className="font-extrabold text-amber-400">{typeof globalMetrics?.congestionIndex === 'number' ? `${globalMetrics.congestionIndex}%` : '—'}</span>
               </div>
 
               <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700/80">
                 <Car className="h-3.5 w-3.5 text-blue-400" />
                 <span className="font-bold text-slate-300">Vitesse moy. :</span>
-                <span className="font-extrabold text-blue-400">
-                  {globalMetrics ? `${globalMetrics.avgSpeed} km/h` : "--"}
-                </span>
+                <span className="font-extrabold text-blue-400">{typeof globalMetrics?.avgSpeed === 'number' ? `${globalMetrics.avgSpeed} km/h` : '—'}</span>
               </div>
 
-              {globalMetrics?.weather?.weatherLabel && (
-                <div className="flex items-center gap-2 bg-sky-950/60 px-3 py-1.5 rounded-xl border border-sky-800/80">
-                  <span className="font-bold text-sky-300">{globalMetrics.weather.weatherLabel}</span>
+              {globalMetrics && typeof globalMetrics.liveCount === 'number' && (
+                <div className={cn("flex items-center gap-2 px-3 py-1.5 rounded-xl border", globalMetrics.liveCount > 0 ? "bg-emerald-950/50 border-emerald-800/80" : "bg-amber-950/50 border-amber-800/80")}>
+                  <span className={cn("font-bold", globalMetrics.liveCount > 0 ? "text-emerald-300" : "text-amber-300")}>
+                    {globalMetrics.liveCount}/{globalMetrics.nodeCount} nœuds mesurés en direct
+                  </span>
+                </div>
+              )}
+
+              {globalMetrics && (globalMetrics.votesLastHour ?? 0) > 0 && (
+                <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700/80">
+                  <ThumbsUp className="h-3.5 w-3.5 text-sky-400" />
+                  <span className="font-bold text-slate-300">{globalMetrics.votesLastHour} vote(s) Kinois cette heure</span>
                 </div>
               )}
 
@@ -347,9 +611,7 @@ export default function TrafficCommandDashboard() {
 
             <div className="flex items-center gap-2">
               <span className="text-[11px] text-slate-400">
-                {lastRefreshedAt
-                  ? `${globalMetrics?.telemetrySource || "Source inconnue"} • ${lastRefreshedAt}`
-                  : "Synchronisation en direct..."}
+                {lastRefreshedAt ? `${globalMetrics?.telemetrySource || 'Live'} • ${lastRefreshedAt}` : "Synchronisation en direct..."}
               </span>
               <Button
                 size="sm"
@@ -365,6 +627,55 @@ export default function TrafficCommandDashboard() {
           </div>
         </div>
 
+        {/* ── 1b. JOUEUR + CARTE VIVANTE ── */}
+        <PlayerHud profile={profile} />
+        <YaFlowSays mood={narratorMood} lines={narratorLines} tone="light" />
+
+        <div className="rounded-3xl bg-[#0A1A29] text-[#EAF3FA] p-3 sm:p-4 border border-[#22425C] shadow-xl space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {([0, 1, 2] as const).map(o => (
+              <button
+                key={o}
+                type="button"
+                onClick={() => setTimeOffset(o)}
+                aria-pressed={timeOffset === o}
+                className={cn(
+                  "rounded-full px-3 py-1.5 text-xs font-bold border transition-colors",
+                  timeOffset === o ? "bg-[#EAF3FA] text-[#0A1A29] border-[#EAF3FA]" : "bg-[#11273A] text-[#EAF3FA] border-[#22425C] hover:border-[#8EA8BD]"
+                )}
+              >
+                {o === 0 ? 'Maintenant' : `+${o} h`}
+              </button>
+            ))}
+            {globalMetrics?.weather && globalMetrics.weather.rainMmH >= 0.5 && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30 px-2.5 py-1 text-[11px] font-bold">
+                <CloudRain className="h-3.5 w-3.5" /> Pluie {globalMetrics.weather.rainMmH.toFixed(1)} mm/h
+              </span>
+            )}
+            {(globalMetrics?.activeEventsCount ?? 0) > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 px-2.5 py-1 text-[11px] font-bold">
+                <CalendarDays className="h-3.5 w-3.5" /> {globalMetrics!.activeEventsCount} événement(s) en cours
+              </span>
+            )}
+            <span className="ml-auto text-[11px] text-[#8EA8BD]">
+              {timeOffset === 0
+                ? (lastRefreshedAt ? `Mis à jour à ${lastRefreshedAt}` : 'Chargement…')
+                : forecastKnown > 0
+                  ? `Prévision d'après l'historique · ${forecastKnown}/8 nœuds`
+                  : "Pas encore assez d'historique pour prévoir"}
+            </span>
+          </div>
+          <KinshasaCityMap
+            nodes={cityNodes}
+            selectedId={selectedNodeId}
+            onSelect={setSelectedNodeId}
+            onOpenDetails={selectNode}
+            raining={(globalMetrics?.weather?.rainMmH ?? 0) >= 0.5}
+            corridorStates={timeOffset === 0 ? corridorStates : undefined}
+            timeLabel={timeOffset === 0 ? (lastRefreshedAt ? `maj ${lastRefreshedAt}` : undefined) : `prévision +${timeOffset} h`}
+          />
+        </div>
+
         {/* ── 2. RECHERCHE RAPIDE & GPS DIRECT ── */}
         <div className="bg-white dark:bg-slate-900 p-3 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row gap-2">
           <div className="relative flex-1">
@@ -375,16 +686,12 @@ export default function TrafficCommandDashboard() {
               placeholder="Rechercher une avenue (ex: Huileries, Poids Lourds, By-Pass...)"
               className="pl-10 h-11 rounded-xl border-slate-200 dark:border-slate-800 font-bold text-xs"
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && search) {
-                  handleInspectAxis({ lat: -4.3250, lng: 15.3100 }, search);
-                }
+                if (e.key === 'Enter') handleSearch();
               }}
             />
           </div>
           <Button
-            onClick={() => {
-              if (search) handleInspectAxis({ lat: -4.3250, lng: 15.3100 }, search);
-            }}
+            onClick={handleSearch}
             disabled={isLoadingAnalysis}
             className="h-11 px-5 rounded-xl font-bold text-xs gap-1.5 shrink-0"
           >
@@ -418,7 +725,7 @@ export default function TrafficCommandDashboard() {
             {commutes.map((commute) => (
               <Card
                 key={commute.id}
-                onClick={() => handleInspectAxis(commute.coords, commute.title.split('➔')[0].trim())}
+                onClick={() => handleInspectAxis(commute.coords, commute.via)}
                 className="rounded-2xl border-slate-200/80 dark:border-slate-800 hover:border-primary/50 transition-all cursor-pointer shadow-sm group hover:shadow-md bg-white dark:bg-slate-900"
               >
                 <CardContent className="p-4 space-y-2.5">
@@ -426,26 +733,15 @@ export default function TrafficCommandDashboard() {
                     <span className="font-black text-xs text-slate-900 dark:text-white group-hover:text-primary transition-colors leading-tight">
                       {commute.title}
                     </span>
-                    <div className="flex flex-col items-end gap-1 shrink-0">
-                      <Badge className={cn("text-white font-black text-[9px]", commute.badgeColor)}>
-                        {commute.delayText || commute.delay}
-                      </Badge>
-                      {commute.source && commute.source !== "loading" && (
-                        <span className={cn(
-                          "text-[9px] font-bold px-1.5 py-0.5 rounded",
-                          commute.source === "google"
-                            ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                            : "bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                        )}>
-                          {commute.source === "google" ? "Google Live" : "Estimation"}
-                        </span>
-                      )}
-                    </div>
+                    <Badge className={cn("text-white font-black text-[9px] shrink-0", commute.badgeColor)}>
+                      {commute.delayText || commute.delay}
+                    </Badge>
                   </div>
                   <div className="text-[10px] text-slate-400 font-medium truncate flex items-center justify-between">
                     <span>Via {commute.via}</span>
-                    {commute.distKm > 0 && <span className="font-bold text-slate-500">{commute.distKm} km • ~{commute.durMin} min</span>}
+                    {commute.distKm && <span className="font-bold text-slate-500">{commute.distKm} km • ~{commute.durMin} min</span>}
                   </div>
+                  <SourceChip source={commute.source} confidence={commute.confidence} />
                   <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 flex items-start gap-1.5">
                     <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
                     <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 leading-tight">
@@ -473,19 +769,9 @@ export default function TrafficCommandDashboard() {
                     <MapPin className="h-5 w-5" />
                   </div>
                   <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <Badge className="bg-primary/20 text-primary font-black text-[9px] uppercase border-none">
-                        Diagnostic Express
-                      </Badge>
-                      <Badge className={cn(
-                        "font-black text-[9px] uppercase border-none",
-                        activeAnalysis.source === "google"
-                          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-                          : "bg-amber-500/15 text-amber-700 dark:text-amber-400"
-                      )}>
-                        {activeAnalysis.source === "google" ? "Google Live" : "Estimation horaire"}
-                      </Badge>
-                    </div>
+                    <Badge className="bg-primary/20 text-primary font-black text-[9px] uppercase border-none mb-1">
+                      Diagnostic Express
+                    </Badge>
                     <h3 className="text-lg font-black text-slate-900 dark:text-white leading-tight">
                       {activeAnalysis.name}
                     </h3>
@@ -503,34 +789,36 @@ export default function TrafficCommandDashboard() {
                   <div className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
                     <span>{STATUS_CONFIG[activeAnalysis.status as keyof typeof STATUS_CONFIG]?.icon}</span>
                     <span>{activeAnalysis.status}</span>
-                    {activeAnalysis.delay > 0 && <span className="text-red-600 text-xs">(+{activeAnalysis.delay} min)</span>}
+                    {activeAnalysis.delay > 0 && <span className="text-red-600 text-xs">({activeAnalysis.isLive ? '' : '~'}+{activeAnalysis.delay} min)</span>}
                   </div>
+                  <SourceChip source={activeAnalysis.source} confidence={activeAnalysis.confidence} />
                 </div>
 
-                {/* 2. Pourquoi l'embouteillage ? (uniquement signaux observés) */}
+                {/* 2. Pourquoi l'embouteillage ? */}
                 <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 space-y-1">
                   <div className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-400 flex items-center gap-1">
-                    <ShieldAlert className="h-3 w-3" /> Cause observée
+                    <ShieldAlert className="h-3 w-3" /> {activeAnalysis.cause ? `Signalé il y a ${activeAnalysis.reportAgeMin ?? '?'} min` : "Cause habituelle (non confirmée)"}
                   </div>
                   <p className="text-xs font-semibold text-amber-900 dark:text-amber-200 leading-tight">
-                    {activeAnalysis.cause || activeAnalysis.message}
+                    {activeAnalysis.cause || activeAnalysis.typicalCause || "Aucun signalement récent sur cet axe."}
                   </p>
                 </div>
 
-                {/* 3. Itinéraires Alternatifs Vérifiés */}
+                {/* 3. Échappatoire Certifiée */}
                 <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 space-y-1">
                   <div className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
-                    <ShieldCheck className="h-3 w-3" /> Détours Vérifiés
+                    <ShieldCheck className="h-3 w-3" /> Alternative habituelle
                   </div>
                   <p className="text-xs font-bold text-emerald-900 dark:text-emerald-200 leading-tight">
-                    {activeAnalysis.forecast?.alternatives?.length
-                      ? activeAnalysis.forecast.alternatives
-                          .map((alt: any) => `${alt.name} (+${alt.estimatedDelay} min, ${alt.source === "google" ? "Live" : "Est."})`)
-                          .join(" • ")
-                      : activeAnalysis.alternativeRoutes?.length
-                        ? activeAnalysis.alternativeRoutes.map((r: any) => `${r.summary} (+${r.delayMinutes} min)`).join(" • ")
-                        : "Aucune déviation vérifiée plus rapide pour le moment."}
+                    {activeAnalysis.typicalAlternative || "Contourner par les voies secondaires."}
                   </p>
+                  {Array.isArray(activeAnalysis.alternatives) && activeAnalysis.alternatives.length > 0 && (
+                    <ul className="pt-1 space-y-0.5 text-[10px] text-emerald-800 dark:text-emerald-300">
+                      {activeAnalysis.alternatives.map((alt: any, i: number) => (
+                        <li key={i}>Mesuré : {alt.description} · {alt.duration}{typeof alt.delay === 'number' ? ` (+${alt.delay} min)` : ''}</li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               </div>
 
@@ -564,17 +852,21 @@ export default function TrafficCommandDashboard() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
             {bottlenecks.map((node) => {
-              const statusKey = (node.status || "INCONNU") as keyof typeof STATUS_CONFIG;
-              const cfg = STATUS_CONFIG[statusKey] || STATUS_CONFIG.INCONNU;
-              const isConfirmed = confirmedNodes[node.id];
-              const speed = node.speedKmh ?? 0;
-              const delay = node.delayMin ?? 0;
-              const isGoogle = node.source === "google";
+              const statusKey = (node.status || node.initialStatus || "MODÉRÉ") as keyof typeof STATUS_CONFIG;
+              const cfg = STATUS_CONFIG[statusKey] || STATUS_CONFIG.MODÉRÉ;
+              const myVote = votedNodes[node.id];
+              const nodeVotes = node.votes as { still: number; clear: number; lastAgeMin: number | null } | undefined;
+              const speed = node.speedKmh ?? node.speed;
+              const delay = node.delayMin ?? node.delay;
 
               return (
                 <div
                   key={node.id}
-                  className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-4 sm:p-5 shadow-sm space-y-3 hover:border-slate-300 transition-all flex flex-col justify-between"
+                  id={`node-${node.id}`}
+                  className={cn(
+                    "rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-4 sm:p-5 shadow-sm space-y-3 hover:border-slate-300 transition-all flex flex-col justify-between scroll-mt-24",
+                    selectedNodeId === node.id && "ring-2 ring-amber-400 border-amber-400"
+                  )}
                 >
                   <div className="space-y-2.5">
                     
@@ -587,21 +879,9 @@ export default function TrafficCommandDashboard() {
                             {node.name}
                           </h3>
                         </div>
-                        <div className="pl-6 flex items-center gap-2 mt-0.5">
-                          <span className="text-[10px] font-semibold text-slate-400">
-                            {node.district}
-                          </span>
-                          {node.source && node.source !== "loading" && (
-                            <span className={cn(
-                              "text-[9px] font-black px-1.5 py-0.5 rounded uppercase",
-                              isGoogle
-                                ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-                                : "bg-amber-500/15 text-amber-700 dark:text-amber-400"
-                            )}>
-                              {isGoogle ? "Google Live" : "Estimation"}
-                            </span>
-                          )}
-                        </div>
+                        <span className="text-[10px] font-semibold text-slate-400 pl-6">
+                          {node.district}
+                        </span>
                         {node.activeIncidents && node.activeIncidents.length > 0 && (
                           <div className="pl-6 mt-1 flex items-center gap-1.5">
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-black bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30">
@@ -616,56 +896,66 @@ export default function TrafficCommandDashboard() {
                           {cfg.label}
                         </Badge>
                         <div className="text-[10px] font-bold text-slate-500 mt-0.5">
-                          {node.source === "loading" ? "Analyse..." : `+${delay} min • ${speed} km/h`}
+                          {typeof delay === 'number' ? `${node.isLive ? '' : '~'}+${delay} min • ${speed} km/h` : typeof speed === 'number' ? `${speed} km/h` : '—'}
                         </div>
                       </div>
                     </div>
 
-                    {/* Cause Box */}
-                    <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-300/40 text-slate-800 dark:text-slate-200 space-y-1">
+                    <div className="pl-6"><SourceChip source={node.source} confidence={node.confidence} /></div>
+
+                    {/* Pourquoi ça bloque : causes réelles avec preuve et poids */}
+                    <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-300/40 text-slate-800 dark:text-slate-200 space-y-2">
                       <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-amber-800 dark:text-amber-300">
                         <ShieldAlert className="h-3 w-3 text-amber-600" />
-                        <span>Pourquoi ça bloque ?</span>
+                        <span>Pourquoi ?</span>
                       </div>
-                      <p className="text-xs font-medium leading-relaxed pl-4 text-slate-700 dark:text-slate-300">
-                        {node.cause}
-                      </p>
+                      {Array.isArray(node.why) && node.why.length > 0 ? (
+                        <ul className="space-y-2">
+                          {node.why.map((w: any, i: number) => (
+                            <li key={i} className="space-y-1">
+                              <div className="flex items-start justify-between gap-2 text-xs">
+                                <span className="font-semibold text-slate-800 dark:text-slate-200">
+                                  {w.label}
+                                  <span className={cn("block text-[10px] font-medium", w.confirmed ? "text-slate-500" : "text-amber-700 dark:text-amber-400")}>{w.evidence}</span>
+                                </span>
+                                <span className="text-[10px] font-bold text-slate-500 tabular-nums">{w.pct}%</span>
+                              </div>
+                              <div className="h-1.5 rounded-full bg-amber-500/15 overflow-hidden">
+                                <div className="h-full rounded-full bg-amber-500" style={{ width: `${w.pct}%` }} />
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-xs font-medium leading-relaxed text-slate-600 dark:text-slate-400">
+                          {node.status === 'INCONNU' ? 'Chargement…' : "Rien de signalé ici pour l'instant. Vous êtes sur place ? Dites-le en un tap."}
+                        </p>
+                      )}
                     </div>
 
-                    {/* Checked Escape Route */}
+                    {/* Échappatoire : vérifiée en direct quand le carrefour est chargé */}
                     <div className={cn(
-                      "p-3 rounded-2xl border space-y-1",
-                      node.altIsBetter === false
-                        ? "bg-amber-500/10 border-amber-300/40 text-slate-800 dark:text-slate-200"
-                        : "bg-emerald-500/10 border-emerald-300/40 text-slate-800 dark:text-slate-200"
+                      "p-3 rounded-2xl border text-slate-800 dark:text-slate-200 space-y-1",
+                      node.altIsBetter === false ? "bg-amber-500/10 border-amber-300/40" : "bg-emerald-500/10 border-emerald-300/40"
                     )}>
                       <div className={cn(
                         "flex items-center justify-between gap-1.5 text-[10px] font-black uppercase",
-                        node.altIsBetter === false
-                          ? "text-amber-800 dark:text-amber-300"
-                          : "text-emerald-800 dark:text-emerald-300"
+                        node.altIsBetter === false ? "text-amber-800 dark:text-amber-300" : "text-emerald-800 dark:text-emerald-300"
                       )}>
-                        <div className="flex items-center gap-1.5">
+                        <span className="inline-flex items-center gap-1.5">
                           <ShieldCheck className={cn("h-3 w-3", node.altIsBetter === false ? "text-amber-600" : "text-emerald-600")} />
-                          <span>
-                            {node.altIsBetter === false
-                              ? "Détour aussi chargé"
-                              : "Échappatoire Vérifiée (Anti-Trou)"}
-                          </span>
-                        </div>
-                        {typeof node.altDelayMin === "number" && node.source !== "loading" && (
-                          <span className="text-[9px] font-bold">
-                            +{node.altDelayMin} min • {node.altSpeedKmh} km/h ({node.altSource === "google" ? "Live" : "Est."})
+                          {typeof node.altDelayMin !== 'number'
+                            ? 'Échappatoire habituelle'
+                            : node.altIsBetter ? 'Déviation vérifiée plus rapide' : 'Déviation aussi chargée'}
+                        </span>
+                        {typeof node.altDelayMin === 'number' && (
+                          <span className="text-[9px] font-bold normal-case">
+                            +{node.altDelayMin} min · {node.altSpeedKmh} km/h ({node.altSource === 'google' ? 'en direct' : 'estimé'})
                           </span>
                         )}
                       </div>
-                      <p className={cn(
-                        "text-xs font-bold leading-relaxed pl-4",
-                        node.altIsBetter === false
-                          ? "text-amber-800 dark:text-amber-300"
-                          : "text-emerald-800 dark:text-emerald-300"
-                      )}>
-                        {node.certifiedAlt}
+                      <p className={cn("text-xs font-bold leading-relaxed pl-4", node.altIsBetter === false ? "text-amber-800 dark:text-amber-300" : "text-emerald-800 dark:text-emerald-300")}>
+                        {typeof node.altDelayMin === 'number' ? node.altName : node.certifiedAlt}
                       </p>
                     </div>
 
@@ -679,23 +969,41 @@ export default function TrafficCommandDashboard() {
                   {/* Bottom Row Actions */}
                   <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
                     
-                    {/* Action 1: Confirmer & Gagner (+25 FC) */}
-                    {isConfirmed ? (
-                      <div className="flex items-center gap-1.5 text-emerald-600 text-xs font-bold">
-                        <CheckCircle2 className="h-4 w-4" />
-                        <span>+25 FC Crédités</span>
-                      </div>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleRewardConfirm(node.id, node.name)}
-                        className="rounded-xl text-[11px] font-black text-emerald-700 dark:text-emerald-400 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 gap-1.5 h-8"
-                      >
-                        <ThumbsUp className="h-3 w-3" />
-                        <span>Confirmer (+25 FC)</span>
-                      </Button>
-                    )}
+                    {/* Action 1 : vote 1-tap (sur place) */}
+                    <div className="flex flex-col gap-1 min-w-0">
+                      {myVote ? (
+                        <div className="flex items-center gap-1.5 text-emerald-600 text-xs font-bold">
+                          <CheckCircle2 className="h-4 w-4" />
+                          <span>{myVote === 'still' ? 'Vous : toujours bloqué' : "Vous : c'est dégagé"}</span>
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleVote(node.id, node.name, 'still')}
+                            className="rounded-xl text-[11px] font-black text-red-700 dark:text-red-400 border-red-300 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 gap-1 h-8 px-2.5"
+                          >
+                            <ThumbsDown className="h-3 w-3" />
+                            <span>Toujours bloqué</span>
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleVote(node.id, node.name, 'clear')}
+                            className="rounded-xl text-[11px] font-black text-emerald-700 dark:text-emerald-400 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 gap-1 h-8 px-2.5"
+                          >
+                            <ThumbsUp className="h-3 w-3" />
+                            <span>C'est dégagé</span>
+                          </Button>
+                        </div>
+                      )}
+                      {nodeVotes && (nodeVotes.still + nodeVotes.clear) > 0 && (
+                        <span className="text-[10px] text-slate-500 font-medium">
+                          {nodeVotes.still} bloqué · {nodeVotes.clear} dégagé{nodeVotes.lastAgeMin !== null ? ` · dernier vote il y a ${nodeVotes.lastAgeMin} min` : ''}
+                        </span>
+                      )}
+                    </div>
 
                     {/* Action 2: Itinéraire Bis */}
                     <Button
@@ -724,7 +1032,7 @@ export default function TrafficCommandDashboard() {
               </Badge>
               <span className="text-xs text-emerald-100 font-bold">Portefeuille Citoyen K-Flow</span>
             </div>
-            <h3 className="text-xl font-black">Chaque bouchon signalé = de l'argent dans votre poche</h3>
+            <h3 className="text-xl font-black">Chaque vote sur place met la carte à jour pour tout Kinshasa</h3>
             <p className="text-xs text-emerald-100 max-w-xl">
               Retirez vos Francs Congolais instantanément par M-Pesa, Orange Money ou Airtel Money, ou rechargez des mégas internet gratuits !
             </p>

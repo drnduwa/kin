@@ -16,8 +16,12 @@ import {
   Lightbulb,
   HelpCircle,
   User,
-  Wallet
+  Wallet,
+  ChevronDown,
+  Target,
+  Trophy
 } from 'lucide-react';
+import SpeedSharingAgent from '@/components/game/speed-sharing-agent';
 import {
   Sidebar,
   SidebarProvider,
@@ -181,6 +185,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { data: events } = useCollection<EventReport>(eventsRef);
   const [unreadReports, setUnreadReports] = useState(0);
 
+  // Phase 1 : le menu se concentre sur « sortir du trafic ». Les anciens écrans trafic restent accessibles
+  // sous « Plus d'outils » (ouvert automatiquement si on se trouve sur l'un d'eux).
+  const SECONDARY_TOOLS = ['/reports', '/live-traffic', '/local-traffic', '/insights', '/flux-infrastructure', '/routes', '/hazard-map', '/map', '/assistant'];
+  const [showMoreTools, setShowMoreTools] = useState(false);
+  const moreToolsOpen = showMoreTools || SECONDARY_TOOLS.includes(pathname);
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const lastSeenReports = parseInt(localStorage.getItem('last_seen_reports') || '0');
@@ -281,6 +291,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const titles: Record<string, string> = {
       '/reports': 'Baromètre Trafic',
       '/e-wallet': 'K-Flow E-Wallet & Gains',
+      '/quetes': 'Quêtes',
+      '/trajet': 'Mon trajet',
+      '/pro': 'Kin Flow Pro',
+      '/admin/croissance': 'Croissance',
+      '/classement': 'Classement',
       '/live-traffic': 'Temps Réel',
       '/local-traffic': 'Trafic Local',
       '/verifier-trafic': 'Centre de Contrôle Trafic',
@@ -318,11 +333,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                </div>
             </SidebarHeader>
             <SidebarMenu className="p-3 gap-1">
-              <div className="px-3 pb-1 text-[10px] font-black uppercase tracking-widest text-slate-400">
-                Navigation Trafic
-              </div>
-
-              {/* 1. Centre de Contrôle Trafic */}
+              
+              {/* 1. Priorité Absolue : Centre de Contrôle Trafic (Tableau de Bord Plan 1) */}
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={pathname === '/verifier-trafic'} className={cn("h-11 px-4 rounded-xl font-black bg-primary/10 hover:bg-primary/20", pathname === '/verifier-trafic' && "bg-primary text-white hover:bg-primary")}>
                   <Link href="/verifier-trafic" className="flex items-center justify-between w-full">
@@ -335,34 +347,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </SidebarMenuButton>
               </SidebarMenuItem>
 
-              {/* 2. GPS Nav */}
-              {isEnabled('kFlowNav') && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={pathname === '/k-flow-nav'} className={cn("bg-blue-500/10 mb-1 h-11 rounded-xl px-4", pathname === '/k-flow-nav' && "bg-blue-500/20")}>
-                    <Link href="/k-flow-nav" className="font-bold flex items-center justify-between w-full">
-                      <div className="flex items-center gap-3">
-                        <Navigation className={cn("h-5 w-5", pathname === '/k-flow-nav' ? "text-accent" : "text-primary")} />
-                        <span>K-Flow Nav</span>
-                      </div>
-                      <Badge className="bg-primary/20 text-primary text-[8px]">GPS</Badge>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
-
-              {/* 3. Carte des Dangers */}
-              {isEnabled('hazardMap') && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={pathname === '/hazard-map'} className={cn(pathname === '/hazard-map' && "bg-white/10")}>
-                    <Link href="/hazard-map" className="font-bold flex items-center gap-3 h-11 px-4 rounded-xl">
-                      <HazardIcon className={cn("h-5 w-5", pathname === '/hazard-map' ? "text-accent" : "text-primary")} />
-                      <span>Carte des Dangers</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
-
-              {/* 4. K-Flow E-Wallet (Contribute-to-Earn) */}
+              {/* 2. K-Flow E-Wallet (Contribute-to-Earn) */}
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={pathname === '/e-wallet'} className={cn("bg-emerald-500/10 mb-1 h-11 rounded-xl px-4 hover:bg-emerald-500/20", pathname === '/e-wallet' && "bg-emerald-600 text-white hover:bg-emerald-600")}>
                   <Link href="/e-wallet" className="font-bold flex items-center justify-between w-full">
@@ -375,11 +360,219 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </SidebarMenuButton>
               </SidebarMenuItem>
 
-              {/* 5. Assistant IA */}
+              {/* 3. GPS Nav */}
+              {isEnabled('kFlowNav') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname === '/k-flow-nav'} className={cn("bg-blue-500/10 mb-1 h-11 rounded-xl px-4", pathname === '/k-flow-nav' && "bg-blue-500/20")}>
+                    <Link href="/k-flow-nav" className="font-bold flex items-center justify-between w-full">
+                      <div className="flex items-center gap-3">
+                        <Navigation className={cn("h-5 w-5", pathname === '/k-flow-nav' ? "text-accent" : "text-primary")} />
+                        <span>K-Flow Nav</span>
+                      </div>
+                      <Badge className="bg-primary/20 text-primary text-[8px]">PREMIUM</Badge>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {/* 4. Signaler (1 tap) */}
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/signaler-embouteillage'} className={cn("bg-red-500/10 mb-1 h-11 rounded-xl px-4 hover:bg-red-500/20", pathname === '/signaler-embouteillage' && "bg-red-500/20")}>
+                  <Link href="/signaler-embouteillage" className="font-bold flex items-center gap-3 w-full">
+                    <PlusCircle className="h-5 w-5 text-red-500" />
+                    <span>Signaler un problème</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              {/* Trajet : coach de départ */}
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/trajet'} className={cn("h-11 rounded-xl px-4", pathname === '/trajet' && "bg-white/10")}>
+                  <Link href="/trajet" className="font-bold flex items-center gap-3 w-full">
+                    <Clock className="h-5 w-5 text-primary" />
+                    <span>Mon trajet : quand partir ?</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              {/* 5. Jeu : Quêtes et Classement */}
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/quetes'} className={cn("h-11 rounded-xl px-4", pathname === '/quetes' && "bg-white/10")}>
+                  <Link href="/quetes" className="font-bold flex items-center gap-3 w-full">
+                    <Target className="h-5 w-5 text-amber-500" />
+                    <span>Quêtes & niveaux</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/classement'} className={cn("h-11 rounded-xl px-4", pathname === '/classement' && "bg-white/10")}>
+                  <Link href="/classement" className="font-bold flex items-center gap-3 w-full">
+                    <Trophy className="h-5 w-5 text-amber-500" />
+                    <span>Classement des communes</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              {/* Phase 3 : flottes et radios */}
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/pro'} className={cn("h-11 rounded-xl px-4", pathname === '/pro' && "bg-white/10")}>
+                  <Link href="/pro" className="font-bold flex items-center gap-3 w-full">
+                    <Bus className="h-5 w-5 text-primary" />
+                    <span>Kin Flow Pro (flottes)</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild className="h-11 rounded-xl px-4">
+                  <a href="/flash" target="_blank" rel="noopener noreferrer" className="font-bold flex items-center gap-3 w-full">
+                    <Megaphone className="h-5 w-5 text-primary" />
+                    <span>Flash radio (lingala)</span>
+                  </a>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              {/* 5. Chat Direct (Communauté) */}
+              {isEnabled('communityChat') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname === '/community-chat'} className={cn(pathname === '/community-chat' && "bg-white/10")}>
+                    <Link href="/community-chat" className="font-bold flex items-center gap-3 h-11 px-4 rounded-xl">
+                      <MessagesSquare className={cn("h-5 w-5", pathname === '/community-chat' ? "text-accent" : "text-primary")} />
+                      <span>Chat Direct</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild className="h-11 px-4 rounded-xl hover:bg-emerald-500/10 group">
+                  <a href={whatsappChannelUrl} target="_blank" rel="noopener noreferrer" className="font-bold flex items-center gap-3">
+                    <Share2 className="h-5 w-5 text-emerald-500 group-hover:scale-110 transition-transform" />
+                    <span className="text-emerald-700">Canal WhatsApp</span>
+                  </a>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild className="h-11 px-4 rounded-xl hover:bg-primary/10 group">
+                  <a href={whatsappBusinessUrl} target="_blank" rel="noopener noreferrer" className="font-bold flex items-center gap-3">
+                    <Headphones className="h-5 w-5 text-primary group-hover:scale-110 transition-transform" />
+                    <span className="text-primary">Assistance WhatsApp</span>
+                  </a>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  onClick={() => setShowMoreTools(v => !v)}
+                  aria-expanded={moreToolsOpen}
+                  className="h-11 px-4 rounded-xl font-bold flex items-center justify-between w-full text-slate-600 dark:text-slate-300"
+                >
+                  <span className="flex items-center gap-3"><LayoutGrid className="h-5 w-5 text-slate-500" />Plus d'outils trafic</span>
+                  <ChevronDown className={cn("h-4 w-4 transition-transform", moreToolsOpen && "rotate-180")} />
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              {moreToolsOpen && (
+                <>
+              {/* 4. Baromètre Trafic */}
+              {isEnabled('reports') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname === '/reports'} className={cn(pathname === '/reports' && "bg-white/10")}>
+                    <Link href="/reports" className="font-bold flex items-center justify-between w-full h-11 px-4 rounded-xl">
+                      <div className="flex items-center gap-3">
+                        <Compass className={cn("h-5 w-5", pathname === '/reports' ? "text-accent" : "text-primary")} />
+                        <span>Baromètre Trafic</span>
+                      </div>
+                      {unreadReports > 0 && <Badge variant="destructive" className="h-5 px-1.5 min-w-[20px] justify-center text-[10px] rounded-full font-black">{unreadReports}</Badge>}
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {isEnabled('liveTraffic') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname === '/live-traffic'} className={cn(pathname === '/live-traffic' && "bg-white/10")}>
+                    <Link href="/live-traffic" className="font-medium flex items-center gap-3 h-11 px-4 rounded-xl">
+                      <Activity className={cn("h-5 w-5", pathname === '/live-traffic' ? "text-accent" : "text-primary")} />
+                      <span>Temps Réel</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {isEnabled('localTraffic') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname === '/local-traffic'} className={cn(pathname === '/local-traffic' && "bg-white/10")}>
+                    <Link href="/local-traffic" className="font-medium flex items-center gap-3 h-11 px-4 rounded-xl">
+                      <Radar className={cn("h-5 w-5", pathname === '/local-traffic' ? "text-accent" : "text-primary")} />
+                      <span>Trafic Local</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {isEnabled('insights') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname === '/insights'} className={cn("bg-amber-500/10 mb-2 h-11 rounded-xl px-4", pathname === '/insights' && "bg-amber-500/20")}>
+                    <Link href="/insights" className="font-bold flex items-center justify-between w-full text-slate-800">
+                      <div className="flex items-center gap-3">
+                        <Lightbulb className={cn("h-5 w-5", pathname === '/insights' ? "text-amber-500" : "text-amber-600")} />
+                        <span>Guide Anti-Bouchons</span>
+                      </div>
+                      <Badge className="bg-amber-500 text-slate-950 font-black text-[8px]">MALIN</Badge>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {isEnabled('fluxInfrastructure') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname === '/flux-infrastructure'} className={cn(pathname === '/flux-infrastructure' && "bg-white/10")}>
+                    <Link href="/flux-infrastructure" className="font-medium flex items-center gap-3 h-11 px-4 rounded-xl">
+                      <Construction className={cn("h-5 w-5", pathname === '/flux-infrastructure' ? "text-accent" : "text-amber-500")} />
+                      <span>Chantiers & Travaux</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {isEnabled('routes') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname === '/routes'} className={cn(pathname === '/routes' && "bg-white/10")}>
+                    <Link href="/routes" className="font-medium flex items-center gap-3 h-11 px-4 rounded-xl">
+                      <Route className={cn("h-5 w-5", pathname === '/routes' ? "text-accent" : "text-primary")} />
+                      <span>État des Routes</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {isEnabled('hazardMap') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname === '/hazard-map'} className={cn(pathname === '/hazard-map' && "bg-white/10")}>
+                    <Link href="/hazard-map" className="font-bold flex items-center gap-3 h-11 px-4 rounded-xl">
+                      <HazardIcon className={cn("h-5 w-5", pathname === '/hazard-map' ? "text-accent" : "text-primary")} />
+                      <span>Carte des Dangers</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
+              {isEnabled('map') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname === '/map'} className={cn(pathname === '/map' && "bg-white/10")}>
+                    <Link href="/map" className="font-medium flex items-center gap-3 h-11 px-4 rounded-xl">
+                      <Map className={cn("h-5 w-5", pathname === '/map' ? "text-accent" : "text-primary")} />
+                      <span>Carte</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+
               {isEnabled('assistant') && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={pathname === '/assistant'} className={cn(pathname === '/assistant' && "bg-white/10")}>
-                    <Link href="/assistant" className="font-bold flex items-center gap-3 h-11 px-4 rounded-xl">
+                    <Link href="/assistant" className="font-medium flex items-center gap-3 h-11 px-4 rounded-xl">
                       <Bot className={cn("h-5 w-5", pathname === '/assistant' ? "text-accent" : "text-primary")} />
                       <span>Assistant IA</span>
                     </Link>
@@ -387,176 +580,60 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </SidebarMenuItem>
               )}
 
-              <details className="pt-3 group/more">
-                <summary className="px-3 py-2 text-[11px] font-black uppercase tracking-wider text-slate-400 hover:text-slate-200 cursor-pointer list-none flex items-center justify-between rounded-xl hover:bg-white/5">
-                  <span>Plus d'outils & Compte</span>
-                  <span className="text-xs transition-transform group-open/more:rotate-180">▾</span>
-                </summary>
-                <div className="pt-1 space-y-1">
-                  {isEnabled('reports') && (
-                    <SidebarMenuItem>
-                      <SidebarMenuButton asChild isActive={pathname === '/reports'} className={cn(pathname === '/reports' && "bg-white/10")}>
-                        <Link href="/reports" className="font-bold flex items-center justify-between w-full h-10 px-4 rounded-xl">
-                          <div className="flex items-center gap-3">
-                            <Compass className={cn("h-4 w-4", pathname === '/reports' ? "text-accent" : "text-primary")} />
-                            <span>Baromètre Trafic</span>
-                          </div>
-                          {unreadReports > 0 && <Badge variant="destructive" className="h-5 px-1.5 min-w-[20px] justify-center text-[10px] rounded-full font-black">{unreadReports}</Badge>}
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  )}
+                </>
+              )}
 
-                  {isEnabled('communityChat') && (
-                    <SidebarMenuItem>
-                      <SidebarMenuButton asChild isActive={pathname === '/community-chat'} className={cn(pathname === '/community-chat' && "bg-white/10")}>
-                        <Link href="/community-chat" className="font-bold flex items-center gap-3 h-10 px-4 rounded-xl">
-                          <MessagesSquare className={cn("h-4 w-4", pathname === '/community-chat' ? "text-accent" : "text-primary")} />
-                          <span>Chat Direct</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  )}
+              {isEnabled('notifications') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname === '/notifications'} className={cn(pathname === '/notifications' && "bg-white/10")}>
+                    <Link href="/notifications" className="font-medium flex items-center justify-between w-full h-11 px-4 rounded-xl">
+                      <div className="flex items-center gap-3">
+                        <Bell className={cn("h-5 w-5", pathname === '/notifications' ? "text-accent" : "text-primary")} />
+                        <span>Notifications</span>
+                      </div>
+                      {unreadNotifications > 0 && <Badge variant="destructive" className="h-5 px-1.5 min-w-[20px] justify-center text-[10px] rounded-full font-black">{unreadNotifications}</Badge>}
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
 
-                  {isEnabled('liveTraffic') && (
-                    <SidebarMenuItem>
-                      <SidebarMenuButton asChild isActive={pathname === '/live-traffic'} className={cn(pathname === '/live-traffic' && "bg-white/10")}>
-                        <Link href="/live-traffic" className="font-medium flex items-center gap-3 h-10 px-4 rounded-xl">
-                          <Activity className={cn("h-4 w-4", pathname === '/live-traffic' ? "text-accent" : "text-primary")} />
-                          <span>Temps Réel</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  )}
+              {isEnabled('myStars') && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname === '/mes-stars'} className={cn(pathname === '/mes-stars' && "bg-white/10")}>
+                    <Link href="/mes-stars" className="font-medium flex items-center gap-3 h-11 px-4 rounded-xl">
+                      <Star className={cn("h-5 w-5", pathname === '/mes-stars' ? "text-accent" : "text-primary")} />
+                      <span>{subSettings?.mode === 'cash' ? "Mon Accès" : "Mes Stars"}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
 
-                  {isEnabled('localTraffic') && (
-                    <SidebarMenuItem>
-                      <SidebarMenuButton asChild isActive={pathname === '/local-traffic'} className={cn(pathname === '/local-traffic' && "bg-white/10")}>
-                        <Link href="/local-traffic" className="font-medium flex items-center gap-3 h-10 px-4 rounded-xl">
-                          <Radar className={cn("h-4 w-4", pathname === '/local-traffic' ? "text-accent" : "text-primary")} />
-                          <span>Trafic Local</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  )}
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/profil'} className={cn(pathname === '/profil' && "bg-white/10")}>
+                  <Link href="/profil" className="font-bold flex items-center gap-3 h-11 px-4 rounded-xl text-slate-700 dark:text-slate-200">
+                    <User className="h-5 w-5 text-primary" />
+                    <span>Mon Profil & Compte</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
 
-                  {isEnabled('insights') && (
-                    <SidebarMenuItem>
-                      <SidebarMenuButton asChild isActive={pathname === '/insights'} className={cn("bg-amber-500/10 h-10 rounded-xl px-4", pathname === '/insights' && "bg-amber-500/20")}>
-                        <Link href="/insights" className="font-bold flex items-center justify-between w-full text-slate-800 dark:text-slate-200">
-                          <div className="flex items-center gap-3">
-                            <Lightbulb className={cn("h-4 w-4", pathname === '/insights' ? "text-amber-500" : "text-amber-600")} />
-                            <span>Guide Anti-Bouchons</span>
-                          </div>
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  )}
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/guide'} className={cn(pathname === '/guide' && "bg-white/10")}>
+                  <Link href="/guide" className="font-bold flex items-center gap-3 h-11 px-4 rounded-xl text-amber-600 dark:text-amber-400">
+                    <HelpCircle className="h-5 w-5 text-amber-500" />
+                    <span>Guide & Aide</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
 
-                  {isEnabled('fluxInfrastructure') && (
-                    <SidebarMenuItem>
-                      <SidebarMenuButton asChild isActive={pathname === '/flux-infrastructure'} className={cn(pathname === '/flux-infrastructure' && "bg-white/10")}>
-                        <Link href="/flux-infrastructure" className="font-medium flex items-center gap-3 h-10 px-4 rounded-xl">
-                          <Construction className={cn("h-4 w-4", pathname === '/flux-infrastructure' ? "text-accent" : "text-amber-500")} />
-                          <span>Chantiers & Travaux</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  )}
-
-                  {isEnabled('routes') && (
-                    <SidebarMenuItem>
-                      <SidebarMenuButton asChild isActive={pathname === '/routes'} className={cn(pathname === '/routes' && "bg-white/10")}>
-                        <Link href="/routes" className="font-medium flex items-center gap-3 h-10 px-4 rounded-xl">
-                          <Route className={cn("h-4 w-4", pathname === '/routes' ? "text-accent" : "text-primary")} />
-                          <span>État des Routes</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  )}
-
-                  {isEnabled('map') && (
-                    <SidebarMenuItem>
-                      <SidebarMenuButton asChild isActive={pathname === '/map'} className={cn(pathname === '/map' && "bg-white/10")}>
-                        <Link href="/map" className="font-medium flex items-center gap-3 h-10 px-4 rounded-xl">
-                          <Map className={cn("h-4 w-4", pathname === '/map' ? "text-accent" : "text-primary")} />
-                          <span>Carte</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  )}
-
-                  {isEnabled('notifications') && (
-                    <SidebarMenuItem>
-                      <SidebarMenuButton asChild isActive={pathname === '/notifications'} className={cn(pathname === '/notifications' && "bg-white/10")}>
-                        <Link href="/notifications" className="font-medium flex items-center justify-between w-full h-10 px-4 rounded-xl">
-                          <div className="flex items-center gap-3">
-                            <Bell className={cn("h-4 w-4", pathname === '/notifications' ? "text-accent" : "text-primary")} />
-                            <span>Notifications</span>
-                          </div>
-                          {unreadNotifications > 0 && <Badge variant="destructive" className="h-5 px-1.5 min-w-[20px] justify-center text-[10px] rounded-full font-black">{unreadNotifications}</Badge>}
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  )}
-
-                  {isEnabled('myStars') && (
-                    <SidebarMenuItem>
-                      <SidebarMenuButton asChild isActive={pathname === '/mes-stars'} className={cn(pathname === '/mes-stars' && "bg-white/10")}>
-                        <Link href="/mes-stars" className="font-medium flex items-center gap-3 h-10 px-4 rounded-xl">
-                          <Star className={cn("h-4 w-4", pathname === '/mes-stars' ? "text-accent" : "text-primary")} />
-                          <span>{subSettings?.mode === 'cash' ? "Mon Accès" : "Mes Stars"}</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  )}
-
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild isActive={pathname === '/profil'} className={cn(pathname === '/profil' && "bg-white/10")}>
-                      <Link href="/profil" className="font-bold flex items-center gap-3 h-10 px-4 rounded-xl text-slate-700 dark:text-slate-200">
-                        <User className="h-4 w-4 text-primary" />
-                        <span>Mon Profil & Compte</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild isActive={pathname === '/guide'} className={cn(pathname === '/guide' && "bg-white/10")}>
-                      <Link href="/guide" className="font-bold flex items-center gap-3 h-10 px-4 rounded-xl text-amber-600 dark:text-amber-400">
-                        <HelpCircle className="h-4 w-4 text-amber-500" />
-                        <span>Guide & Aide</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild isActive={pathname === '/privacy'} className={cn(pathname === '/privacy' && "bg-white/10")}>
-                      <Link href="/privacy" className="font-bold flex items-center gap-3 h-10 px-4 rounded-xl text-slate-600 dark:text-slate-300">
-                        <Shield className="h-4 w-4 text-slate-500" />
-                        <span>Confidentialité & Données</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild className="h-10 px-4 rounded-xl hover:bg-emerald-500/10 group">
-                      <a href={whatsappChannelUrl} target="_blank" rel="noopener noreferrer" className="font-bold flex items-center gap-3">
-                        <Share2 className="h-4 w-4 text-emerald-500 group-hover:scale-110 transition-transform" />
-                        <span className="text-emerald-700">Canal WhatsApp</span>
-                      </a>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild className="h-10 px-4 rounded-xl hover:bg-primary/10 group">
-                      <a href={whatsappBusinessUrl} target="_blank" rel="noopener noreferrer" className="font-bold flex items-center gap-3">
-                        <Headphones className="h-4 w-4 text-primary group-hover:scale-110 transition-transform" />
-                        <span className="text-primary">Assistance WhatsApp</span>
-                      </a>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                </div>
-              </details>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/privacy'} className={cn(pathname === '/privacy' && "bg-white/10")}>
+                  <Link href="/privacy" className="font-bold flex items-center gap-3 h-11 px-4 rounded-xl text-slate-600 dark:text-slate-300">
+                    <Shield className="h-5 w-5 text-slate-500" />
+                    <span>Confidentialité & Données</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
 
               <SidebarSeparator className="my-2 opacity-20" />
 
@@ -592,6 +669,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       <Link href="/admin/notifications" className="font-medium flex items-center gap-3 h-11 px-4 rounded-xl">
                         <Bell className="text-destructive h-5 w-5" />
                         <span>Diffusion Push</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={pathname === '/admin/croissance'} className={cn(pathname === '/admin/croissance' && "bg-white/10")}>
+                      <Link href="/admin/croissance" className="font-medium flex items-center gap-3 h-11 px-4 rounded-xl">
+                        <BarChart3 className="text-destructive h-5 w-5" />
+                        <span>Croissance (événements, flottes)</span>
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
@@ -665,6 +751,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </header>
                 <main className="flex-1 min-h-0 p-2 sm:p-3 md:p-4 flex flex-col gap-2 md:gap-4 overflow-hidden bg-background">
                     <NotificationPermission />
+                    <SpeedSharingAgent />
                     <div className="flex-1 min-h-0 w-full flex flex-col overflow-hidden">
                         {isProtectedPage ? <ProtectedContent>{children}</ProtectedContent> : children}
                     </div>
@@ -684,73 +771,71 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       <Radar className={cn("h-5 w-5", pathname === '/verifier-trafic' ? "text-primary animate-spin" : "text-slate-400")} />
                       <span className="absolute -top-1 -right-1 flex h-2 w-2 rounded-full bg-red-500 animate-ping" />
                     </div>
-                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Contrôle</span>
+                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Carte</span>
                   </Link>
 
-                  {/* 2. Chat Live */}
-                  <Link 
-                    href="/community-chat" 
+                  {/* 2. Trajet : coach de départ */}
+                  <Link
+                    href="/trajet" 
                     className={cn(
                       "flex flex-col items-center justify-center flex-1 py-1 px-0.5 rounded-2xl transition-all",
-                      pathname === '/community-chat' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
+                      pathname === '/trajet' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
                     )}
                   >
-                    <div className={cn("p-1 rounded-xl transition-all", pathname === '/community-chat' && "bg-primary/10")}>
-                      <MessagesSquare className={cn("h-5 w-5", pathname === '/community-chat' ? "text-primary" : "text-slate-400")} />
+                    <div className={cn("p-1 rounded-xl transition-all", pathname === '/trajet' && "bg-primary/10")}>
+                      <Navigation className={cn("h-5 w-5", pathname === '/trajet' ? "text-primary" : "text-slate-400")} />
                     </div>
-                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Chat Live</span>
+                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Trajet</span>
                   </Link>
 
-                  {/* 3. Center Highlight: K-Flow Nav GPS */}
-                  <Link 
-                    href="/k-flow-nav" 
+                  {/* 3. Bouton central : Signaler en 1 tap */}
+                  <Link
+                    href="/signaler-embouteillage"
+                    aria-label="Signaler un problème sur la route"
                     className="flex flex-col items-center justify-center -mt-4 relative z-10 group px-1"
                   >
                     <div className={cn(
                       "w-12 h-12 rounded-full flex items-center justify-center shadow-xl transition-all border-2 border-white dark:border-slate-900",
-                      pathname === '/k-flow-nav' 
-                        ? "bg-gradient-to-tr from-primary to-blue-600 text-white ring-4 ring-primary/20 scale-110 shadow-primary/40" 
-                        : "bg-primary hover:bg-primary/90 text-white shadow-primary/30"
+                      pathname === '/signaler-embouteillage'
+                        ? "bg-red-600 text-white ring-4 ring-red-500/20 scale-110 shadow-red-500/40"
+                        : "bg-red-500 hover:bg-red-600 text-white shadow-red-500/30"
                     )}>
-                      <Navigation className="h-5 w-5 fill-current animate-pulse" />
+                      <PlusCircle className="h-6 w-6" />
                     </div>
                     <span className={cn(
                       "text-[9px] font-black uppercase tracking-wider mt-0.5",
-                      pathname === '/k-flow-nav' ? "text-primary" : "text-slate-500"
+                      pathname === '/signaler-embouteillage' ? "text-red-600" : "text-slate-500"
                     )}>
-                      GPS Nav
+                      Signaler
                     </span>
                   </Link>
 
-                  {/* 4. K-Flow E-Wallet (Gains & Récompenses) */}
-                  <Link 
-                    href="/e-wallet" 
-                    className={cn(
-                      "flex flex-col items-center justify-center flex-1 py-1 px-0.5 rounded-2xl transition-all relative",
-                      pathname === '/e-wallet' ? "text-emerald-600 font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
-                    )}
-                  >
-                    <div className={cn("p-1 rounded-xl transition-all relative", pathname === '/e-wallet' && "bg-emerald-500/10")}>
-                      <Wallet className={cn("h-5 w-5", pathname === '/e-wallet' ? "text-emerald-600" : "text-slate-400")} />
-                      <span className="absolute -top-1 -right-1 flex h-3 min-w-[12px] px-0.5 items-center justify-center rounded-full bg-emerald-500 text-[7px] font-black text-white">
-                        $
-                      </span>
-                    </div>
-                    <span className="text-[9px] font-bold tracking-tight mt-0.5">E-Wallet</span>
-                  </Link>
-
-                  {/* 5. Assistant IA */}
-                  <Link 
-                    href="/assistant" 
+                  {/* 4. Quêtes (niveaux, missions, badges) */}
+                  <Link
+                    href="/quetes"
                     className={cn(
                       "flex flex-col items-center justify-center flex-1 py-1 px-0.5 rounded-2xl transition-all",
-                      pathname === '/assistant' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
+                      pathname === '/quetes' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
                     )}
                   >
-                    <div className={cn("p-1 rounded-xl transition-all", pathname === '/assistant' && "bg-primary/10")}>
-                      <Bot className={cn("h-5 w-5", pathname === '/assistant' ? "text-primary" : "text-slate-400")} />
+                    <div className={cn("p-1 rounded-xl transition-all", pathname === '/quetes' && "bg-primary/10")}>
+                      <Target className={cn("h-5 w-5", pathname === '/quetes' ? "text-primary" : "text-slate-400")} />
                     </div>
-                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Assistant</span>
+                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Quêtes</span>
+                  </Link>
+
+                  {/* 5. Classement (bataille des communes) */}
+                  <Link
+                    href="/classement"
+                    className={cn(
+                      "flex flex-col items-center justify-center flex-1 py-1 px-0.5 rounded-2xl transition-all",
+                      pathname === '/classement' ? "text-primary font-black scale-105" : "text-slate-400 hover:text-slate-600 font-medium"
+                    )}
+                  >
+                    <div className={cn("p-1 rounded-xl transition-all", pathname === '/classement' && "bg-primary/10")}>
+                      <Trophy className={cn("h-5 w-5", pathname === '/classement' ? "text-primary" : "text-slate-400")} />
+                    </div>
+                    <span className="text-[9px] font-bold tracking-tight mt-0.5">Classement</span>
                   </Link>
                 </nav>
             </div>

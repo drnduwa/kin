@@ -22,16 +22,82 @@ service cloud.firestore {
 
     // --- RÈGLES DES COLLECTIONS ---
 
+    /**
+     * Champs « argent et accès » : seuls le serveur (Admin SDK, qui ignore ces règles) et les admins
+     * peuvent les modifier. Avant, `allow update: if true` permettait à n'importe qui de se mettre
+     * 1 000 000 FC sur son E-Wallet puis de demander un retrait Mobile Money.
+     */
+    function moneyFields() {
+      return ['walletBalanceCDF', 'walletBalanceUSD', 'totalContributionsCount', 'trustScore',
+              'lastEarningTimestamp', 'hasActivePass', 'passExpiresAt', 'passType', 'isBlocked',
+              'isCashSubscribed', 'cashSubscriptionExpiry', 'hasUsedFreeTrial',
+              'currentStarsBalance', 'totalStarsEarned', 'totalStarsPurchased', 'totalStarsUsed',
+              'hasReceivedRelanceGift',
+              // Jeu : XP, niveaux, séries, badges (écrits par le serveur seulement)
+              'xp', 'level', 'gameVotes', 'gameReports', 'streakDays', 'lastActiveDay', 'badges',
+              // Programme Sentinelles (nommées par un admin)
+              'isSentinel', 'sentinelCorridor'];
+    }
+
+    // Création du profil à l'inscription : aucun argent, aucun Pass, bonus de bienvenue (25 Stars) au plus.
+    function validNewProfile() {
+      let d = request.resource.data;
+      return d.get('walletBalanceCDF', 0) == 0
+        && d.get('walletBalanceUSD', 0) == 0
+        && d.get('currentStarsBalance', 0) <= 25
+        && d.get('totalStarsEarned', 0) <= 25
+        && d.get('totalStarsPurchased', 0) == 0
+        && d.get('hasActivePass', false) == false
+        && d.get('isCashSubscribed', false) == false
+        && d.get('isBlocked', false) == false
+        && !('passExpiresAt' in d)
+        && !('trustScore' in d)
+        && !('totalContributionsCount' in d)
+        && !('xp' in d) && !('level' in d) && !('badges' in d) && !('streakDays' in d);
+    }
+
+    // Le propriétaire peut DÉPENSER ses Stars (le solde baisse) depuis l'app…
+    function isStarsSpend() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return changed.hasOnly(['currentStarsBalance', 'totalStarsUsed'])
+        && request.resource.data.currentStarsBalance < resource.data.currentStarsBalance
+        && request.resource.data.get('totalStarsUsed', 0) >= resource.data.get('totalStarsUsed', 0);
+    }
+
+    // … et recevoir une seule fois le cadeau de fidélité (solde ramené à 25 Stars maximum).
+    function isRelanceGift() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return changed.hasOnly(['currentStarsBalance', 'totalStarsEarned', 'hasReceivedRelanceGift'])
+        && resource.data.get('hasReceivedRelanceGift', false) == false
+        && request.resource.data.hasReceivedRelanceGift == true
+        && request.resource.data.currentStarsBalance <= 25
+        && request.resource.data.get('totalStarsEarned', 0) - resource.data.get('totalStarsEarned', 0) <= 25;
+    }
+
+    function ownerProfileUpdateOk() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return !changed.hasAny(moneyFields()) || isStarsSpend() || isRelanceGift();
+    }
+
     /** Profils utilisateurs */
     match /users/{userId} {
-      allow get: if true;
-      allow list: if true; // Autorise la lecture pour la diffusion e-mail communautaire et relance
-      allow create: if isOwner(userId);
-      allow update: if true; // Permet l'actualisation du solde de Stars et l'activation des Pass par le serveur et le client
+      allow get: if isSignedIn();
+      allow list: if isAdmin(); // La diffusion e-mail passe désormais par le serveur (Admin SDK)
+      allow create: if isOwner(userId) && validNewProfile();
+      allow update: if isAdmin() || (isOwner(userId) && ownerProfileUpdateOk());
       allow delete: if isOwner(userId) || isAdmin();
 
-      match /star_transactions/{id} { allow read, write, delete: if true; }
-      match /wallet_transactions/{id} { allow read, write, delete: if true; }
+      // Journal des Stars : l'usager peut ajouter ses propres lignes (dépenses), jamais les modifier.
+      match /star_transactions/{id} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if (isOwner(userId) && request.resource.data.userId == userId) || isAdmin();
+        allow update, delete: if isAdmin();
+      }
+      // Journal de l'E-Wallet : écrit uniquement par le serveur.
+      match /wallet_transactions/{id} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if false;
+      }
       match /transport_subscriptions/{id} { allow read, write, delete: if isOwner(userId) || isAdmin(); }
       match /pushSubscriptions/{id} { allow read, write, delete: if isOwner(userId) || isAdmin(); }
       match /fcmTokens/{id} { allow read, write, delete: if isOwner(userId) || isAdmin(); }
@@ -39,7 +105,9 @@ service cloud.firestore {
 
     /** Transactions & Paiements FlexPay (Mobile Money & Carte) */
     match /payments/{paymentId} {
-      allow read, write: if true;
+      // Créés et validés par le serveur seulement (prix et crédit vérifiés auprès de FlexPay).
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow write: if false;
     }
 
     /** Chat Communautaire (Radio Trottoir) */
@@ -59,9 +127,27 @@ service cloud.firestore {
     /** Rapports de route et dangers (Hazard Map) */
     match /road_condition_reports/{id} {
       allow read, list: if true;
-      allow create: if isSignedIn();
-      allow update: if isSignedIn(); 
+      // L'auteur et la date ne peuvent pas être falsifiés : ils servent à payer les signalements.
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.createdAt == request.time;
+      // Les autres usagers peuvent seulement ajouter une confirmation (+1 vote).
+      allow update: if isAdmin() || (isSignedIn()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['votes'])
+        && request.resource.data.votes == resource.data.get('votes', 0) + 1);
       allow delete: if isAdmin();
+    }
+
+    /** Votes 1-tap « toujours bloqué / c'est dégagé ».
+     *  Id = {uid}_{nodeId}_{créneau 30 min} : création seule, donc un vote par usager, par nœud, par créneau. */
+    match /traffic_votes/{voteId} {
+      allow read, list: if true;
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid
+        && voteId == request.auth.uid + '_' + request.resource.data.nodeId + '_' + string(request.resource.data.slot)
+        && request.resource.data.vote in ['still', 'clear']
+        && request.resource.data.slot is int;
+      allow update, delete: if false;
     }
 
     /** Événements signalés (Incidents du flux principal) */
@@ -97,16 +183,52 @@ service cloud.firestore {
     
     /** Analyses Stratégiques IA et Historique (Prédictions) */
     match /traffic_history/{id} {
-      allow read, write: if true; // Protected by API Secret in Next.js
+      allow read: if true;
+      allow write: if false; // écrit par le serveur (Admin SDK) uniquement
     }
     match /traffic_insights/{id} {
       allow read, list: if isSignedIn();
       allow create: if isSignedIn();
     }
 
+    /** Demandes de retrait et de forfaits data : créées par le serveur, payées à la main par l'équipe. */
     match /cashout_requests/{id} {
-      allow read, write: if true;
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow update: if isAdmin();
+      allow create, delete: if false;
     }
+    match /data_recharge_requests/{id} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow update: if isAdmin();
+      allow create, delete: if false;
+    }
+    /** Jeu : missions du jour (lecture par le joueur), classements (lecture par les connectés). */
+    match /missions/{id} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow write: if false;
+    }
+    match /leaderboards/{week}/{board}/{id} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+    /** Calendrier des événements qui bloquent les routes (matchs, cortèges, travaux, coupures). */
+    match /traffic_events/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    /** Phase 3 : sondes GPS agrégées, limites d'envoi et flottes partenaires (serveur / admin seulement). */
+    match /probe_buckets/{id} { allow read: if isAdmin(); allow write: if false; }
+    match /probe_limits/{id} { allow read, write: if false; }
+    match /fleet_partners/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
+      match /vehicles/{vehicleId} { allow read: if isAdmin(); allow write: if false; }
+    }
+
+    /** Anti-doublon et plafond journalier des récompenses : serveur uniquement. */
+    match /reward_claims/{id} { allow read: if isAdmin(); allow write: if false; }
+    match /reward_daily/{id} { allow read: if isAdmin(); allow write: if false; }
 
     /** Services Business */
     match /logements/{id} { allow read: if true; allow write: if isAdmin(); }

@@ -37,7 +37,7 @@ import {
 } from '@/components/ui/select';
 import { Camera, Loader2, MapPin, Plus, CheckCircle2, Send } from 'lucide-react';
 import Image from 'next/image';
-import { broadcastEmailAction } from '@/app/actions';
+import { broadcastEmailAction, awardWalletContributionAction } from '@/app/actions';
 
 export function ReportHazardDialog({ location }: { location: {lat: number, lng: number} | null }) {
   const [open, setOpen] = useState(false);
@@ -94,7 +94,13 @@ export function ReportHazardDialog({ location }: { location: {lat: number, lng: 
         createdAt: serverTimestamp(),
       };
 
-      await addDoc(collection(firestore, 'road_condition_reports'), reportData);
+      const reportRef = await addDoc(collection(firestore, 'road_condition_reports'), reportData);
+      const idToken = await user.getIdToken();
+
+      // Récompense vérifiée par le serveur (une fois par signalement, plafond journalier).
+      awardWalletContributionAction({ idToken, type: 'incident_report', refId: reportRef.id, road: data.type })
+        .then(res => { if (res.success) toast({ title: `+${res.rewardCDF} FC`, description: res.message }); })
+        .catch(() => {});
 
       // Notification BROADCAST par e-mail
       broadcastEmailAction({
@@ -102,7 +108,8 @@ export function ReportHazardDialog({ location }: { location: {lat: number, lng: 
           message: data.description,
           userName: user.displayName || "Un citoyen",
           type: 'hazard',
-          location: "Signalement Carte des Dangers"
+          location: "Signalement Carte des Dangers",
+          idToken
       });
 
       toast({ 

@@ -274,13 +274,10 @@ function MesStarsContent() {
     setIsSubmitting(true);
 
     try {
+      // Le serveur recalcule le prix et les Stars depuis l'identifiant de l'article.
       const res = await initiateFlexPayPaymentAction({
-        userId: user.uid,
-        itemType: selectedItem.type,
+        idToken: await user.getIdToken(),
         itemId: selectedItem.id,
-        stars: selectedItem.stars,
-        passType: selectedItem.passType,
-        amount: selectedItem.amount,
         currency: selectedItem.currency,
         channel: paymentChannel,
         phone: paymentChannel === 'mobile_money' ? phone : undefined,
