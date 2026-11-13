@@ -53,7 +53,7 @@ import { useUser, useFirebase, useDoc, useMemoFirebase } from '@/firebase';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { UserProfile } from '@/lib/types';
 import { YaFlowSays } from '@/components/kin/street';
-import KinshasaCityMap, { type CityMapNode } from '@/components/kin/city-map';
+import KinshasaCityMap, { type CityMapNode, type CorridorLive } from '@/components/kin/city-map';
 import { MOOD_LINES, moodFromClock, type Mood } from '@/lib/kin-slang';
 
 const STATUS_CONFIG = {
@@ -286,6 +286,7 @@ export default function TrafficCommandDashboard() {
     audioFlashText: string;
   } | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [corridorStates, setCorridorStates] = useState<Record<string, CorridorLive> | undefined>(undefined);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string>('');
 
   const walletBalanceCDF = profile?.walletBalanceCDF ?? 0;
@@ -365,6 +366,7 @@ export default function TrafficCommandDashboard() {
         if (res.commutes && res.commutes.length > 0) {
           setCommutes(res.commutes);
         }
+        if (res.corridors) setCorridorStates(res.corridors);
         if (res.globalMetrics) {
           setGlobalMetrics(res.globalMetrics);
           setLastRefreshedAt(res.globalMetrics.updatedAt);
@@ -669,6 +671,7 @@ export default function TrafficCommandDashboard() {
             onSelect={setSelectedNodeId}
             onOpenDetails={selectNode}
             raining={(globalMetrics?.weather?.rainMmH ?? 0) >= 0.5}
+            corridorStates={timeOffset === 0 ? corridorStates : undefined}
             timeLabel={timeOffset === 0 ? (lastRefreshedAt ? `maj ${lastRefreshedAt}` : undefined) : `prévision +${timeOffset} h`}
           />
         </div>

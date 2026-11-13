@@ -17,6 +17,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { STAR_PACK_CATALOG, PASS_CATALOG, DATA_PACK_CATALOG, REWARD_CDF, DAILY_REWARD_CAP_CDF, MIN_CASHOUT_CDF, CDF_PER_USD } from "@/lib/pricing";
 import { fulfillVerifiedFlexPayPayment, markPaymentFailed } from "@/lib/payments-server";
 import { loadRecentProbeSpeeds, statusFromSpeed } from "@/lib/probes-server";
+import { BLACK_SPOTS, MEASURED_SEGMENTS, segMid } from "@/lib/corridors";
 import { XP, DAILY_MISSIONS, BADGES, COMMUNES, levelFromXp, rankFor, kinshasaDayKey, kinshasaWeekId, type MissionKind } from "@/lib/game";
 
 /** Identifiants SMTP lus dans l'environnement uniquement (les mots de passe ne doivent plus être dans le code). */
@@ -1465,7 +1466,8 @@ async function fetchSegmentTelemetry(
   origin: { lat: number; lng: number },
   dest: { lat: number; lng: number },
   rushMult: number,
-  isPeakHour: boolean
+  isPeakHour: boolean,
+  opts: { via?: { lat: number; lng: number }; preference?: "TRAFFIC_AWARE" | "TRAFFIC_AWARE_OPTIMAL" } = {}
 ) {
   if (GOOGLE_API_KEY) {
     try {
@@ -1479,8 +1481,10 @@ async function fetchSegmentTelemetry(
         body: JSON.stringify({
           origin: { location: { latLng: { latitude: origin.lat, longitude: origin.lng } } },
           destination: { location: { latLng: { latitude: dest.lat, longitude: dest.lng } } },
+          // point de passage (sans arrêt) pour que l'itinéraire reste sur l'avenue mesurée
+          ...(opts.via ? { intermediates: [{ via: true, location: { latLng: { latitude: opts.via.lat, longitude: opts.via.lng } } }] } : {}),
           travelMode: "DRIVE",
-          routingPreference: "TRAFFIC_AWARE_OPTIMAL",
+          routingPreference: opts.preference ?? "TRAFFIC_AWARE_OPTIMAL",
           languageCode: "fr-FR"
         })
       });
@@ -1504,7 +1508,8 @@ async function fetchSegmentTelemetry(
     }
   }
 
-  const url = `https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${dest.lng},${dest.lat}?overview=false`;
+  const viaPart = opts.via ? `${opts.via.lng},${opts.via.lat};` : "";
+  const url = `https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${viaPart}${dest.lng},${dest.lat}?overview=false`;
   const res = await fetch(url, { headers: { "User-Agent": "KinshasaFlow/2.0" } });
   const data = await res.json();
   const r = data?.routes?.[0];
@@ -1517,6 +1522,63 @@ async function fetchSegmentTelemetry(
   const speedKmh = Math.max(4, Math.round(distKm / (durationMin / 60)));
   // Pas de mesure de trafic : durée « route vide » OSRM × facteur horaire. C'est une estimation.
   return { distKm, durationMin, delayMin, speedKmh, ratio: multiplier, source: "estimate" as const };
+}
+
+/**
+ * Mesure en direct des 20 axes chargés (lib/corridors) qui n'ont pas de carrefour mesuré,
+ * plus les points noirs sans carrefour. Cache de 5 min, indépendant du tableau de bord (90 s)
+ * et jamais forcé par un vote : ~14 appels Google Routes toutes les 5 minutes au plus.
+ */
+type CorridorState = {
+  status: string; delayMin: number | null; speedKmh: number | null; distKm: number | null;
+  source: string; isLive: boolean; confidence: number; reportType?: string | null;
+};
+let corridorCache: { data: Record<string, CorridorState>; expires: number } | null = null;
+
+function corridorStatus(delayMin: number, ratio: number) {
+  // tronçons courts (1 à 3 km) : on regarde surtout le rapport temps réel / temps à vide
+  if (ratio >= 2.2 || delayMin >= 10) return "BLOQUÉ";
+  if (ratio >= 1.6 || delayMin >= 5) return "EMBOUTEILLAGE";
+  if (ratio >= 1.25 || delayMin >= 2) return "MODÉRÉ";
+  return "FLUIDE";
+}
+
+async function getCorridorStates(isPeakHour: boolean, activeReports: any[]): Promise<Record<string, CorridorState>> {
+  const now = Date.now();
+  if (!corridorCache || corridorCache.expires <= now) {
+    const targets = [
+      ...MEASURED_SEGMENTS.map(c => ({ id: c.id, seg: c.seg! })),
+      ...BLACK_SPOTS.filter(b => b.seg && !b.nodeId).map(b => ({ id: b.id, seg: b.seg! })),
+    ];
+    const pt = (p: [number, number]) => ({ lat: p[0], lng: p[1] });
+    const entries = await Promise.all(targets.map(async ({ id, seg }) => {
+      try {
+        const m = await fetchSegmentTelemetry(pt(seg.o), pt(seg.d), 2.0, isPeakHour, { via: seg.v ? pt(seg.v) : undefined, preference: "TRAFFIC_AWARE" });
+        const isLive = m.source === "google";
+        const status = corridorStatus(m.delayMin, m.ratio);
+        const congested = status === "BLOQUÉ" || status === "EMBOUTEILLAGE";
+        return [id, { status, delayMin: m.delayMin, speedKmh: m.speedKmh, distKm: m.distKm, source: m.source, isLive, confidence: confidenceScore(isLive, congested, 0) }] as const;
+      } catch {
+        return [id, { status: "INCONNU", delayMin: null, speedKmh: null, distKm: null, source: "none", isLive: false, confidence: 0 }] as const;
+      }
+    }));
+    corridorCache = { data: Object.fromEntries(entries), expires: now + 5 * 60 * 1000 };
+  }
+
+  // Signalements récents à moins de ~1 km du milieu du tronçon : appliqués à chaque appel (pas mis en cache).
+  const out: Record<string, CorridorState> = {};
+  const mids: Record<string, [number, number]> = Object.fromEntries([
+    ...MEASURED_SEGMENTS.map(c => [c.id, segMid(c.seg!)] as const),
+    ...BLACK_SPOTS.filter(b => b.seg && !b.nodeId).map(b => [b.id, segMid(b.seg!)] as const),
+  ]);
+  for (const [id, st] of Object.entries(corridorCache.data)) {
+    const mid = mids[id];
+    const near = mid ? activeReports.find(r => Math.abs(r.coords.lat - mid[0]) < 0.009 && Math.abs(r.coords.lng - mid[1]) < 0.009) : null;
+    let status = st.status;
+    if (near && near.type === 'blockage' && (status === "FLUIDE" || status === "MODÉRÉ")) status = "EMBOUTEILLAGE";
+    out[id] = { ...st, status, reportType: near?.type ?? null };
+  }
+  return out;
 }
 
 export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
@@ -1839,10 +1901,13 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
     ? `Flash Info Kinshasa Flow. À ${kinshasaHour} heures, ${worstNode.name} est ${worstNode.status.toLowerCase()}, ${delayText}. ${causeText} Alternative conseillée : ${worstNode.certifiedAlt}. ${worstNode.lingala}`
     : `Flash Info Kinshasa Flow. À ${kinshasaHour} heures, aucun des ${bottlenecks.length} grands carrefours suivis n'est embouteillé. ${liveCount} sur ${bottlenecks.length} sont mesurés en direct. Nzela efungwami, kende malamu.`;
 
+  const corridors = await getCorridorStates(isPeakHour, activeReports);
+
   const payload = {
     success: true,
     bottlenecks,
     commutes,
+    corridors,
     globalMetrics: {
       kinshasaHour,
       isPeakHour,

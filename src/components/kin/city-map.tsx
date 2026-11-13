@@ -18,7 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { animate } from 'framer-motion';
 import { Plus, Minus, LocateFixed, Maximize2, Minimize2, Layers, CloudRain, Moon, Sun, Radio, ChevronRight, Check, X as XIcon, Route } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { ROADS, LEVEL_COLOR, LEVEL_LABEL, type MapLevel } from '@/components/game/live-city-map';
+import { ROADS, LEVEL_COLOR, LEVEL_LABEL, levelFromStatus, type MapLevel } from '@/components/game/live-city-map';
 import { BLACK_SPOTS, CORRIDORS, type Corridor } from '@/lib/corridors';
 
 // ───────────────────────────── Projection ─────────────────────────────
@@ -149,6 +149,10 @@ export interface CityMapNode {
   incidents?: Array<{ id: string; type?: string | null; description?: string; locationName?: string | null; coords: { lat: number; lng: number }; ageMin?: number }>;
 }
 
+export interface CorridorLive {
+  status: string; delayMin: number | null; speedKmh: number | null; distKm?: number | null; source: string; isLive: boolean; reportType?: string | null;
+}
+
 type Sel = { kind: 'node'; id: string } | { kind: 'commune'; i: number } | { kind: 'landmark'; id: string } | { kind: 'incident'; id: string } | { kind: 'corridor'; id: string } | { kind: 'spot'; id: string } | null;
 type LayerKey = 'traffic' | 'communes' | 'landmarks' | 'incidents';
 
@@ -162,9 +166,11 @@ function kinHour() {
 }
 
 export default function KinshasaCityMap({
-  nodes, selectedId, onSelect, onOpenDetails, raining = false, timeLabel, className,
+  nodes, selectedId, onSelect, onOpenDetails, raining = false, timeLabel, className, corridorStates,
 }: {
   nodes: CityMapNode[];
+  /** État mesuré en direct des axes et points noirs sans carrefour (clé = id de lib/corridors). */
+  corridorStates?: Record<string, CorridorLive>;
   selectedId?: string | null;
   onSelect?: (id: string | null) => void;
   onOpenDetails?: (id: string) => void;
@@ -221,10 +227,21 @@ export default function KinshasaCityMap({
   const corridorInfo = useCallback((c: Corridor) => {
     const base = c.sameAs ? CORRIDORS.find(o => o.id === c.sameAs) ?? c : c;
     const road = base.roadId ? ROADS.find(r => r.id === base.roadId) : undefined;
-    const node = road?.nodeId ? byId[road.nodeId] : undefined;
+    const nodeKey = base.nodeId ?? road?.nodeId;
+    const node = nodeKey ? byId[nodeKey] : undefined;
     const pts = (road ? road.points : base.pts) ?? [];
-    return { base, road, node, level: (node?.level ?? 'none') as MapLevel, pts: proj(pts as LatLng[]) };
-  }, [byId]);
+    const live = !node ? corridorStates?.[base.id] : undefined;
+    const liveKnown = !!live && live.status !== 'INCONNU';
+    const level: MapLevel = node ? node.level : liveKnown ? levelFromStatus(live!.status) : 'none';
+    return { base, road, node, live: liveKnown ? live : undefined, level, measured: !!node || liveKnown, pts: proj(pts as LatLng[]) };
+  }, [byId, corridorStates]);
+
+  /** Niveau d'un grand axe : son carrefour mesuré, sinon le tronçon mesuré de l'axe de la liste qui l'emprunte. */
+  const roadLvl = useCallback((r: { id: string; nodeId: string | null }): MapLevel => {
+    if (r.nodeId) return roadLevel(r.nodeId);
+    const c = CORRIDORS.find(o => o.roadId === r.id && !o.sameAs);
+    return c ? corridorInfo(c).level : 'none';
+  }, [roadLevel, corridorInfo]);
 
   /** État d'une commune : celui du carrefour mesuré le plus proche, s'il est à moins de ~3,5 km. */
   const communeState = useMemo(() => geo.sites.map(s => {
@@ -385,10 +402,14 @@ export default function KinshasaCityMap({
     const SPEED: Record<MapLevel, number> = { ok: 22, mod: 12, dense: 5, block: 1.4, none: 0 };
     const GAP: Record<MapLevel, number> = { ok: 34, mod: 22, dense: 12, block: 8, none: 999 };
     const kinds = ['kf-car-taxi', 'kf-car-white', 'kf-car-207', 'kf-car-dark', 'kf-car-taxi', 'kf-car-white', 'kf-car-red'];
-    geo.roads.forEach(r => {
-      const lvl = roadLevel(r.nodeId);
+    const paths = [
+      ...geo.roads.map(r => ({ id: r.id, lvl: roadLvl(r), sel: `#kfm-road-${r.id}` })),
+      ...geo.corridors.map(c => ({ id: c.id, lvl: corridorInfo(c).level, sel: `#kfm-cor-${c.id}` })),
+    ];
+    paths.forEach(r => {
+      const lvl = r.lvl;
       if (lvl === 'none') return;
-      const p = svg.querySelector<SVGPathElement>(`#kfm-road-${r.id}`);
+      const p = svg.querySelector<SVGPathElement>(r.sel);
       if (!p) return;
       const L = p.getTotalLength();
       ([1, -1] as const).forEach(dir => {
@@ -447,7 +468,7 @@ export default function KinshasaCityMap({
     const onVis = () => (vis && !document.hidden ? start() : stop());
     document.addEventListener('visibilitychange', onVis);
     return () => { stop(); io.disconnect(); document.removeEventListener('visibilitychange', onVis); };
-  }, [geo.roads, roadLevel, layers.traffic]);
+  }, [geo.roads, geo.corridors, roadLvl, corridorInfo, layers.traffic]);
 
   // ── Rendu
   const { k, tx, ty } = view;
@@ -472,6 +493,33 @@ export default function KinshasaCityMap({
     flyTo(geo.sites[i][0], geo.sites[i][1], Math.max(2.4, viewRef.current.k));
   };
   const closeSel = () => { setSel(null); onSelect?.(null); };
+  const obstacles: P[] = [
+    ...nodes.map(n => [X(n.coords.lng), Y(n.coords.lat)] as P),
+    ...LANDMARKS.map(l => [X(l.c[1]), Y(l.c[0])] as P),
+    ...BLACK_SPOTS.map(b => [X(b.c[1]), Y(b.c[0])] as P),
+  ];
+  const corridorBadges = CORRIDORS.filter(c => !c.sameAs).map(c => {
+    const info = corridorInfo(c);
+    const pts = info.pts;
+    let total = 0;
+    for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    const at = (f: number): P => {
+      let acc = 0;
+      for (let i = 1; i < pts.length; i++) {
+        const seg = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+        if (acc + seg >= total * f) { const t = (total * f - acc) / (seg || 1); return [pts[i - 1][0] + t * (pts[i][0] - pts[i - 1][0]), pts[i - 1][1] + t * (pts[i][1] - pts[i - 1][1])]; }
+        acc += seg;
+      }
+      return pts[pts.length - 1] ?? [0, 0];
+    };
+    // Place le numéro là où il ne passe pas sous un carrefour, un repère ou un autre numéro.
+    const free = (q: P) => obstacles.every(o => Math.hypot(o[0] - q[0], o[1] - q[1]) > 26);
+    const mid = [0.5, 0.38, 0.62, 0.28, 0.72, 0.18, 0.82].map(at).find(free) ?? at(0.5);
+    obstacles.push(mid);
+    const ranks = [c.rank, ...CORRIDORS.filter(o => o.sameAs === c.id).map(o => o.rank)];
+    return { c, info, mid, label: ranks.join('·') };
+  });
+  const measuredCount = CORRIDORS.filter(c => corridorInfo(c).measured).length;
   const selCorridor = sel?.kind === 'corridor' ? CORRIDORS.find(c => c.id === sel.id) ?? null : null;
   const selCorridorInfo = selCorridor ? corridorInfo(selCorridor) : null;
   const selSpot = sel?.kind === 'spot' ? BLACK_SPOTS.find(b => b.id === sel.id) ?? null : null;
@@ -493,7 +541,12 @@ export default function KinshasaCityMap({
     flyTo(X(b.c[1]), Y(b.c[0]), Math.max(3.2, viewRef.current.k));
   };
 
-  const ticker = nodes.filter(n => n.level !== 'none');
+  const ticker = [
+    ...nodes.filter(n => n.level !== 'none').map(n => ({ id: n.id, name: n.name, level: n.level, delayMin: n.delayMin })),
+    ...CORRIDORS.filter(c => !c.sameAs).map(c => ({ c, info: corridorInfo(c) }))
+      .filter(({ info }) => !info.node && info.live)
+      .map(({ c, info }) => ({ id: `cor-${c.id}`, name: c.name, level: info.level, delayMin: info.live!.delayMin })),
+  ];
 
   return (
     <div
@@ -680,18 +733,21 @@ export default function KinshasaCityMap({
             </g>
           ))}
 
-          {/* les 20 axes chargés (tracés propres, pas encore mesurés en direct) */}
+          {/* les 20 axes chargés (tracés OpenStreetMap), colorés par leur mesure en direct */}
           {geo.corridors.map(c => {
             const hi = selCorridor && (selCorridor.id === c.id || selCorridor.sameAs === c.id);
+            const lvl = layers.traffic ? corridorInfo(c).level : 'none';
             return (
               <g key={c.id} onClick={click(() => pickCorridor(c))} className="cursor-pointer">
                 {hi && <path d={c.d} fill="none" stroke="#FFD23F" strokeWidth={14} strokeLinecap="round" opacity={0.5} />}
                 <path d={c.d} fill="none" stroke="transparent" strokeWidth={14} />
                 <path d={c.d} fill="none" stroke={C.casing} strokeWidth={6.6} strokeLinecap="round" strokeLinejoin="round" />
-                <path id={`kfm-cor-${c.id}`} d={c.d} fill="none" stroke={C.road} strokeWidth={5} strokeLinecap="round" strokeLinejoin="round" />
-                <path d={c.d} fill="none" stroke={LEVEL_COLOR.none} strokeWidth={1.6} strokeDasharray="3 4" opacity={0.7} pointerEvents="none" />
-                <title>{`${c.name} : pas encore mesuré en direct`}</title>
-                {k >= 2 && (
+                <path id={`kfm-cor-${c.id}`} d={c.d} fill="none" stroke={C.road} strokeWidth={5.4} strokeLinecap="round" strokeLinejoin="round" />
+                {lvl === 'none'
+                  ? <path d={c.d} fill="none" stroke={night ? '#94A3B8' : '#5B7186'} strokeWidth={3.2} strokeDasharray="6 4" strokeLinecap="round" pointerEvents="none" />
+                  : <path d={c.d} fill="none" stroke={LEVEL_COLOR[lvl]} strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" opacity={0.95} pointerEvents="none" />}
+                <title>{`${c.name} : ${lvl === 'none' ? 'pas de mesure pour le moment' : LEVEL_LABEL[lvl]}`}</title>
+                {k >= 1.5 && (
                   <text fontSize={6.8} fill={C.text} fontWeight={800} dy={-5} pointerEvents="none" stroke={C.land} strokeWidth={2} paintOrder="stroke">
                     <textPath href={`#kfm-cor-${c.id}`} startOffset="10%">{c.name}</textPath>
                   </text>
@@ -702,7 +758,7 @@ export default function KinshasaCityMap({
 
           {/* grands axes */}
           {geo.roads.map(r => {
-            const lvl = layers.traffic ? roadLevel(r.nodeId) : 'none';
+            const lvl = layers.traffic ? roadLvl(r) : 'none';
             const hi = (selNode && r.nodeId === selNode.id) || (selCorridorInfo?.road?.id === r.id);
             return (
               <g key={r.id}>
@@ -718,7 +774,7 @@ export default function KinshasaCityMap({
                 >
                   <title>{`${r.label} : ${LEVEL_LABEL[lvl]}`}</title>
                 </path>
-                {showRoadNames && (
+                {k >= 1.5 && (
                   <text fontSize={7} fill={C.text} fontWeight={800} dy={-6} pointerEvents="none" stroke={C.land} strokeWidth={2} paintOrder="stroke">
                     <textPath href={`#kfm-road-${r.id}`} startOffset="12%">{r.label}</textPath>
                   </text>
@@ -729,6 +785,19 @@ export default function KinshasaCityMap({
 
           {/* voitures */}
           <g ref={carsRef} pointerEvents="none" />
+
+          {/* numéro de chaque axe (1 à 20), visible à tous les niveaux de zoom */}
+          {corridorBadges.map(({ c, info, mid, label }) => {
+            const on = sel?.kind === 'corridor' && (sel.id === c.id || CORRIDORS.find(o => o.id === sel.id)?.sameAs === c.id);
+            const w = label.length > 2 ? 30 : 20;
+            return (
+              <g key={c.id} transform={`translate(${mid[0]} ${mid[1]}) scale(${ui})`} onClick={click(() => pickCorridor(c))} className="cursor-pointer" filter="url(#kfm-shadow)">
+                <rect x={-w / 2} y={-10} width={w} height={20} rx={10} fill={info.measured ? LEVEL_COLOR[info.level] : '#334155'} stroke={on ? '#FFD23F' : '#fff'} strokeWidth={on ? 3 : 2} />
+                <text y={4} textAnchor="middle" fontSize={11} fontWeight={900} fill={info.measured ? '#0B1622' : '#fff'}>{label}</text>
+                <title>{`Axe ${label} : ${c.name}${info.measured ? ` · ${LEVEL_LABEL[info.level]}` : ' · pas de mesure'}`}</title>
+              </g>
+            );
+          })}
 
           {/* noms des communes */}
           {layers.communes && geo.sites.map((s, i) => (
@@ -775,6 +844,8 @@ export default function KinshasaCityMap({
           {/* points noirs connus */}
           {BLACK_SPOTS.map(b => {
             const x = X(b.c[1]), y = Y(b.c[0]);
+            const spotLive = !b.nodeId ? corridorStates?.[b.id] : undefined;
+            const spotLvl: MapLevel = spotLive && spotLive.status !== 'INCONNU' ? levelFromStatus(spotLive.status) : 'none';
             const measured = !!(b.nodeId && byId[b.nodeId]);
             return (
               <g key={b.id} transform={`translate(${x} ${y}) scale(${ui})`} onClick={click(() => pickSpot(b.id))} className="cursor-pointer">
@@ -783,8 +854,8 @@ export default function KinshasaCityMap({
                 </circle>
                 {!measured && (
                   <g filter="url(#kfm-shadow)">
-                    <circle r={13} fill="#0B1622" stroke="#F59E0B" strokeWidth={3} />
-                    <text y={5} textAnchor="middle" fontSize={15} fontWeight={900} fill="#F59E0B">!</text>
+                    <circle r={13} fill="#0B1622" stroke={spotLvl === 'none' ? '#F59E0B' : LEVEL_COLOR[spotLvl]} strokeWidth={3.5} />
+                    <text y={5} textAnchor="middle" fontSize={15} fontWeight={900} fill={spotLvl === 'none' ? '#F59E0B' : LEVEL_COLOR[spotLvl]}>!</text>
                   </g>
                 )}
                 {(k >= 1.5 || !measured) && (
@@ -870,6 +941,10 @@ export default function KinshasaCityMap({
           {hour !== null ? `${String(hour).padStart(2, '0')} h à Kin` : 'Kin'}
         </button>
         {raining && <span className="inline-flex items-center gap-1 rounded-full bg-sky-600/90 text-white px-2.5 py-1 text-[11px] font-bold"><CloudRain className="h-3 w-3" />Mbula</span>}
+        <button type="button" onClick={() => { setListOpen(o => !o); setLayersOpen(false); }}
+          className="inline-flex items-center gap-1 rounded-full bg-[#FFD23F] text-[#0B1622] px-2.5 py-1 text-[11px] font-black shadow hover:bg-[#FFE27A]">
+          <Route className="h-3 w-3" />20 axes · {measuredCount} mesurés
+        </button>
       </div>
 
       {/* ── Commandes */}
@@ -926,7 +1001,7 @@ export default function KinshasaCityMap({
                     </span>
                     <span className="inline-flex shrink-0 items-center gap-1 text-[10px] font-bold text-white/70">
                       <span className="h-2 w-2 rounded-full" style={{ background: LEVEL_COLOR[info.level] }} />
-                      {info.node ? LEVEL_LABEL[info.level] : 'Non mesuré'}
+                      {info.measured ? LEVEL_LABEL[info.level] : 'En attente'}
                     </span>
                   </button>
                 </li>
@@ -962,14 +1037,17 @@ export default function KinshasaCityMap({
                     Voir le carrefour <ChevronRight className="h-3.5 w-3.5" />
                   </button>
                 </>
+              ) : selCorridorInfo.live ? (
+                <LiveLine live={selCorridorInfo.live} level={selCorridorInfo.level} />
               ) : (
-                <p className="text-xs text-white/65">Pas encore mesuré en direct. Si tu y passes, signale ce que tu vois pour éclairer cet axe.</p>
+                <p className="text-xs text-white/65">Mesure en cours de chargement ou indisponible. Si tu y passes, signale ce que tu vois.</p>
               )}
               {(selCorridor.note || selCorridorInfo.base.note) && <p className="text-[11px] italic text-amber-200/80">{selCorridor.note || selCorridorInfo.base.note}</p>}
             </div>
           )}
           {selSpot && (() => {
             const n = selSpot.nodeId ? byId[selSpot.nodeId] : undefined;
+            const sl = !selSpot.nodeId ? corridorStates?.[selSpot.id] : undefined;
             return (
               <div className="space-y-1.5 pr-6">
                 <p className="text-[10px] font-black uppercase tracking-widest text-amber-400">Point noir connu</p>
@@ -984,8 +1062,10 @@ export default function KinshasaCityMap({
                       Voir le carrefour <ChevronRight className="h-3.5 w-3.5" />
                     </button>
                   </>
+                ) : sl && sl.status !== 'INCONNU' ? (
+                  <LiveLine live={sl} level={levelFromStatus(sl.status)} />
                 ) : (
-                  <p className="text-xs text-white/65">Bouchon fréquent, mais pas encore mesuré en direct. Signale l'état quand tu y passes.</p>
+                  <p className="text-xs text-white/65">Mesure en cours de chargement ou indisponible. Signale l'état quand tu y passes.</p>
                 )}
               </div>
             );
@@ -1047,6 +1127,24 @@ export default function KinshasaCityMap({
           <span className="hidden sm:inline">Pincez ou molette pour zoomer · touchez un carrefour ou une commune</span>
         </p>
       )}
+    </div>
+  );
+}
+
+function LiveLine({ live, level }: { live: CorridorLive; level: MapLevel }) {
+  const src = live.source === 'google' ? 'Mesuré en direct' : live.source === 'estimate' ? "Estimation selon l'heure" : 'Pas de mesure';
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="rounded-full px-2 py-0.5 text-[11px] font-black text-[#0B1622]" style={{ background: LEVEL_COLOR[level] }}>{LEVEL_LABEL[level]}</span>
+        {typeof live.speedKmh === 'number' && <span className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-bold">{Math.round(live.speedKmh)} km/h</span>}
+        {typeof live.delayMin === 'number' && live.delayMin > 0 && <span className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-bold">+{Math.round(live.delayMin)} min</span>}
+        <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold', live.isLive ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300')}>{src}</span>
+      </div>
+      <p className="text-[11px] text-white/55">
+        Tronçon mesuré{typeof live.distKm === 'number' ? ` de ${live.distKm} km` : ''}, mis à jour toutes les 5 minutes.
+        {live.reportType ? ' Un Kinois a signalé un problème tout près.' : ''}
+      </p>
     </div>
   );
 }
