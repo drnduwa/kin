@@ -44,12 +44,23 @@ export function NotificationPermission() {
   }, [messaging, toast]);
 
   const subscribeUser = async () => {
-    if (!user || !messaging) return;
+    if (!user) return;
+    // Notifications bloquées dans le navigateur : inutile d'essayer, on explique comment débloquer.
+    if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
+      toast({
+        title: 'Notifications bloquées',
+        description: "Votre navigateur bloque les notifications de Kinshasa Flow. Touchez l'icône du cadenas à côté de l'adresse, autorisez « Notifications », puis rechargez la page.",
+      });
+      return;
+    }
+    if (!messaging) {
+      toast({ title: 'Alertes indisponibles', description: "Ce navigateur ne prend pas en charge les alertes push de Kinshasa Flow.", variant: 'destructive' });
+      return;
+    }
     
-    // Une clé VAPID valide est requise pour éviter l'erreur "65 bytes".
-    // Si la clé n'est pas définie dans .env, nous utilisons un format de secours 
-    // mais le build échouera sans une clé réelle générée via web-push generate-vapid-keys.
-    const vapidKey = process.env.NEXT_PUBLIC_VAPID_KEY || "BMv7Y_PlaceHolder_VAPID_Key_Should_Be_87_Chars_Long_For_Full_Compatibility_123456789"; 
+    // Clé VAPID : on n'utilise une clé personnalisée que si elle est valide (65 octets, point P-256
+    // non compressé). Sinon Firebase utilise sa propre clé par défaut, ce qui suffit pour FCM.
+    const vapidKey = validVapidKey(process.env.NEXT_PUBLIC_VAPID_KEY);
 
     setIsSubscribing(true);
 
@@ -71,7 +82,7 @@ export function NotificationPermission() {
 
       // 2. Récupération du Token FCM
       const currentToken = await getToken(messaging, {
-        vapidKey: vapidKey,
+        ...(vapidKey ? { vapidKey } : {}),
         serviceWorkerRegistration: registration
       });
 
@@ -79,8 +90,8 @@ export function NotificationPermission() {
         await saveFCMToken(firestore, user.uid, currentToken);
         console.log('Token FCM enregistré avec succès.');
         
-        // 3. Optionnel: Enregistrement Web Push standard (Fallback)
-        try {
+        // 3. Optionnel : Web Push standard, seulement avec notre propre clé valide
+        if (vapidKey) try {
           const sub = await registration.pushManager.subscribe({
             userVisibleOnly: true,
             applicationServerKey: vapidKey
@@ -100,10 +111,14 @@ export function NotificationPermission() {
       }
     } catch (error) {
       console.error('Erreur d\'activation des notifications:', error);
-      toast({ 
-        title: 'Erreur VAPID', 
-        description: "Clé VAPID invalide ou format incorrect. Vérifiez vos variables d'environnement.", 
-        variant: 'destructive' 
+      const code = String((error as any)?.code || '');
+      const blocked = code.includes('permission-blocked') || code.includes('permission-default') || (typeof Notification !== 'undefined' && Notification.permission === 'denied');
+      toast({
+        title: blocked ? 'Notifications refusées' : 'Activation impossible',
+        description: blocked
+          ? "Autorisez les notifications pour Kinshasa Flow dans les réglages du navigateur (icône du cadenas), puis réessayez."
+          : "Les alertes n'ont pas pu être activées pour l'instant. Réessayez dans un moment.",
+        variant: 'destructive'
       });
     } finally {
       setIsSubscribing(false);
@@ -134,7 +149,7 @@ export function NotificationPermission() {
         </div>
         <div className="min-w-0">
           <p className="font-black text-slate-900 text-xs sm:text-sm tracking-tight truncate">Alertes Trafic Kinshasa</p>
-          <p className="text-slate-500 font-medium text-[10px] sm:text-xs truncate">Recevez des alertes pop-up sur les bouchons en direct.</p>
+          <p className="text-slate-500 font-medium text-[10px] sm:text-xs truncate">{permission === 'denied' ? 'Bloquées par votre navigateur : touchez « Débloquer ».' : 'Recevez des alertes pop-up sur les bouchons en direct.'}</p>
         </div>
       </div>
       
@@ -150,7 +165,7 @@ export function NotificationPermission() {
           ) : (
             <>
               <Sparkles className="h-3.5 w-3.5 fill-white" />
-              <span>Activer</span>
+              <span>{permission === 'denied' ? 'Débloquer' : 'Activer'}</span>
             </>
           )}
         </Button>
@@ -164,4 +179,16 @@ export function NotificationPermission() {
       </div>
     </motion.div>
   );
+}
+
+/** Renvoie la clé VAPID publique si elle est valide (base64url, 65 octets commençant par 0x04), sinon undefined. */
+function validVapidKey(key?: string): string | undefined {
+  const k = (key || '').trim();
+  if (!/^[A-Za-z0-9_-]{80,100}$/.test(k)) return undefined;
+  try {
+    const bin = atob(k.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (k.length % 4)) % 4));
+    return bin.length === 65 && bin.charCodeAt(0) === 4 ? k : undefined;
+  } catch {
+    return undefined;
+  }
 }
