@@ -33,7 +33,8 @@ import {
   Car,
   Compass,
   Layers,
-  ChevronRight
+  ChevronRight,
+  ChevronDown
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -55,6 +56,7 @@ import { UserProfile } from '@/lib/types';
 import { KFlowSays } from '@/components/kin/street';
 import KinshasaCityMap, { type CityMapNode, type CorridorLive } from '@/components/kin/city-map';
 import { RouteScout, RouteStory } from '@/components/kin/route-story';
+import { FullPanel } from '@/components/kin/full-panel';
 import { MOOD_LINES, moodFromClock, type Mood } from '@/lib/kin-slang';
 
 const STATUS_CONFIG = {
@@ -297,6 +299,28 @@ export default function TrafficCommandDashboard() {
   const [timeOffset, setTimeOffset] = useState<0 | 1 | 2>(0);
   const [cityForecast, setCityForecast] = useState<Awaited<ReturnType<typeof getCityForecastAction>> | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  // Un seul panneau plein écran à la fois ; la page d'accueil ne montre que la carte et des tuiles.
+  const [panel, setPanel] = useState<Panel | null>(null);
+  const [openNodeId, setOpenNodeId] = useState<string | null>(null);
+  const pushedRef = useRef(false);
+
+  // Le bouton « retour » du téléphone ferme le panneau au lieu de quitter la page.
+  const openPanel = useCallback((p: Panel) => {
+    if (!pushedRef.current && typeof window !== 'undefined') {
+      window.history.pushState({ ...(window.history.state || {}), kfPanel: true }, '');
+      pushedRef.current = true;
+    }
+    setPanel(p);
+  }, []);
+  const closePanel = useCallback(() => {
+    if (pushedRef.current) window.history.back();
+    else setPanel(null);
+  }, []);
+  useEffect(() => {
+    const onPop = () => { if (pushedRef.current) { pushedRef.current = false; setPanel(null); } };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
 
   useEffect(() => {
     getCityForecastAction().then(setCityForecast).catch(() => setCityForecast(null));
@@ -351,9 +375,9 @@ export default function TrafficCommandDashboard() {
 
   const selectNode = (id: string) => {
     setSelectedNodeId(id);
-    if (typeof document !== 'undefined') {
-      document.getElementById(`node-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
+    setOpenNodeId(id);
+    openPanel('radar');
+    setTimeout(() => document.getElementById(`node-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 350);
   };
 
   // Récupération dynamique en direct (Google Routes Live + OSRM + Firestore)
@@ -401,10 +425,12 @@ export default function TrafficCommandDashboard() {
     setIsLoadingAnalysis(true);
     setScoutName(name);
     setActiveAnalysis(null);
+    openPanel('route');
     try {
       const data = await checkTrafficAction({ ...coords, address: name });
       setActiveAnalysis({ ...data, name });
     } catch (e: any) {
+      closePanel();
       toast({ title: "Erreur", description: "Impossible d'analyser cet axe.", variant: "destructive" });
     } finally {
       setIsLoadingAnalysis(false);
@@ -417,16 +443,21 @@ export default function TrafficCommandDashboard() {
     if (!q) return;
     setScoutName(q);
     setIsLoadingAnalysis(true);
+    setActiveAnalysis(null);
+    openPanel('route');
+    (document.activeElement as HTMLElement | null)?.blur?.();
     try {
       const loc = await locateAxisAction(q);
       if (!loc.found) {
         setIsLoadingAnalysis(false);
+        closePanel();
         toast({ title: "Avenue introuvable", description: `Nous ne trouvons pas « ${q} » à Kinshasa. Essayez un nom plus court (ex. : Huileries, Poids Lourds).`, variant: "destructive" });
         return;
       }
       await handleInspectAxis({ lat: loc.lat, lng: loc.lng }, loc.name);
     } catch {
       setIsLoadingAnalysis(false);
+      closePanel();
       toast({ title: "Erreur", description: "Impossible de localiser cette avenue.", variant: "destructive" });
     }
   };
@@ -505,138 +536,271 @@ export default function TrafficCommandDashboard() {
     }
   };
 
-  return (
-    <div className="w-full h-full min-h-0 flex flex-col bg-slate-50 dark:bg-slate-950 overflow-y-auto p-3 sm:p-4 md:p-6">
-      <div className="max-w-6xl mx-auto w-full space-y-5 pb-24 md:pb-12">
+  const raining = (globalMetrics?.weather?.rainMmH ?? 0) >= 0.5;
+  const hotNodes = bottlenecks.filter(n => ['BLOQUÉ', 'EMBOUTEILLAGE'].includes(n.status)).length;
+  const worstCommute = commutes.reduce<any>((w, c) => (typeof c.delayMin === 'number' && (!w || c.delayMin > (w.delayMin ?? -1)) ? c : w), null);
 
-        {/* ── 1. HEADER DU CENTRE DE CONTRÔLE (1-Screen Traffic Command) ── */}
-        <div className="rounded-3xl bg-gradient-to-br from-slate-900 via-slate-800 to-blue-950 p-5 sm:p-7 text-white shadow-xl border border-slate-700/60 relative overflow-hidden">
-          <div className="absolute top-0 right-0 -mr-20 -mt-20 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
-          
-          <div className="relative z-10 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <span className="flex h-2.5 w-2.5 rounded-full bg-red-500 animate-ping" />
-                <Badge className="bg-red-500/20 text-red-300 border-red-500/30 text-[10px] font-black uppercase tracking-wider">
-                  Live Kinshasa
-                </Badge>
-                <span className="text-xs text-slate-400 font-medium hidden sm:inline">• 27 Millions d'habitants</span>
-              </div>
-              <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
-                Centre de Contrôle Trafic K-Flow
-              </h1>
-              <p className="text-xs sm:text-sm text-slate-300 max-w-xl font-medium">
-                Détection en temps réel des goulots, causes précises des pannes et itinéraires d'échappatoire certifiés carrossables.
-              </p>
-            </div>
+  // Une ligne compacte par nœud ; le détail complet ne s'ouvre que si l'usager touche la ligne.
+  const renderNode = (node: any) => {
+    const statusKey = (node.status || node.initialStatus || "MODÉRÉ") as keyof typeof STATUS_CONFIG;
+    const cfg = STATUS_CONFIG[statusKey] || STATUS_CONFIG.MODÉRÉ;
+    const myVote = votedNodes[node.id];
+    const nodeVotes = node.votes as { still: number; clear: number; lastAgeMin: number | null } | undefined;
+    const speed = node.speedKmh ?? node.speed;
+    const delay = node.delayMin ?? node.delay;
+    const open = openNodeId === node.id;
 
-            {/* Quick Actions Header */}
-            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 w-full lg:w-auto">
-              
-              {/* Flash Vocal 20s */}
-              <Button
-                onClick={handlePlayGlobalVoiceFlash}
-                className={cn(
-                  "flex-1 sm:flex-initial h-12 px-5 rounded-2xl font-black text-xs uppercase tracking-wider gap-2 shadow-lg transition-all",
-                  isPlayingAudio 
-                    ? "bg-amber-500 hover:bg-amber-400 text-slate-950 ring-4 ring-amber-500/30" 
-                    : "bg-white/10 hover:bg-white/20 text-white border border-white/20"
-                )}
-              >
-                {isPlayingAudio ? <VolumeX className="h-4 w-4 animate-bounce" /> : <Volume2 className="h-4 w-4 text-amber-400" />}
-                <span>{isPlayingAudio ? "Arrêter Flash" : "Flash Audio 20s (Lingala)"}</span>
-              </Button>
-
-              {/* Solde E-Wallet Badge */}
-              <Link href="/e-wallet" className="flex-1 sm:flex-initial">
-                <div className="h-12 px-4 rounded-2xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 flex items-center justify-between gap-3 text-white transition-all cursor-pointer">
-                  <div className="flex items-center gap-2">
-                    <Wallet className="h-4 w-4 text-emerald-400" />
-                    <div>
-                      <div className="text-[9px] uppercase font-bold text-emerald-300">Mon E-Wallet</div>
-                      <div className="text-xs font-black text-emerald-400">{walletBalanceCDF.toLocaleString()} FC</div>
-                    </div>
-                  </div>
-                  <ChevronRight className="h-4 w-4 text-emerald-400" />
-                </div>
-              </Link>
-
+    return (
+      <div
+        key={node.id}
+        id={`node-${node.id}`}
+        className={cn(
+          "rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm transition-all scroll-mt-4",
+          open && "ring-2 ring-amber-400 border-amber-400"
+        )}
+      >
+        <button
+          type="button"
+          onClick={() => { setOpenNodeId(open ? null : node.id); setSelectedNodeId(node.id); }}
+          aria-expanded={open}
+          className="w-full flex items-center gap-3 p-3 text-left"
+        >
+          <span className="text-base shrink-0">{cfg.icon}</span>
+          <div className="min-w-0 flex-1">
+            <div className="font-black text-sm text-slate-900 dark:text-white leading-tight truncate">{node.name}</div>
+            <div className="text-[10px] font-semibold text-slate-400 truncate">
+              {node.district}
+              {node.activeIncidents?.length > 0 && <span className="text-red-500"> · 🚨 {node.activeIncidents.length} signalement(s)</span>}
             </div>
           </div>
-
-          {/* Live Telemetry Ticker Bar */}
-          <div className="w-full pt-4 mt-4 border-t border-slate-700/60 flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-              <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700/80">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                </span>
-                <span className="font-bold text-slate-300">Télémétrie :</span>
-                <span className="font-extrabold text-emerald-400">
-                  {globalMetrics ? `${globalMetrics.isPeakHour ? "Heure de pointe" : "Heure normale"} (${globalMetrics.kinshasaHour}h)` : "Chargement…"}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700/80">
-                <Flame className="h-3.5 w-3.5 text-amber-400" />
-                <span className="font-bold text-slate-300">Congestion :</span>
-                <span className="font-extrabold text-amber-400">{typeof globalMetrics?.congestionIndex === 'number' ? `${globalMetrics.congestionIndex}%` : '—'}</span>
-              </div>
-
-              <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700/80">
-                <Car className="h-3.5 w-3.5 text-blue-400" />
-                <span className="font-bold text-slate-300">Vitesse moy. :</span>
-                <span className="font-extrabold text-blue-400">{typeof globalMetrics?.avgSpeed === 'number' ? `${globalMetrics.avgSpeed} km/h` : '—'}</span>
-              </div>
-
-              {globalMetrics && typeof globalMetrics.liveCount === 'number' && (
-                <div className={cn("flex items-center gap-2 px-3 py-1.5 rounded-xl border", globalMetrics.liveCount > 0 ? "bg-emerald-950/50 border-emerald-800/80" : "bg-amber-950/50 border-amber-800/80")}>
-                  <span className={cn("font-bold", globalMetrics.liveCount > 0 ? "text-emerald-300" : "text-amber-300")}>
-                    {globalMetrics.liveCount}/{globalMetrics.nodeCount} nœuds mesurés en direct
-                  </span>
-                </div>
-              )}
-
-              {globalMetrics && (globalMetrics.votesLastHour ?? 0) > 0 && (
-                <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-700/80">
-                  <ThumbsUp className="h-3.5 w-3.5 text-sky-400" />
-                  <span className="font-bold text-slate-300">{globalMetrics.votesLastHour} vote(s) Kinois cette heure</span>
-                </div>
-              )}
-
-              {globalMetrics && globalMetrics.activeIncidentsCount > 0 && (
-                <div className="flex items-center gap-2 bg-red-950/60 px-3 py-1.5 rounded-xl border border-red-800/80">
-                  <AlertCircle className="h-3.5 w-3.5 text-red-400" />
-                  <span className="font-bold text-red-300">{globalMetrics.activeIncidentsCount} incident(s)</span>
-                </div>
-              )}
+          <div className="text-right shrink-0">
+            <Badge className={cn("text-white font-black text-[10px] uppercase", cfg.badgeBg)}>{cfg.label}</Badge>
+            <div className="text-[10px] font-bold text-slate-500 mt-0.5 tabular-nums">
+              {typeof delay === 'number' ? `${node.isLive ? '' : '~'}+${delay} min · ${speed} km/h` : typeof speed === 'number' ? `${speed} km/h` : '—'}
             </div>
+          </div>
+          <ChevronDown className={cn("h-4 w-4 text-slate-400 shrink-0 transition-transform", open && "rotate-180")} />
+        </button>
 
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] text-slate-400">
-                {lastRefreshedAt ? `${globalMetrics?.telemetrySource || 'Live'} • ${lastRefreshedAt}` : "Synchronisation en direct..."}
-              </span>
-              <Button
-                size="sm"
-                variant="ghost"
+        <AnimatePresence initial={false}>
+          {open && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="px-3 pb-3 space-y-2.5">
+                <SourceChip source={node.source} confidence={node.confidence} />
+
+                {/* Pourquoi ça bloque : causes réelles avec preuve et poids */}
+                <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-300/40 text-slate-800 dark:text-slate-200 space-y-2">
+                  <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-amber-800 dark:text-amber-300">
+                    <ShieldAlert className="h-3 w-3 text-amber-600" />
+                    <span>Pourquoi ?</span>
+                  </div>
+                  {Array.isArray(node.why) && node.why.length > 0 ? (
+                    <ul className="space-y-2">
+                      {node.why.map((w: any, i: number) => (
+                        <li key={i} className="space-y-1">
+                          <div className="flex items-start justify-between gap-2 text-xs">
+                            <span className="font-semibold text-slate-800 dark:text-slate-200">
+                              {w.label}
+                              <span className={cn("block text-[10px] font-medium", w.confirmed ? "text-slate-500" : "text-amber-700 dark:text-amber-400")}>{w.evidence}</span>
+                            </span>
+                            <span className="text-[10px] font-bold text-slate-500 tabular-nums">{w.pct}%</span>
+                          </div>
+                          <div className="h-1.5 rounded-full bg-amber-500/15 overflow-hidden">
+                            <div className="h-full rounded-full bg-amber-500" style={{ width: `${w.pct}%` }} />
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-xs font-medium leading-relaxed text-slate-600 dark:text-slate-400">
+                      {node.status === 'INCONNU' ? 'Chargement…' : "Rien de signalé ici pour l'instant. Vous êtes sur place ? Dites-le en un tap."}
+                    </p>
+                  )}
+                </div>
+
+                {/* Échappatoire : vérifiée en direct quand le carrefour est chargé */}
+                <div className={cn(
+                  "p-3 rounded-2xl border text-slate-800 dark:text-slate-200 space-y-1",
+                  node.altIsBetter === false ? "bg-amber-500/10 border-amber-300/40" : "bg-emerald-500/10 border-emerald-300/40"
+                )}>
+                  <div className={cn(
+                    "flex items-center justify-between gap-1.5 text-[10px] font-black uppercase",
+                    node.altIsBetter === false ? "text-amber-800 dark:text-amber-300" : "text-emerald-800 dark:text-emerald-300"
+                  )}>
+                    <span className="inline-flex items-center gap-1.5">
+                      <ShieldCheck className={cn("h-3 w-3", node.altIsBetter === false ? "text-amber-600" : "text-emerald-600")} />
+                      {typeof node.altDelayMin !== 'number'
+                        ? 'Échappatoire habituelle'
+                        : node.altIsBetter ? 'Déviation vérifiée plus rapide' : 'Déviation aussi chargée'}
+                    </span>
+                    {typeof node.altDelayMin === 'number' && (
+                      <span className="text-[9px] font-bold normal-case">
+                        +{node.altDelayMin} min · {node.altSpeedKmh} km/h ({node.altSource === 'google' ? 'en direct' : 'estimé'})
+                      </span>
+                    )}
+                  </div>
+                  <p className={cn("text-xs font-bold leading-relaxed pl-4", node.altIsBetter === false ? "text-amber-800 dark:text-amber-300" : "text-emerald-800 dark:text-emerald-300")}>
+                    {typeof node.altDelayMin === 'number' ? node.altName : node.certifiedAlt}
+                  </p>
+                </div>
+
+                {node.lingala && (
+                  <div className="text-[11px] font-bold italic text-primary dark:text-blue-400 pl-1">🇨🇩 "{node.lingala}"</div>
+                )}
+
+                {/* Actions : vote 1-tap (sur place) + film de la route */}
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-col gap-1 min-w-0">
+                    {myVote ? (
+                      <div className="flex items-center gap-1.5 text-emerald-600 text-xs font-bold">
+                        <CheckCircle2 className="h-4 w-4" />
+                        <span>{myVote === 'still' ? 'Vous : toujours bloqué' : "Vous : c'est dégagé"}</span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Button size="sm" variant="outline" onClick={() => handleVote(node.id, node.name, 'still')}
+                          className="rounded-xl text-[11px] font-black text-red-700 dark:text-red-400 border-red-300 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 gap-1 h-9 px-2.5">
+                          <ThumbsDown className="h-3 w-3" /><span>Toujours bloqué</span>
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => handleVote(node.id, node.name, 'clear')}
+                          className="rounded-xl text-[11px] font-black text-emerald-700 dark:text-emerald-400 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 gap-1 h-9 px-2.5">
+                          <ThumbsUp className="h-3 w-3" /><span>C'est dégagé</span>
+                        </Button>
+                      </div>
+                    )}
+                    {nodeVotes && (nodeVotes.still + nodeVotes.clear) > 0 && (
+                      <span className="text-[10px] text-slate-500 font-medium">
+                        {nodeVotes.still} bloqué · {nodeVotes.clear} dégagé{nodeVotes.lastAgeMin !== null ? ` · dernier vote il y a ${nodeVotes.lastAgeMin} min` : ''}
+                      </span>
+                    )}
+                  </div>
+                  <Button size="sm" onClick={() => handleInspectAxis(node.coords, node.name)} className="rounded-xl text-xs font-bold gap-1 h-9">
+                    <span>Voir le film</span><ArrowRight className="h-3 w-3" />
+                  </Button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  };
+
+  const PANEL_META: Record<Panel, { title: string; subtitle?: string; icon: React.ReactNode }> = {
+    route: {
+      title: activeAnalysis?.name || scoutName || 'Ta route',
+      subtitle: isLoadingAnalysis ? 'K-Flow part en reconnaissance…' : 'Le film de ta route, en direct',
+      icon: <Radar className="h-5 w-5 text-[#2EB6F0]" />,
+    },
+    trajets: { title: 'Mes trajets quotidiens', subtitle: 'Un tap = le film du trajet', icon: <Car className="h-5 w-5 text-[#2EB6F0]" /> },
+    radar: { title: 'Radar des 8 nœuds', subtitle: 'Touchez un carrefour pour le détail', icon: <Radio className="h-5 w-5 text-red-400" /> },
+    telemetrie: { title: 'Télémétrie de la ville', subtitle: lastRefreshedAt ? `Mis à jour à ${lastRefreshedAt}` : 'Synchronisation…', icon: <Flame className="h-5 w-5 text-amber-400" /> },
+  };
+
+  return (
+    <div className="w-full h-full min-h-0 flex flex-col bg-slate-50 dark:bg-slate-950 overflow-y-auto">
+      {/* ── 1. BARRE DU HAUT : titre + 3 chiffres clés + recherche (reste visible en défilant) ── */}
+      <div className="sticky top-0 z-30 bg-[#0A1A29]/95 backdrop-blur text-white border-b border-[#22425C] shadow-lg">
+        <div className="max-w-6xl mx-auto w-full px-3 sm:px-4 md:px-6 pt-2.5 pb-3 space-y-2.5">
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2.5 w-2.5 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500" />
+            </span>
+            <h1 className="text-base sm:text-xl font-black tracking-tight text-white truncate">
+              Centre de Contrôle <span className="hidden sm:inline">Trafic </span><span className="text-[#2EB6F0]">K-Flow</span>
+            </h1>
+            <div className="ml-auto flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={handlePlayGlobalVoiceFlash}
+                aria-label={isPlayingAudio ? "Arrêter le flash audio" : "Écouter le flash audio 20 s (lingala)"}
+                className={cn("grid h-9 w-9 place-items-center rounded-full border transition-colors", isPlayingAudio ? "bg-amber-500 border-amber-400 text-slate-950" : "bg-white/10 border-white/15 hover:bg-white/20")}
+              >
+                {isPlayingAudio ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4 text-amber-300" />}
+              </button>
+              <button
+                type="button"
                 onClick={() => fetchRealtimeTraffic(true)}
                 disabled={isRefreshing}
-                className="h-8 px-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-slate-800 text-xs font-bold gap-1.5"
+                aria-label="Actualiser les mesures"
+                className="grid h-9 w-9 place-items-center rounded-full bg-white/10 border border-white/15 hover:bg-white/20 transition-colors"
               >
-                <RefreshCw className={cn("h-3.5 w-3.5 text-blue-400", isRefreshing && "animate-spin")} />
-                <span>Actualiser</span>
-              </Button>
+                <RefreshCw className={cn("h-4 w-4 text-[#2EB6F0]", isRefreshing && "animate-spin")} />
+              </button>
             </div>
           </div>
-        </div>
 
-        {/* ── 1b. JOUEUR + CARTE VIVANTE ── */}
-        <PlayerHud profile={profile} />
+          {/* Chiffres clés : un tap ouvre toute la télémétrie */}
+          <button type="button" onClick={() => openPanel('telemetrie')} className="w-full flex items-center gap-1.5 text-[11px] overflow-x-auto no-scrollbar" aria-label="Voir toute la télémétrie">
+            <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-white/5 border border-white/10 px-2.5 py-1">
+              <Flame className="h-3 w-3 text-amber-400" />
+              <b className="text-amber-300">{typeof globalMetrics?.congestionIndex === 'number' ? `${globalMetrics.congestionIndex}%` : '—'}</b>
+              <span className="text-slate-400">congestion</span>
+            </span>
+            <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-white/5 border border-white/10 px-2.5 py-1">
+              <Car className="h-3 w-3 text-[#2EB6F0]" />
+              <b className="text-sky-300">{typeof globalMetrics?.avgSpeed === 'number' ? `${globalMetrics.avgSpeed} km/h` : '—'}</b>
+            </span>
+            {(globalMetrics?.activeIncidentsCount ?? 0) > 0 && (
+              <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-red-500/15 border border-red-500/30 px-2.5 py-1 text-red-300 font-bold">
+                <AlertCircle className="h-3 w-3" /> {globalMetrics!.activeIncidentsCount} incident(s)
+              </span>
+            )}
+            {raining && (
+              <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-sky-500/15 border border-sky-500/30 px-2.5 py-1 text-sky-300 font-bold">
+                <CloudRain className="h-3 w-3" /> Pluie
+              </span>
+            )}
+            <span className="shrink-0 ml-auto inline-flex items-center gap-0.5 text-slate-400 font-bold">Plus <ChevronRight className="h-3 w-3" /></span>
+          </button>
+
+          {/* Recherche : l'action principale de la page */}
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Quelle avenue ? (Huileries, By-Pass…)"
+                enterKeyHint="search"
+                className="pl-10 h-11 rounded-xl bg-white text-slate-900 border-transparent font-bold text-sm"
+                onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }}
+              />
+            </div>
+            <Button onClick={handleSearch} disabled={isLoadingAnalysis} className="h-11 px-4 rounded-xl font-black text-xs gap-1.5 shrink-0" aria-label="Vérifier cet axe">
+              {isLoadingAnalysis ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radar className="h-4 w-4" />}
+              <span className="hidden sm:inline">Vérifier</span>
+            </Button>
+            <Button asChild variant="outline" className="h-11 w-11 sm:w-auto sm:px-4 p-0 rounded-xl font-bold text-xs gap-1.5 shrink-0 bg-white/10 border-white/20 text-white hover:bg-white/20 hover:text-white">
+              <Link href="/k-flow-nav" aria-label="GPS Nav">
+                <Navigation className="h-4 w-4" />
+                <span className="hidden sm:inline">GPS</span>
+              </Link>
+            </Button>
+          </div>
+
+          {activeAnalysis && panel !== 'route' && (
+            <button type="button" onClick={() => openPanel('route')} className="w-full flex items-center gap-2 rounded-xl bg-[#2EB6F0]/15 border border-[#2EB6F0]/40 px-3 py-1.5 text-xs font-bold text-sky-200">
+              <Radar className="h-3.5 w-3.5" />
+              <span className="truncate">Revoir le film : {activeAnalysis.name}</span>
+              <ChevronRight className="h-3.5 w-3.5 ml-auto shrink-0" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="max-w-6xl mx-auto w-full p-3 sm:p-4 md:p-6 space-y-3 pb-24 md:pb-12">
         <KFlowSays mood={narratorMood} lines={narratorLines} tone="light" />
 
-        <div className="rounded-3xl bg-[#0A1A29] text-[#EAF3FA] p-3 sm:p-4 border border-[#22425C] shadow-xl space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
+        {/* ── 2. LA CARTE VIVANTE : le cœur de la page ── */}
+        <div className="rounded-3xl bg-[#0A1A29] text-[#EAF3FA] p-2.5 sm:p-4 border border-[#22425C] shadow-xl space-y-2.5">
+          <div className="flex items-center gap-1.5">
             {([0, 1, 2] as const).map(o => (
               <button
                 key={o}
@@ -651,22 +815,12 @@ export default function TrafficCommandDashboard() {
                 {o === 0 ? 'Maintenant' : `+${o} h`}
               </button>
             ))}
-            {globalMetrics?.weather && globalMetrics.weather.rainMmH >= 0.5 && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30 px-2.5 py-1 text-[11px] font-bold">
-                <CloudRain className="h-3.5 w-3.5" /> Pluie {globalMetrics.weather.rainMmH.toFixed(1)} mm/h
-              </span>
-            )}
-            {(globalMetrics?.activeEventsCount ?? 0) > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 px-2.5 py-1 text-[11px] font-bold">
-                <CalendarDays className="h-3.5 w-3.5" /> {globalMetrics!.activeEventsCount} événement(s) en cours
-              </span>
-            )}
-            <span className="ml-auto text-[11px] text-[#8EA8BD]">
+            <span className="ml-auto text-[10px] text-[#8EA8BD] text-right leading-tight">
               {timeOffset === 0
-                ? (lastRefreshedAt ? `Mis à jour à ${lastRefreshedAt}` : 'Chargement…')
+                ? (lastRefreshedAt ? `maj ${lastRefreshedAt}` : 'Chargement…')
                 : forecastKnown > 0
-                  ? `Prévision d'après l'historique · ${forecastKnown}/8 nœuds`
-                  : "Pas encore assez d'historique pour prévoir"}
+                  ? `Prévision · ${forecastKnown}/8 nœuds`
+                  : "Pas assez d'historique"}
             </span>
           </div>
           <KinshasaCityMap
@@ -674,363 +828,198 @@ export default function TrafficCommandDashboard() {
             selectedId={selectedNodeId}
             onSelect={setSelectedNodeId}
             onOpenDetails={selectNode}
-            raining={(globalMetrics?.weather?.rainMmH ?? 0) >= 0.5}
+            raining={raining}
             corridorStates={timeOffset === 0 ? corridorStates : undefined}
             timeLabel={timeOffset === 0 ? (lastRefreshedAt ? `maj ${lastRefreshedAt}` : undefined) : `prévision +${timeOffset} h`}
           />
         </div>
 
-        {/* ── 2. RECHERCHE RAPIDE & GPS DIRECT ── */}
-        <div className="bg-white dark:bg-slate-900 p-3 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row gap-2">
-          <div className="relative flex-1">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Rechercher une avenue (ex: Huileries, Poids Lourds, By-Pass...)"
-              className="pl-10 h-11 rounded-xl border-slate-200 dark:border-slate-800 font-bold text-xs"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSearch();
-              }}
-            />
-          </div>
-          <Button
-            onClick={handleSearch}
-            disabled={isLoadingAnalysis}
-            className="h-11 px-5 rounded-xl font-bold text-xs gap-1.5 shrink-0"
-          >
-            {isLoadingAnalysis ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radar className="h-4 w-4" />}
-            Vérifier cet Axe
-          </Button>
-          <Button asChild variant="outline" className="h-11 px-4 rounded-xl font-bold text-xs gap-1.5 shrink-0 border-primary/30 text-primary hover:bg-primary/5">
-            <Link href="/k-flow-nav">
-              <Navigation className="h-4 w-4" />
-              <span>GPS Nav</span>
-            </Link>
-          </Button>
+        {/* ── 3. TUILES : chaque rubrique s'ouvre en plein écran, seulement si l'usager la demande ── */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+          <Tile
+            onClick={() => openPanel('trajets')}
+            icon={<Car className="h-5 w-5" />}
+            tint="from-sky-500/20 to-sky-500/5 text-sky-600 dark:text-sky-300"
+            title="Mes trajets"
+            value={worstCommute ? (worstCommute.delayText || `+${worstCommute.delayMin} min`) : `${commutes.length} trajets`}
+            hint={worstCommute ? `Pire : ${worstCommute.title}` : 'Domicile ↔ bureau'}
+          />
+          <Tile
+            onClick={() => openPanel('radar')}
+            icon={<Radio className="h-5 w-5" />}
+            tint={hotNodes > 0 ? "from-red-500/20 to-red-500/5 text-red-600 dark:text-red-300" : "from-emerald-500/20 to-emerald-500/5 text-emerald-600 dark:text-emerald-300"}
+            title="Radar 8 nœuds"
+            value={hotNodes > 0 ? `${hotNodes} bouché${hotNodes > 1 ? 's' : ''}` : 'Rien de bouché'}
+            hint="Causes, déviations, votes"
+          />
+          <Tile
+            onClick={() => openPanel('telemetrie')}
+            icon={<Flame className="h-5 w-5" />}
+            tint="from-amber-500/20 to-amber-500/5 text-amber-600 dark:text-amber-300"
+            title="Télémétrie"
+            value={globalMetrics ? (globalMetrics.isPeakHour ? 'Heure de pointe' : 'Heure normale') : '…'}
+            hint={globalMetrics && typeof globalMetrics.liveCount === 'number' ? `${globalMetrics.liveCount}/${globalMetrics.nodeCount} en direct` : 'Sources et mesures'}
+          />
+          <Tile
+            href="/e-wallet"
+            icon={<Wallet className="h-5 w-5" />}
+            tint="from-emerald-500/20 to-emerald-500/5 text-emerald-600 dark:text-emerald-300"
+            title="Mon E-Wallet"
+            value={`${walletBalanceCDF.toLocaleString()} FC`}
+            hint="+25 FC par vote sur place"
+          />
         </div>
 
-        {/* ── 3. WIDGET 1-TAP : MON TRAJET QUOTIDIEN (Domicile ↔ Bureau) ── */}
-        <div className="space-y-3">
-          <div className="flex justify-between items-center">
-            <div>
-              <h2 className="text-base font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
-                <Car className="h-4 w-4 text-primary" />
-                Mon Trajet Quotidien (1-Tap Nav)
-              </h2>
-              <p className="text-xs text-slate-500">Un clic pour connaître le statut exact, le retard et la voie d'évitement</p>
-            </div>
-            <Badge className="bg-primary/10 text-primary font-black text-[9px] uppercase border-none">
-              Gain de Temps
-            </Badge>
-          </div>
+        <div className="hidden md:block"><PlayerHud profile={profile} /></div>
+      </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {commutes.map((commute) => (
-              <Card
-                key={commute.id}
-                onClick={() => handleInspectAxis(commute.coords, commute.via)}
-                className="rounded-2xl border-slate-200/80 dark:border-slate-800 hover:border-primary/50 transition-all cursor-pointer shadow-sm group hover:shadow-md bg-white dark:bg-slate-900"
-              >
-                <CardContent className="p-4 space-y-2.5">
-                  <div className="flex justify-between items-start gap-2">
-                    <span className="font-black text-xs text-slate-900 dark:text-white group-hover:text-primary transition-colors leading-tight">
-                      {commute.title}
-                    </span>
-                    <Badge className={cn("text-white font-black text-[9px] shrink-0", commute.badgeColor)}>
-                      {commute.delayText || commute.delay}
-                    </Badge>
-                  </div>
-                  <div className="text-[10px] text-slate-400 font-medium truncate flex items-center justify-between">
-                    <span>Via {commute.via}</span>
-                    {commute.distKm && <span className="font-bold text-slate-500">{commute.distKm} km • ~{commute.durMin} min</span>}
-                  </div>
-                  <SourceChip source={commute.source} confidence={commute.confidence} />
-                  <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 flex items-start gap-1.5">
-                    <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
-                    <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 leading-tight">
-                      {commute.escape}
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-
-        {/* ── 4. LE FILM DE TA ROUTE : reconnaissance, puis route animée + récit de K-Flow ── */}
-        {isLoadingAnalysis && !activeAnalysis && <RouteScout name={scoutName} />}
-        <AnimatePresence>
-          {activeAnalysis && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="space-y-3"
-            >
-              <RouteStory
-                analysis={activeAnalysis}
-                raining={(globalMetrics?.weather?.rainMmH ?? 0) >= 0.5}
-                onClose={() => setActiveAnalysis(null)}
-              />
-
-              <p className="px-1 text-[10px] font-black uppercase tracking-widest text-slate-400">Les détails</p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {/* 1. Statut & Retard */}
-                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-1">
-                  <div className="text-[10px] font-bold uppercase text-slate-400">Statut de Fluidité</div>
-                  <div className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
-                    <span>{STATUS_CONFIG[activeAnalysis.status as keyof typeof STATUS_CONFIG]?.icon}</span>
-                    <span>{activeAnalysis.status}</span>
-                    {activeAnalysis.delay > 0 && <span className="text-red-600 text-xs">({activeAnalysis.isLive ? '' : '~'}+{activeAnalysis.delay} min)</span>}
-                  </div>
-                  <SourceChip source={activeAnalysis.source} confidence={activeAnalysis.confidence} />
-                </div>
-
-                {/* 2. Pourquoi l'embouteillage ? */}
-                <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 space-y-1">
-                  <div className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-400 flex items-center gap-1">
-                    <ShieldAlert className="h-3 w-3" /> {activeAnalysis.cause ? `Signalé il y a ${activeAnalysis.reportAgeMin ?? '?'} min` : "Cause habituelle (non confirmée)"}
-                  </div>
-                  <p className="text-xs font-semibold text-amber-900 dark:text-amber-200 leading-tight">
-                    {activeAnalysis.cause || activeAnalysis.typicalCause || "Aucun signalement récent sur cet axe."}
-                  </p>
-                </div>
-
-                {/* 3. Échappatoire Certifiée */}
-                <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 space-y-1">
-                  <div className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
-                    <ShieldCheck className="h-3 w-3" /> Alternative habituelle
-                  </div>
-                  <p className="text-xs font-bold text-emerald-900 dark:text-emerald-200 leading-tight">
-                    {activeAnalysis.typicalAlternative || "Contourner par les voies secondaires."}
-                  </p>
-                  {Array.isArray(activeAnalysis.alternatives) && activeAnalysis.alternatives.length > 0 && (
-                    <ul className="pt-1 space-y-0.5 text-[10px] text-emerald-800 dark:text-emerald-300">
-                      {activeAnalysis.alternatives.map((alt: any, i: number) => (
-                        <li key={i}>Mesuré : {alt.description} · {alt.duration}{typeof alt.delay === 'number' ? ` (+${alt.delay} min)` : ''}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
-
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* ── 5. LE RADAR LIVE DES 8 GOULOTS D'ÉTRANGLEMENT MAJEURS DE KINSHASA ── */}
-        <div className="space-y-3">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1">
-            <div>
-              <h2 className="text-base font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
-                <Radio className="h-4 w-4 text-red-500 animate-pulse" />
-                Radar Live des 8 Nœuds Stratégiques de Kinshasa
-              </h2>
-              <p className="text-xs text-slate-500">Mise à jour télémétrique continue des points névralgiques</p>
-            </div>
-            <div className="text-[10px] font-bold text-slate-400">
-              Affichage haute visibilité
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-            {bottlenecks.map((node) => {
-              const statusKey = (node.status || node.initialStatus || "MODÉRÉ") as keyof typeof STATUS_CONFIG;
-              const cfg = STATUS_CONFIG[statusKey] || STATUS_CONFIG.MODÉRÉ;
-              const myVote = votedNodes[node.id];
-              const nodeVotes = node.votes as { still: number; clear: number; lastAgeMin: number | null } | undefined;
-              const speed = node.speedKmh ?? node.speed;
-              const delay = node.delayMin ?? node.delay;
-
-              return (
-                <div
-                  key={node.id}
-                  id={`node-${node.id}`}
-                  className={cn(
-                    "rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-4 sm:p-5 shadow-sm space-y-3 hover:border-slate-300 transition-all flex flex-col justify-between scroll-mt-24",
-                    selectedNodeId === node.id && "ring-2 ring-amber-400 border-amber-400"
-                  )}
-                >
-                  <div className="space-y-2.5">
-                    
-                    {/* Top Row: Name + Badge */}
-                    <div className="flex justify-between items-start gap-2">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-base">{cfg.icon}</span>
-                          <h3 className="font-black text-sm sm:text-base text-slate-900 dark:text-white leading-tight">
-                            {node.name}
-                          </h3>
-                        </div>
-                        <span className="text-[10px] font-semibold text-slate-400 pl-6">
-                          {node.district}
-                        </span>
-                        {node.activeIncidents && node.activeIncidents.length > 0 && (
-                          <div className="pl-6 mt-1 flex items-center gap-1.5">
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-black bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30">
-                              🚨 {node.activeIncidents.length} signalement(s) en direct
-                            </span>
-                          </div>
-                        )}
+      {/* ── PANNEAUX PLEIN ÉCRAN ── */}
+      <FullPanel
+        open={panel !== null}
+        onClose={closePanel}
+        title={panel ? PANEL_META[panel].title : ''}
+        subtitle={panel ? PANEL_META[panel].subtitle : undefined}
+        icon={panel ? PANEL_META[panel].icon : undefined}
+      >
+        {panel === 'route' && (
+          <div className="space-y-3">
+            {isLoadingAnalysis && !activeAnalysis && <RouteScout name={scoutName} />}
+            {activeAnalysis && (
+              <>
+                <RouteStory analysis={activeAnalysis} raining={raining} onClose={closePanel} />
+                <details className="group rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                  <summary className="flex cursor-pointer list-none items-center gap-2 px-3.5 py-3 text-xs font-black uppercase tracking-wider text-slate-500">
+                    <Info className="h-4 w-4" /> Les détails (statut, cause, alternatives)
+                    <ChevronDown className="h-4 w-4 ml-auto transition-transform group-open:rotate-180" />
+                  </summary>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 p-3 pt-0">
+                    <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-1">
+                      <div className="text-[10px] font-bold uppercase text-slate-400">Statut de Fluidité</div>
+                      <div className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
+                        <span>{STATUS_CONFIG[activeAnalysis.status as keyof typeof STATUS_CONFIG]?.icon}</span>
+                        <span>{activeAnalysis.status}</span>
+                        {activeAnalysis.delay > 0 && <span className="text-red-600 text-xs">({activeAnalysis.isLive ? '' : '~'}+{activeAnalysis.delay} min)</span>}
                       </div>
-                      
-                      <div className="text-right shrink-0">
-                        <Badge className={cn("text-white font-black text-[10px] uppercase", cfg.badgeBg)}>
-                          {cfg.label}
-                        </Badge>
-                        <div className="text-[10px] font-bold text-slate-500 mt-0.5">
-                          {typeof delay === 'number' ? `${node.isLive ? '' : '~'}+${delay} min • ${speed} km/h` : typeof speed === 'number' ? `${speed} km/h` : '—'}
-                        </div>
-                      </div>
+                      <SourceChip source={activeAnalysis.source} confidence={activeAnalysis.confidence} />
                     </div>
-
-                    <div className="pl-6"><SourceChip source={node.source} confidence={node.confidence} /></div>
-
-                    {/* Pourquoi ça bloque : causes réelles avec preuve et poids */}
-                    <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-300/40 text-slate-800 dark:text-slate-200 space-y-2">
-                      <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-amber-800 dark:text-amber-300">
-                        <ShieldAlert className="h-3 w-3 text-amber-600" />
-                        <span>Pourquoi ?</span>
+                    <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 space-y-1">
+                      <div className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-400 flex items-center gap-1">
+                        <ShieldAlert className="h-3 w-3" /> {activeAnalysis.cause ? `Signalé il y a ${activeAnalysis.reportAgeMin ?? '?'} min` : "Cause habituelle (non confirmée)"}
                       </div>
-                      {Array.isArray(node.why) && node.why.length > 0 ? (
-                        <ul className="space-y-2">
-                          {node.why.map((w: any, i: number) => (
-                            <li key={i} className="space-y-1">
-                              <div className="flex items-start justify-between gap-2 text-xs">
-                                <span className="font-semibold text-slate-800 dark:text-slate-200">
-                                  {w.label}
-                                  <span className={cn("block text-[10px] font-medium", w.confirmed ? "text-slate-500" : "text-amber-700 dark:text-amber-400")}>{w.evidence}</span>
-                                </span>
-                                <span className="text-[10px] font-bold text-slate-500 tabular-nums">{w.pct}%</span>
-                              </div>
-                              <div className="h-1.5 rounded-full bg-amber-500/15 overflow-hidden">
-                                <div className="h-full rounded-full bg-amber-500" style={{ width: `${w.pct}%` }} />
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="text-xs font-medium leading-relaxed text-slate-600 dark:text-slate-400">
-                          {node.status === 'INCONNU' ? 'Chargement…' : "Rien de signalé ici pour l'instant. Vous êtes sur place ? Dites-le en un tap."}
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Échappatoire : vérifiée en direct quand le carrefour est chargé */}
-                    <div className={cn(
-                      "p-3 rounded-2xl border text-slate-800 dark:text-slate-200 space-y-1",
-                      node.altIsBetter === false ? "bg-amber-500/10 border-amber-300/40" : "bg-emerald-500/10 border-emerald-300/40"
-                    )}>
-                      <div className={cn(
-                        "flex items-center justify-between gap-1.5 text-[10px] font-black uppercase",
-                        node.altIsBetter === false ? "text-amber-800 dark:text-amber-300" : "text-emerald-800 dark:text-emerald-300"
-                      )}>
-                        <span className="inline-flex items-center gap-1.5">
-                          <ShieldCheck className={cn("h-3 w-3", node.altIsBetter === false ? "text-amber-600" : "text-emerald-600")} />
-                          {typeof node.altDelayMin !== 'number'
-                            ? 'Échappatoire habituelle'
-                            : node.altIsBetter ? 'Déviation vérifiée plus rapide' : 'Déviation aussi chargée'}
-                        </span>
-                        {typeof node.altDelayMin === 'number' && (
-                          <span className="text-[9px] font-bold normal-case">
-                            +{node.altDelayMin} min · {node.altSpeedKmh} km/h ({node.altSource === 'google' ? 'en direct' : 'estimé'})
-                          </span>
-                        )}
-                      </div>
-                      <p className={cn("text-xs font-bold leading-relaxed pl-4", node.altIsBetter === false ? "text-amber-800 dark:text-amber-300" : "text-emerald-800 dark:text-emerald-300")}>
-                        {typeof node.altDelayMin === 'number' ? node.altName : node.certifiedAlt}
+                      <p className="text-xs font-semibold text-amber-900 dark:text-amber-200 leading-tight">
+                        {activeAnalysis.cause || activeAnalysis.typicalCause || "Aucun signalement récent sur cet axe."}
                       </p>
                     </div>
-
-                    {/* Lingala Alert */}
-                    <div className="text-[11px] font-bold italic text-primary dark:text-blue-400 pl-1">
-                      🇨🇩 "{node.lingala}"
-                    </div>
-
-                  </div>
-
-                  {/* Bottom Row Actions */}
-                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
-                    
-                    {/* Action 1 : vote 1-tap (sur place) */}
-                    <div className="flex flex-col gap-1 min-w-0">
-                      {myVote ? (
-                        <div className="flex items-center gap-1.5 text-emerald-600 text-xs font-bold">
-                          <CheckCircle2 className="h-4 w-4" />
-                          <span>{myVote === 'still' ? 'Vous : toujours bloqué' : "Vous : c'est dégagé"}</span>
-                        </div>
-                      ) : (
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleVote(node.id, node.name, 'still')}
-                            className="rounded-xl text-[11px] font-black text-red-700 dark:text-red-400 border-red-300 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 gap-1 h-8 px-2.5"
-                          >
-                            <ThumbsDown className="h-3 w-3" />
-                            <span>Toujours bloqué</span>
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleVote(node.id, node.name, 'clear')}
-                            className="rounded-xl text-[11px] font-black text-emerald-700 dark:text-emerald-400 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 gap-1 h-8 px-2.5"
-                          >
-                            <ThumbsUp className="h-3 w-3" />
-                            <span>C'est dégagé</span>
-                          </Button>
-                        </div>
-                      )}
-                      {nodeVotes && (nodeVotes.still + nodeVotes.clear) > 0 && (
-                        <span className="text-[10px] text-slate-500 font-medium">
-                          {nodeVotes.still} bloqué · {nodeVotes.clear} dégagé{nodeVotes.lastAgeMin !== null ? ` · dernier vote il y a ${nodeVotes.lastAgeMin} min` : ''}
-                        </span>
+                    <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 space-y-1">
+                      <div className="text-[10px] font-bold uppercase text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+                        <ShieldCheck className="h-3 w-3" /> Alternative habituelle
+                      </div>
+                      <p className="text-xs font-bold text-emerald-900 dark:text-emerald-200 leading-tight">
+                        {activeAnalysis.typicalAlternative || "Contourner par les voies secondaires."}
+                      </p>
+                      {Array.isArray(activeAnalysis.alternatives) && activeAnalysis.alternatives.length > 0 && (
+                        <ul className="pt-1 space-y-0.5 text-[10px] text-emerald-800 dark:text-emerald-300">
+                          {activeAnalysis.alternatives.map((alt: any, i: number) => (
+                            <li key={i}>Mesuré : {alt.description} · {alt.duration}{typeof alt.delay === 'number' ? ` (+${alt.delay} min)` : ''}</li>
+                          ))}
+                        </ul>
                       )}
                     </div>
-
-                    {/* Action 2: Itinéraire Bis */}
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => handleInspectAxis(node.coords, node.name)}
-                      className="rounded-xl text-xs font-bold gap-1 text-primary hover:bg-primary/10 h-8"
-                    >
-                      <span>Diagnostiquer</span>
-                      <ArrowRight className="h-3 w-3" />
-                    </Button>
-
                   </div>
+                </details>
+              </>
+            )}
+          </div>
+        )}
+
+        {panel === 'trajets' && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {commutes.map((commute) => (
+              <button
+                type="button"
+                key={commute.id}
+                onClick={() => handleInspectAxis(commute.coords, commute.via)}
+                className="text-left rounded-2xl border border-slate-200/80 dark:border-slate-800 hover:border-primary/50 transition-all shadow-sm bg-white dark:bg-slate-900 p-4 space-y-2"
+              >
+                <div className="flex justify-between items-start gap-2">
+                  <span className="font-black text-sm text-slate-900 dark:text-white leading-tight">{commute.title}</span>
+                  <Badge className={cn("text-white font-black text-[10px] shrink-0", commute.badgeColor)}>{commute.delayText || commute.delay}</Badge>
                 </div>
-              );
-            })}
+                <div className="text-[11px] text-slate-500 font-medium flex items-center justify-between gap-2">
+                  <span className="truncate">Via {commute.via}</span>
+                  {commute.distKm && <span className="font-bold shrink-0">{commute.distKm} km · ~{commute.durMin} min</span>}
+                </div>
+                <SourceChip source={commute.source} confidence={commute.confidence} />
+                <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-300/40 flex items-start gap-1.5">
+                  <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                  <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 leading-tight">{commute.escape}</span>
+                </div>
+                <div className="flex items-center justify-end gap-1 text-xs font-black text-primary">Voir le film <ArrowRight className="h-3 w-3" /></div>
+              </button>
+            ))}
           </div>
-        </div>
+        )}
 
-        {/* ── 6. BANNIÈRE E-WALLET & RECHARGE MÉGAS ── */}
-        <div className="rounded-3xl bg-gradient-to-r from-emerald-600 to-teal-700 p-5 sm:p-6 text-white shadow-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <Badge className="bg-white/20 text-white font-black text-[9px] uppercase border-none">
-                Gagnez du Cash
-              </Badge>
-              <span className="text-xs text-emerald-100 font-bold">Portefeuille Citoyen K-Flow</span>
+        {panel === 'radar' && (
+          <div className="space-y-2">
+            {bottlenecks.map(renderNode)}
+            <p className="pt-1 text-center text-[11px] text-slate-500">Vous êtes sur place ? Votez : la carte de tout Kinshasa se met à jour et vous gagnez +25 FC.</p>
+          </div>
+        )}
+
+        {panel === 'telemetrie' && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2.5">
+              <Stat label="Moment" value={globalMetrics ? `${globalMetrics.isPeakHour ? 'Heure de pointe' : 'Heure normale'} (${globalMetrics.kinshasaHour}h)` : '…'} tone="text-emerald-600" />
+              <Stat label="Congestion" value={typeof globalMetrics?.congestionIndex === 'number' ? `${globalMetrics.congestionIndex}%` : '—'} tone="text-amber-600" />
+              <Stat label="Vitesse moyenne" value={typeof globalMetrics?.avgSpeed === 'number' ? `${globalMetrics.avgSpeed} km/h` : '—'} tone="text-sky-600" />
+              <Stat label="Nœuds en direct" value={globalMetrics && typeof globalMetrics.liveCount === 'number' ? `${globalMetrics.liveCount}/${globalMetrics.nodeCount}` : '—'} tone={globalMetrics?.liveCount ? "text-emerald-600" : "text-amber-600"} />
+              <Stat label="Incidents signalés" value={String(globalMetrics?.activeIncidentsCount ?? 0)} tone="text-red-600" />
+              <Stat label="Votes cette heure" value={String(globalMetrics?.votesLastHour ?? 0)} tone="text-sky-600" />
+              {raining && <Stat label="Pluie" value={`${globalMetrics!.weather!.rainMmH.toFixed(1)} mm/h`} tone="text-sky-600" />}
+              {(globalMetrics?.activeEventsCount ?? 0) > 0 && <Stat label="Événements en cours" value={String(globalMetrics!.activeEventsCount)} tone="text-amber-600" />}
             </div>
-            <h3 className="text-xl font-black">Chaque vote sur place met la carte à jour pour tout Kinshasa</h3>
-            <p className="text-xs text-emerald-100 max-w-xl">
-              Retirez vos Francs Congolais instantanément par M-Pesa, Orange Money ou Airtel Money, ou rechargez des mégas internet gratuits !
+            <p className="text-[11px] text-slate-500">
+              Source : {globalMetrics?.telemetrySource || 'Live'}{lastRefreshedAt ? ` · mis à jour à ${lastRefreshedAt}` : ''}. Actualisation automatique toutes les 45 s.
             </p>
+            <PlayerHud profile={profile} />
+            <Button onClick={() => fetchRealtimeTraffic(true)} disabled={isRefreshing} variant="outline" className="w-full h-11 rounded-xl font-bold gap-2">
+              <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} /> Actualiser maintenant
+            </Button>
           </div>
+        )}
+      </FullPanel>
+    </div>
+  );
+}
 
-          <Button asChild size="lg" className="rounded-2xl bg-white hover:bg-slate-100 text-emerald-950 font-black text-xs uppercase tracking-wider px-6 h-12 shadow-lg shrink-0">
-            <Link href="/e-wallet">
-              <span>Ouvrir mon Portefeuille ({walletBalanceCDF.toLocaleString()} FC)</span>
-              <ArrowRight className="h-4 w-4 ml-1.5" />
-            </Link>
-          </Button>
-        </div>
+type Panel = 'route' | 'trajets' | 'radar' | 'telemetrie';
 
+function Tile({ icon, tint, title, value, hint, onClick, href }: {
+  icon: React.ReactNode; tint: string; title: string; value: string; hint?: string; onClick?: () => void; href?: string;
+}) {
+  const inner = (
+    <>
+      <div className={cn("grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br", tint)}>{icon}</div>
+      <div className="min-w-0">
+        <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">{title}</div>
+        <div className="text-sm font-black text-slate-900 dark:text-white truncate">{value}</div>
+        {hint && <div className="text-[10px] text-slate-500 truncate">{hint}</div>}
       </div>
+      <ChevronRight className="absolute right-2.5 top-3 h-4 w-4 text-slate-300" />
+    </>
+  );
+  const cls = "relative flex flex-col gap-2 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-3 text-left shadow-sm hover:border-primary/50 active:scale-[0.98] transition-all";
+  return href
+    ? <Link href={href} className={cls}>{inner}</Link>
+    : <button type="button" onClick={onClick} className={cls}>{inner}</button>;
+}
+
+function Stat({ label, value, tone }: { label: string; value: string; tone: string }) {
+  return (
+    <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-3">
+      <div className="text-[10px] font-bold uppercase text-slate-400">{label}</div>
+      <div className={cn("text-sm font-black", tone)}>{value}</div>
     </div>
   );
 }

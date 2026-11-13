@@ -167,3 +167,7 @@ html, body {
   .kf-pop { opacity: 1; }
   .kf-pop ~ .kf-pop { display: none; }
 }
+
+/* Rangées défilantes sans barre visible (chips de la barre du haut). */
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
