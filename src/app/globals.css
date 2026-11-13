@@ -94,6 +94,10 @@ html, body {
 @keyframes kf-pop { 0% { transform: scale(.4) rotate(-6deg); opacity: 0; } 4% { transform: scale(1.08) rotate(2deg); opacity: 1; } 7%, 28% { transform: scale(1) rotate(0); opacity: 1; } 33%, 100% { transform: scale(.9); opacity: 0; } }
 @keyframes kf-blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(.1); } }
 @keyframes kf-wiggle { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(3deg); } }
+@keyframes kf-leg { 0%, 100% { transform: rotate(14deg); } 50% { transform: rotate(-14deg); } }
+@keyframes kf-wave { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-12deg); } }
+@keyframes kf-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@keyframes kf-ripple { to { stroke-dashoffset: -40; } }
 @keyframes kf-shine { from { background-position: -200% 0; } to { background-position: 200% 0; } }
 
 .kf-spin { transform-box: fill-box; transform-origin: center; animation: kf-spin .55s linear infinite; }
@@ -104,6 +108,11 @@ html, body {
 .kf-beam { animation: kf-beam 1.4s ease-in-out infinite; }
 .kf-blink { transform-box: fill-box; transform-origin: center; animation: kf-blink 4s infinite; }
 .kf-wiggle { transform-box: fill-box; transform-origin: bottom center; animation: kf-wiggle 2.4s ease-in-out infinite; }
+.kf-leg-a, .kf-leg-b { transform-box: fill-box; transform-origin: top center; animation: kf-leg .8s ease-in-out infinite; }
+.kf-leg-b { animation-delay: -.4s; }
+.kf-wave { transform-box: fill-box; transform-origin: left center; animation: kf-wave 1.2s ease-in-out infinite; }
+.kf-marquee { animation: kf-marquee 40s linear infinite; }
+.kf-ripple { animation: kf-ripple 3s linear infinite; }
 .kf-drift { animation: kf-drift 60s linear infinite; }
 .kf-drift-fast { animation: kf-drift 22s linear infinite; }
 .kf-cross { animation: kf-cross 9s linear infinite; }
@@ -134,6 +143,7 @@ html, body {
 
 @media (prefers-reduced-motion: reduce) {
   .kf-spin, .kf-spin-slow, .kf-bob, .kf-bob-slow, .kf-puff, .kf-beam, .kf-blink, .kf-wiggle,
+  .kf-leg-a, .kf-leg-b, .kf-wave, .kf-marquee, .kf-ripple,
   .kf-drift, .kf-drift-fast, .kf-cross, .kf-cross-fast, .kf-pop, .kf-road-dash, .kf-rain, .kf-shine {
     animation: none !important;
   }

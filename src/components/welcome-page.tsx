@@ -5,8 +5,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Activity, Bot, ArrowRight, ShieldCheck, Zap, Monitor, X, MessageCircle, Share2, Wallet } from 'lucide-react';
 import { Button } from './ui/button';
 import React, { useState, useEffect } from 'react';
-import { KinStreetScene } from './kin/street';
-import { EspritDeMort, KinSkyline, WewaRider, YaFlowAvatar } from './kin/illustrations';
+import { TrafficHeroScene } from './kin/traffic-scene';
+import { KinSkyline, YaFlowAvatar } from './kin/illustrations';
+import { Bus207, Car } from './kin/vehicles';
 import { EPISODES, LEXIQUE, RUNS } from '@/lib/kin-slang';
 import { useIsMobile } from '@/hooks/use-mobile';
 
@@ -161,7 +162,7 @@ export default function WelcomePage() {
             <main className="flex-grow">
                 {/* ── Héros : la rue de Kin, en mouvement ── */}
                 <section className="relative">
-                    <KinStreetScene className="h-[38vh] sm:h-[52vh] min-h-[260px] max-h-[600px] w-full" />
+                    <TrafficHeroScene className="h-[44vh] sm:h-[58vh] min-h-[300px] max-h-[640px] w-full" />
                     <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#0B1118] to-transparent" />
                 </section>
 
@@ -175,7 +176,7 @@ export default function WelcomePage() {
                             <span className="text-[#FFD23F]">Toi, tu passes.</span>
                         </motion.h1>
                         <motion.p variants={itemVariants} className="mt-5 max-w-2xl text-base sm:text-lg text-white/70 font-medium leading-relaxed">
-                            Ya Flow, le wewa qui connaît chaque libulu de Kinshasa, te dit où ça roule et où <i>nzela ekangami</i>.
+                            Ya Flow, le chauffeur qui connaît chaque libulu de Kinshasa, te dit où ça roule et où <i>nzela ekangami</i>.
                             Vote les carrefours, signale les bouchons, gagne tes FC et fais gagner ta commune.
                         </motion.p>
 
@@ -238,8 +239,12 @@ export default function WelcomePage() {
                                         <>
                                             <KinSkyline className="absolute inset-x-0 bottom-0 h-full w-full" />
                                             <div className="absolute inset-x-0 bottom-0 h-6 bg-[#2A2F36]" />
-                                            <EspritDeMort className="absolute bottom-1 left-3 w-32" moving={false} />
-                                            <WewaRider className="absolute bottom-0 right-3 w-24" moving={false} />
+                                            <svg viewBox="0 0 640 200" preserveAspectRatio="xMidYMax meet" className="absolute inset-x-0 bottom-0 w-full h-full" aria-hidden="true">
+                                                <Car kind="sedan" body="#FACC15" taxi x={-20} y={196} scale={0.62} lane="none" />
+                                                <Car kind="hatch" body="#2EB6F0" x={150} y={196} scale={0.62} lane="none" />
+                                                <Bus207 x={320} y={196} scale={0.6} lane="none" />
+                                                <Car kind="suv" body="#E5E7EB" x={510} y={196} scale={0.62} lane="none" />
+                                            </svg>
                                             <span className="absolute right-6 top-3 rounded-xl rounded-br-none bg-white px-2 py-1 text-[11px] font-black text-[#0B1622]">Nzela ekangami…</span>
                                         </>
                                     )}
@@ -257,7 +262,9 @@ export default function WelcomePage() {
                                     {i === 2 && (
                                         <div className="absolute inset-0 overflow-hidden">
                                             <div className="absolute inset-x-0 bottom-0 h-8 bg-[#2A2F36]"><div className="absolute inset-x-0 top-3 h-1 kf-road-dash" /></div>
-                                            <WewaRider passenger className="absolute bottom-0 left-1/2 -translate-x-1/2 w-36" />
+                                            <svg viewBox="0 0 300 130" className="absolute bottom-1 left-1/2 -translate-x-1/2 w-44" aria-hidden="true">
+                                                <g className="kf-bob-slow"><Car kind="hatch" body="#2EB6F0" headlights x={10} y={124} scale={0.95} lane="none" /></g>
+                                            </svg>
                                         </div>
                                     )}
                                 </div>

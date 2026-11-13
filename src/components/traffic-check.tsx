@@ -40,7 +40,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { checkTrafficAction, awardWalletContributionAction, getRealtimeCommandDashboardAction, locateAxisAction, getCityForecastAction } from '@/app/actions';
-import LiveCityMap, { levelFromStatus, levelFromDelay, type MapNode } from '@/components/game/live-city-map';
+import { levelFromStatus, levelFromDelay, type MapNode } from '@/components/game/live-city-map';
 import PlayerHud from '@/components/game/player-hud';
 import { CloudRain, CalendarDays } from 'lucide-react';
 import { voteSlot } from '@/lib/kinshasa-time';
@@ -53,6 +53,7 @@ import { useUser, useFirebase, useDoc, useMemoFirebase } from '@/firebase';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { UserProfile } from '@/lib/types';
 import { YaFlowSays } from '@/components/kin/street';
+import KinshasaCityMap, { type CityMapNode } from '@/components/kin/city-map';
 import { MOOD_LINES, moodFromClock, type Mood } from '@/lib/kin-slang';
 
 const STATUS_CONFIG = {
@@ -310,6 +311,24 @@ export default function TrafficCommandDashboard() {
     };
   });
   const forecastKnown = timeOffset > 0 ? mapNodes.filter(n => n.level !== 'none').length : 0;
+
+  // Données enrichies pour la carte illustrée (fiche au toucher, signalements à leur vraie position).
+  const cityNodes: CityMapNode[] = mapNodes.map((n, i) => {
+    const b = bottlenecks[i];
+    const f = timeOffset > 0 ? cityForecast?.nodes?.[b.id]?.[timeOffset - 1] : null;
+    return {
+      ...n,
+      district: b.district,
+      speedKmh: timeOffset === 0 ? b.speedKmh : null,
+      delayMin: timeOffset === 0 ? b.delayMin : (typeof f?.delay === 'number' ? f.delay : null),
+      cause: timeOffset === 0 ? b.cause : null,
+      typicalCause: b.typicalCause,
+      alt: b.certifiedAlt,
+      lingala: timeOffset === 0 && b.status !== 'INCONNU' ? b.lingala : null,
+      source: timeOffset === 0 ? b.source : 'estimate',
+      incidents: timeOffset === 0 ? b.activeIncidents : [],
+    };
+  });
 
   // Humeur de Ya Flow : pluie d'abord, puis la pire situation sur la carte, sinon l'heure.
   const blockedNodes = mapNodes.filter(n => n.level === 'block');
@@ -644,11 +663,13 @@ export default function TrafficCommandDashboard() {
                   : "Pas encore assez d'historique pour prévoir"}
             </span>
           </div>
-          <LiveCityMap
-            nodes={mapNodes}
+          <KinshasaCityMap
+            nodes={cityNodes}
             selectedId={selectedNodeId}
-            onSelect={selectNode}
-            caption="Touchez un carrefour pour savoir pourquoi"
+            onSelect={setSelectedNodeId}
+            onOpenDetails={selectNode}
+            raining={(globalMetrics?.weather?.rainMmH ?? 0) >= 0.5}
+            timeLabel={timeOffset === 0 ? (lastRefreshedAt ? `maj ${lastRefreshedAt}` : undefined) : `prévision +${timeOffset} h`}
           />
         </div>
 

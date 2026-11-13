@@ -17,7 +17,7 @@ import {
 } from '@/lib/game';
 import { DAILY_REWARD_CAP_CDF, REWARD_CDF } from '@/lib/pricing';
 import SpeedSharingToggle from '@/components/game/speed-sharing-toggle';
-import { WewaRider } from '@/components/kin/illustrations';
+import { FlowCarBadge } from '@/components/kin/vehicles';
 import { KinLoader, YaFlowSays } from '@/components/kin/street';
 import { RANK_TAGLINES } from '@/lib/kin-slang';
 
@@ -66,7 +66,7 @@ export default function QuestsPage() {
         {/* Joueur */}
         <section className="relative overflow-hidden rounded-3xl bg-[#0A1A29] text-[#EAF3FA] border border-[#22425C] p-4 sm:p-5 space-y-4">
           <div className="pointer-events-none absolute inset-x-0 top-0 h-1 kf-road-dash opacity-70" />
-          <WewaRider passenger={level >= 3} className="pointer-events-none absolute -right-4 -top-2 w-36 opacity-90 hidden sm:block" />
+          <FlowCarBadge className="pointer-events-none absolute right-2 top-3 w-36 opacity-90 hidden sm:block" />
           <div className="relative flex items-center gap-4 sm:pr-32">
             <div className="grid place-items-center h-16 w-16 shrink-0 rounded-2xl bg-gradient-to-br from-[#2EB6F0] to-[#1A5E8C] text-2xl font-black">{level}</div>
             <div className="min-w-0 flex-1">

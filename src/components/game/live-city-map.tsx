@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 type LatLng = [number, number];
 
 /** Tracés simplifiés des grands axes, rattachés à l'id du nœud qui les mesure. */
-const ROADS: Array<{ id: string; nodeId: string | null; label: string; points: LatLng[] }> = [
+export const ROADS: Array<{ id: string; nodeId: string | null; label: string; points: LatLng[] }> = [
   { id: '30juin', nodeId: 'mandela-30juin', label: 'Bd du 30 Juin', points: [[-4.327, 15.274], [-4.318, 15.287], [-4.312, 15.298], [-4.306, 15.308], [-4.304, 15.318]] },
   { id: 'matadi', nodeId: 'matadi-upn', label: 'Route de Matadi', points: [[-4.327, 15.274], [-4.345, 15.266], [-4.362, 15.262], [-4.380, 15.258], [-4.405, 15.252]] },
   { id: 'bypass', nodeId: 'bypass-triangle', label: 'By-Pass', points: [[-4.380, 15.258], [-4.392, 15.275], [-4.400, 15.295], [-4.410, 15.315]] },

@@ -1,7 +1,7 @@
 /**
  * Voix de Kinshasa Flow : narration, argot kinois et lingala.
  *
- * Le narrateur s'appelle « Ya Flow » — un wewa (moto-taxi) qui connaît chaque libulu de Kin.
+ * Le narrateur s'appelle « Ya Flow » — un chauffeur de Kin qui connaît chaque libulu et chaque bouchon.
  * Il parle comme la rue : français de Kin + lingala. Chaque ligne garde une traduction courte
  * pour que tout le monde suive, même ceux qui débarquent à Kin.
  */
@@ -46,7 +46,7 @@ export const EPISODES: Array<{ num: string; titre: string; texte: string }> = [
   {
     num: '01',
     titre: 'Kin bouge, mais Kin bloque',
-    texte: '6 h 30 à Limete. Ya Flow démarre sa wewa. Devant lui : 3 esprits de mort, un fula-fula en panne et un roulage qui siffle. « Nzela ekangami… encore ! »',
+    texte: '6 h 30 à Limete. Ya Flow démarre sa voiture. Devant lui : 3 esprits de mort, un fula-fula en panne et un roulage qui siffle. « Nzela ekangami… encore ! »',
   },
   {
     num: '02',
@@ -84,7 +84,7 @@ export const MOOD_LINES: Record<Mood, string[]> = {
   ],
   bloque: [
     'Nzela ekangami ! Prends une voie bis, crois-moi.',
-    'Bouchon total. Même la wewa ne passe plus.',
+    'Bouchon total. Même les wewa ne passent plus.',
     'Ça ne bouge plus. Signale-le pour sauver les autres !',
   ],
   pluie: [

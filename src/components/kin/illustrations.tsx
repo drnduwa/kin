@@ -10,6 +10,7 @@
  * Les animations sont des classes CSS « kf-* » (globals.css), coupées si l'usager
  * demande moins de mouvement.
  */
+import type React from 'react';
 import type { Mood } from '@/lib/kin-slang';
 import { cn } from '@/lib/utils';
 
@@ -194,12 +195,12 @@ export function Libulu({ className }: { className?: string }) {
 }
 
 /** Silhouette de Kin : immeubles, Tour de l'Échangeur, palmiers. Pensée pour boucler en largeur. */
-export function KinSkyline({ className, tone = 'dusk' }: { className?: string; tone?: 'dusk' | 'day' }) {
-  const far = tone === 'dusk' ? '#1B2C3F' : '#9CC9E6';
-  const near = tone === 'dusk' ? '#0F1C2B' : '#6FA7CF';
-  const win = tone === 'dusk' ? YELLOW : '#E0F2FE';
+export function KinSkyline({ className, tone = 'dusk', ...svg }: { className?: string; tone?: 'dusk' | 'day' | 'haze' } & Omit<React.SVGProps<SVGSVGElement>, 'tone'>) {
+  const far = tone === 'dusk' ? '#1B2C3F' : tone === 'haze' ? '#7A5A86' : '#9CC9E6';
+  const near = tone === 'dusk' ? '#0F1C2B' : tone === 'haze' ? '#5E4470' : '#6FA7CF';
+  const win = tone === 'day' ? '#E0F2FE' : YELLOW;
   return (
-    <svg viewBox="0 0 800 200" preserveAspectRatio="xMidYMax slice" className={className} aria-hidden="true">
+    <svg viewBox="0 0 800 200" preserveAspectRatio="xMidYMax slice" className={className} aria-hidden="true" {...svg}>
       {/* plan lointain */}
       <path
         fill={far}
