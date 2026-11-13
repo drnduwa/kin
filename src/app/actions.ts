@@ -351,6 +351,10 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
             const statDur = parseInt((route.staticDuration ?? route.duration ?? "0s").replace('s', '')) || 1;
             const ratio = dur / statDur;
             const delay = Math.round(Math.max(0, dur - statDur) / 60);
+            // Pour l'animation du trajet : distance, durée et vitesse réellement mesurées
+            result.distKm = route.distanceMeters ? Math.round(route.distanceMeters / 100) / 10 : null;
+            result.durationMin = Math.max(1, Math.round(dur / 60));
+            result.speedKmh = route.distanceMeters ? Math.max(3, Math.round((route.distanceMeters / 1000) / (dur / 3600))) : null;
 
             // Ajustement des seuils de sensibilité pour Kinshasa (Précision accrue)
             // Un ratio > 1.6 ou un retard de 5 min sur une courte distance indique souvent un blocage

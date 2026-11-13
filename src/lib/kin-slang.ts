@@ -148,3 +148,119 @@ export function moodFromClock(date = new Date()): Mood {
   if ((h >= 6 && h < 9) || (h >= 16 && h < 20)) return 'dense';
   return 'neutre';
 }
+
+// ───────────────────────────── Récit d'un trajet recherché ─────────────────────────────
+
+export type RouteLevel = 'ok' | 'mod' | 'dense' | 'block' | 'none';
+
+export function routeLevel(status?: string | null): RouteLevel {
+  const s = (status || '').toUpperCase();
+  if (s.startsWith('BLOQU')) return 'block';
+  if (s.startsWith('EMBOUTEILL') || s === 'DENSE') return 'dense';
+  if (s.startsWith('MOD')) return 'mod';
+  if (s.startsWith('FLUIDE')) return 'ok';
+  return 'none';
+}
+
+export interface RouteFacts {
+  name: string;
+  status?: string | null;
+  delay?: number | null;
+  speedKmh?: number | null;
+  durationMin?: number | null;
+  isLive?: boolean;
+  cause?: string | null;
+  reportAgeMin?: number | null;
+  typicalCause?: string | null;
+  typicalAlternative?: string | null;
+  alternatives?: Array<{ description?: string; duration?: string; delay?: number | null }>;
+  raining?: boolean;
+}
+
+/** Choix stable selon le nom de la route : la même recherche raconte la même histoire. */
+function pick<T>(arr: T[], key: string, salt = 0): T {
+  let h = salt;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;
+  return arr[Math.abs(h) % arr.length];
+}
+
+const OPENERS: Record<RouteLevel, string[]> = {
+  ok: [
+    'Mbote ndeko ! {r} ezali polele : la route est à toi.',
+    'Bonne nouvelle : sur {r}, ça roule comme un dimanche matin.',
+    'Ndeko, {r} est libre. Même les esprits de mort roulent sagement.',
+  ],
+  mod: [
+    'Ça commence à serrer sur {r}… rien de grave, ndeko.',
+    'Sur {r}, ça avance malembe malembe.',
+    '{r} : ni bouchon, ni autoroute. Kin normale, quoi.',
+  ],
+  dense: [
+    'Aïe ndeko… sur {r}, nzela ekangami moke !',
+    '{r} a chauffé : les 207 font la loi et les wewa se faufilent.',
+    'Ça klaxonne sur {r}. Pin pin ! Patience, mon frère.',
+  ],
+  block: [
+    'Nzela ekangami makasi ! {r} ne bouge presque plus.',
+    'Keba ! {r} est bloquée, même les wewa calent.',
+    'Bouchon total sur {r}. Là, ce n’est plus la route, c’est un parking.',
+  ],
+  none: [
+    'Je n’ai pas encore de mesure pour {r}.',
+    '{r}, je ne la vois pas encore en direct.',
+  ],
+};
+
+const CLOSERS: Record<RouteLevel, string[]> = {
+  ok: ['Tokende mbangu ! Mais malembe aux libulu.', 'Profite, ndeko, avant que les esprits de mort se réveillent.', 'Roule cool, mets un peu de rumba.'],
+  mod: ['Malembe, on arrive quand même.', 'Garde tes distances, pas besoin de klaxonner.', 'Pars maintenant, ça ne va pas s’améliorer.'],
+  dense: ['Sinon, mets de la rumba et respire.', 'Si tu peux attendre, prends d’abord un café.', 'Ne force pas, ndeko : la voie bis est ton amie.'],
+  block: ['Ne force pas : contourne, ou attends que ça se libère.', 'Signale ce que tu vois : tu sauves la matinée de toute la ville.', 'Mokili eza pasi… mais toi, tu as K-Flow.'],
+  none: ['Dis-moi ce que tu vois sur place : je préviens toute la ville !', 'Un vote de ta part et tout Kin saura.'],
+};
+
+/** Récit en 3 ou 4 phrases, construit seulement à partir des données reçues. */
+export function routeStory(f: RouteFacts): { level: RouteLevel; mood: Mood; lines: string[] } {
+  const level = routeLevel(f.status);
+  const r = f.name || 'cette route';
+  const lines: string[] = [pick(OPENERS[level], r).replace('{r}', r)];
+
+  if (level !== 'none') {
+    const est = f.isLive ? 'Mesuré en direct' : 'Estimation selon l’heure';
+    const bits: string[] = [];
+    if (typeof f.speedKmh === 'number') bits.push(`${f.speedKmh} km/h`);
+    if (typeof f.delay === 'number') bits.push(f.delay > 0 ? `+${f.delay} min de retard` : 'pas de retard');
+    if (typeof f.durationMin === 'number') bits.push(`${f.durationMin} min pour ce tronçon`);
+    if (bits.length) lines.push(`${est} : ${bits.join(', ')}.`);
+  }
+
+  if (f.cause) {
+    lines.push(`Un Kinois a signalé${typeof f.reportAgeMin === 'number' ? ` il y a ${f.reportAgeMin} min` : ''} : « ${f.cause} ».`);
+  } else if ((level === 'dense' || level === 'block') && f.typicalCause) {
+    lines.push(`D’habitude ici, c’est : ${f.typicalCause.replace(/\.$/, '')}.`);
+  }
+
+  if (f.raining) lines.push('Et mbula ezali kobeta : les libulu se cachent sous l’eau, keba !');
+
+  if (level === 'dense' || level === 'block' || level === 'mod') {
+    const alt = f.alternatives?.find(a => a.description);
+    if (alt) {
+      lines.push(`Ma voie bis : ${alt.description}${alt.duration ? `, ${alt.duration}` : ''}${typeof alt.delay === 'number' ? ` (+${alt.delay} min mesuré)` : ''}.`);
+    } else if (f.typicalAlternative && level !== 'mod') {
+      lines.push(`Ma voie bis habituelle : ${f.typicalAlternative.replace(/\.$/, '')}.`);
+    }
+  }
+
+  lines.push(pick(CLOSERS[level], r, 7));
+  const mood: Mood = f.raining ? 'pluie' : level === 'block' || level === 'dense' ? 'bloque' : level === 'mod' ? 'dense' : level === 'ok' ? 'fluide' : 'neutre';
+  return { level, mood, lines };
+}
+
+/** Phrases d'attente pendant la reconnaissance d'une route. */
+export const SCOUT_LINES = [
+  'K-Flow part en reconnaissance…',
+  'On interroge les capteurs de la ville…',
+  'On compte les esprits de mort…',
+  'On demande aux roulages…',
+  'On vérifie les voies bis…',
+];

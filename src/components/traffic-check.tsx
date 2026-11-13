@@ -54,6 +54,7 @@ import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { UserProfile } from '@/lib/types';
 import { KFlowSays } from '@/components/kin/street';
 import KinshasaCityMap, { type CityMapNode, type CorridorLive } from '@/components/kin/city-map';
+import { RouteScout, RouteStory } from '@/components/kin/route-story';
 import { MOOD_LINES, moodFromClock, type Mood } from '@/lib/kin-slang';
 
 const STATUS_CONFIG = {
@@ -243,6 +244,7 @@ export default function TrafficCommandDashboard() {
   const [selectedHotspot, setSelectedHotspot] = useState<any>(STRATEGIC_BOTTLENECKS[0]);
   const [activeAnalysis, setActiveAnalysis] = useState<any>(null);
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
+  const [scoutName, setScoutName] = useState<string>('');
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [votedNodes, setVotedNodes] = useState<Record<string, 'still' | 'clear'>>({});
 
@@ -397,6 +399,7 @@ export default function TrafficCommandDashboard() {
   // Lance l'analyse détaillée d'un axe
   const handleInspectAxis = async (coords: { lat: number, lng: number }, name: string) => {
     setIsLoadingAnalysis(true);
+    setScoutName(name);
     setActiveAnalysis(null);
     try {
       const data = await checkTrafficAction({ ...coords, address: name });
@@ -412,6 +415,7 @@ export default function TrafficCommandDashboard() {
   const handleSearch = async () => {
     const q = search.trim();
     if (!q) return;
+    setScoutName(q);
     setIsLoadingAnalysis(true);
     try {
       const loc = await locateAxisAction(q);
@@ -754,34 +758,23 @@ export default function TrafficCommandDashboard() {
           </div>
         </div>
 
-        {/* ── 4. ANALYSE DÉTAILLÉE D'UN AXE SÉLECTIONNÉ (Result Panel) ── */}
+        {/* ── 4. LE FILM DE TA ROUTE : reconnaissance, puis route animée + récit de K-Flow ── */}
+        {isLoadingAnalysis && !activeAnalysis && <RouteScout name={scoutName} />}
         <AnimatePresence>
           {activeAnalysis && (
             <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="bg-white dark:bg-slate-900 rounded-3xl p-5 sm:p-6 border-2 border-primary/30 shadow-xl space-y-4"
+              className="space-y-3"
             >
-              <div className="flex justify-between items-start">
-                <div className="flex items-center gap-3">
-                  <div className="p-3 rounded-2xl bg-primary text-white shadow-md">
-                    <MapPin className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <Badge className="bg-primary/20 text-primary font-black text-[9px] uppercase border-none mb-1">
-                      Diagnostic Express
-                    </Badge>
-                    <h3 className="text-lg font-black text-slate-900 dark:text-white leading-tight">
-                      {activeAnalysis.name}
-                    </h3>
-                  </div>
-                </div>
-                <Button size="icon" variant="ghost" onClick={() => setActiveAnalysis(null)} className="rounded-full">
-                  <X className="h-5 w-5" />
-                </Button>
-              </div>
+              <RouteStory
+                analysis={activeAnalysis}
+                raining={(globalMetrics?.weather?.rainMmH ?? 0) >= 0.5}
+                onClose={() => setActiveAnalysis(null)}
+              />
 
+              <p className="px-1 text-[10px] font-black uppercase tracking-widest text-slate-400">Les détails</p>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {/* 1. Statut & Retard */}
                 <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-1">
@@ -822,15 +815,6 @@ export default function TrafficCommandDashboard() {
                 </div>
               </div>
 
-              {/* Bouton GPS Direct */}
-              <div className="flex gap-2 justify-end pt-1">
-                <Button asChild className="rounded-xl font-bold text-xs gap-1.5 bg-primary text-white">
-                  <Link href="/k-flow-nav">
-                    <Navigation className="h-4 w-4" />
-                    <span>Lancer Navigation GPS</span>
-                  </Link>
-                </Button>
-              </div>
             </motion.div>
           )}
         </AnimatePresence>

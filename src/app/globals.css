@@ -102,6 +102,8 @@ html, body {
 @keyframes kf-wave-flow { to { transform: translateX(36px); } }
 @keyframes kf-rays { to { transform: translate(-50%, -50%) rotate(360deg); } }
 @keyframes kf-fly { from { transform: translate(-10%, 0); } to { transform: translate(110vw, -6vh); } }
+@keyframes kf-scan { from { left: -35%; } to { left: 100%; } }
+@keyframes kf-dash-run { to { stroke-dashoffset: -52; } }
 @keyframes kf-shine { from { background-position: -200% 0; } to { background-position: 200% 0; } }
 
 .kf-spin { transform-box: fill-box; transform-origin: center; animation: kf-spin .55s linear infinite; }
@@ -125,6 +127,8 @@ html, body {
 .kf-wave-flow { animation: kf-wave-flow 1.6s linear infinite; }
 .kf-rays { animation: kf-rays 80s linear infinite; }
 .kf-fly { animation: kf-fly 26s linear infinite; }
+.kf-scan { animation: kf-scan 1.4s ease-in-out infinite; }
+.kf-dash-run { animation: kf-dash-run .9s linear infinite; }
 .kf-drift { animation: kf-drift 60s linear infinite; }
 .kf-drift-fast { animation: kf-drift 22s linear infinite; }
 .kf-cross { animation: kf-cross 9s linear infinite; }
@@ -155,6 +159,7 @@ html, body {
 
 @media (prefers-reduced-motion: reduce) {
   .kf-spin, .kf-spin-slow, .kf-bob, .kf-bob-slow, .kf-puff, .kf-beam, .kf-blink, .kf-wiggle,
+  .kf-scan, .kf-dash-run,
   .kf-leg-a, .kf-leg-b, .kf-wave, .kf-marquee, .kf-ripple, .kf-wave-flow, .kf-rays, .kf-fly,
   .kf-drift, .kf-drift-fast, .kf-cross, .kf-cross-fast, .kf-pop, .kf-road-dash, .kf-rain, .kf-shine {
     animation: none !important;
