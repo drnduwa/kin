@@ -815,7 +815,7 @@ export default function TrafficCommandDashboard() {
                   {Array.isArray(activeAnalysis.alternatives) && activeAnalysis.alternatives.length > 0 && (
                     <ul className="pt-1 space-y-0.5 text-[10px] text-emerald-800 dark:text-emerald-300">
                       {activeAnalysis.alternatives.map((alt: any, i: number) => (
-                        <li key={i}>Mesuré : {alt.description} · {alt.duration}</li>
+                        <li key={i}>Mesuré : {alt.description} · {alt.duration}{typeof alt.delay === 'number' ? ` (+${alt.delay} min)` : ''}</li>
                       ))}
                     </ul>
                   )}
@@ -933,14 +933,29 @@ export default function TrafficCommandDashboard() {
                       )}
                     </div>
 
-                    {/* Escape Route */}
-                    <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-300/40 text-slate-800 dark:text-slate-200 space-y-1">
-                      <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-emerald-800 dark:text-emerald-300">
-                        <ShieldCheck className="h-3 w-3 text-emerald-600" />
-                        <span>Échappatoire habituelle</span>
+                    {/* Échappatoire : vérifiée en direct quand le carrefour est chargé */}
+                    <div className={cn(
+                      "p-3 rounded-2xl border text-slate-800 dark:text-slate-200 space-y-1",
+                      node.altIsBetter === false ? "bg-amber-500/10 border-amber-300/40" : "bg-emerald-500/10 border-emerald-300/40"
+                    )}>
+                      <div className={cn(
+                        "flex items-center justify-between gap-1.5 text-[10px] font-black uppercase",
+                        node.altIsBetter === false ? "text-amber-800 dark:text-amber-300" : "text-emerald-800 dark:text-emerald-300"
+                      )}>
+                        <span className="inline-flex items-center gap-1.5">
+                          <ShieldCheck className={cn("h-3 w-3", node.altIsBetter === false ? "text-amber-600" : "text-emerald-600")} />
+                          {typeof node.altDelayMin !== 'number'
+                            ? 'Échappatoire habituelle'
+                            : node.altIsBetter ? 'Déviation vérifiée plus rapide' : 'Déviation aussi chargée'}
+                        </span>
+                        {typeof node.altDelayMin === 'number' && (
+                          <span className="text-[9px] font-bold normal-case">
+                            +{node.altDelayMin} min · {node.altSpeedKmh} km/h ({node.altSource === 'google' ? 'en direct' : 'estimé'})
+                          </span>
+                        )}
                       </div>
-                      <p className="text-xs font-bold leading-relaxed pl-4 text-emerald-800 dark:text-emerald-300">
-                        {node.certifiedAlt}
+                      <p className={cn("text-xs font-bold leading-relaxed pl-4", node.altIsBetter === false ? "text-amber-800 dark:text-amber-300" : "text-emerald-800 dark:text-emerald-300")}>
+                        {typeof node.altDelayMin === 'number' ? node.altName : node.certifiedAlt}
                       </p>
                     </div>
 

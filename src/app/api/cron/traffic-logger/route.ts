@@ -35,7 +35,9 @@ export async function GET(request: Request) {
         dayOfWeek,
         hourOfDay,
         minuteOfHour,
-        tz: 'Africa/Kinshasa'
+        // les deux noms de champ : lus par les deux versions du code
+        tz: 'Africa/Kinshasa',
+        timezone: 'Africa/Kinshasa',
       });
     });
 

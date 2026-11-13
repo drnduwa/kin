@@ -215,6 +215,33 @@ function buildWhy(node: any, ctx: { weather: { rainMmH: number; rainProbNext2h: 
         .map(i => ({ ...i, pct: Math.round((i.weight / total) * 100) }));
 }
 
+/** Contrôles / roulages signalés ces 3 dernières heures (repris de main, cache 45 s). */
+let policeCache: { data: any[]; expires: number } | null = null;
+async function loadRecentPoliceReports(): Promise<any[]> {
+    const now = Date.now();
+    if (policeCache && policeCache.expires > now) return policeCache.data;
+    let data: any[] = [];
+    try {
+        const firestore = getServerFirestore();
+        const since = Timestamp.fromDate(new Date(now - 3 * 3600 * 1000));
+        const snap = await getDocs(query(collection(firestore, 'police_reports'), where('timestamp', '>=', since), orderBy('timestamp', 'desc'), limit(20)));
+        data = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+    } catch (err) {
+        console.warn('[Police] lecture impossible:', err);
+    }
+    policeCache = { data, expires: now + 45 * 1000 };
+    return data;
+}
+
+/** Contrôle signalé près d'un point (coordonnées si présentes, sinon nom de lieu). */
+function matchPolice(reports: any[], coords: { lat: number; lng: number }, words: string[]) {
+    const norm = (t: any) => String(t || '').toLowerCase();
+    return reports.find(r =>
+        (r.coords && Math.abs(Number(r.coords.lat) - coords.lat) < 0.015 && Math.abs(Number(r.coords.lng) - coords.lng) < 0.015) ||
+        words.some(w => w.length >= 4 && (norm(r.location).includes(w) || norm(r.note).includes(w)))
+    ) ?? null;
+}
+
 export async function checkTrafficAction(input: { lat: number, lng: number, address?: string }) {
     const cacheKey = `${input.lat.toFixed(4)}-${input.lng.toFixed(4)}`;
     const now = Date.now();
@@ -402,10 +429,23 @@ export async function checkTrafficAction(input: { lat: number, lng: number, addr
             result.typicalAlternative = certifiedAlternative;
 
             if (data.routes.length > 1) {
-                result.alternatives = data.routes.slice(1, 3).map((r: any) => ({
-                    description: r.description || "Itinéraire bis",
-                    duration: Math.round(parseInt((r.duration || "0s").replace('s', '')) / 60) + " min"
-                }));
+                // Itinéraires bis renvoyés par Google : on donne aussi leur retard mesuré (repris de main)
+                result.alternatives = data.routes.slice(1, 3).map((r: any) => {
+                    const aDur = parseInt((r.duration || "0s").replace('s', '')) || 0;
+                    const aStat = parseInt((r.staticDuration || r.duration || "0s").replace('s', '')) || aDur;
+                    return {
+                        description: r.description || "Itinéraire bis",
+                        duration: Math.round(aDur / 60) + " min",
+                        delay: isEstimate ? null : Math.max(0, Math.round((aDur - aStat) / 60)),
+                    };
+                });
+            }
+
+            // Contrôle / roulage signalé tout près : cause observée si aucun signalement de voirie
+            const police = matchPolice(await loadRecentPoliceReports(), input, (input.address || '').toLowerCase().split(/[\s,()/➔-]+/));
+            if (police && !localReport) {
+                result.cause = `Contrôle / roulage signalé : ${police.note || police.location || 'sur cet axe'}`;
+                result.typicalCause = null;
             }
         }
 
@@ -1500,7 +1540,7 @@ async function fetchSegmentTelemetry(
           const delayMin = Math.max(0, Math.round((liveSec - baseSec) / 60));
           const speedKmh = Math.max(4, Math.round(distKm / (liveSec / 3600)));
           const ratio = baseSec > 0 ? liveSec / baseSec : 1;
-          return { distKm, durationMin, delayMin, speedKmh, ratio, source: "google" as const };
+          return { distKm, durationMin, delayMin, speedKmh, ratio, source: "google" as const, isEstimated: false };
         }
       }
     } catch (err) {
@@ -1521,7 +1561,7 @@ async function fetchSegmentTelemetry(
   const delayMin = Math.max(0, durationMin - Math.round(baseDurationMin));
   const speedKmh = Math.max(4, Math.round(distKm / (durationMin / 60)));
   // Pas de mesure de trafic : durée « route vide » OSRM × facteur horaire. C'est une estimation.
-  return { distKm, durationMin, delayMin, speedKmh, ratio: multiplier, source: "estimate" as const };
+  return { distKm, durationMin, delayMin, speedKmh, ratio: multiplier, source: "estimate" as const, isEstimated: true };
 }
 
 /**
@@ -1776,6 +1816,32 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
     }
   }
 
+  // Détours vérifiés en direct (repris de main) : mesurés seulement quand le carrefour est chargé,
+  // pour ne pas doubler les appels Google quand tout roule.
+  const DETOURS: Record<string, { name: string; o: { lat: number; lng: number }; d: { lat: number; lng: number } }> = {
+    "limete-echangeur": { name: "Av. des Poids Lourds via Kingabwa", o: { lat: -4.3150, lng: 15.3400 }, d: { lat: -4.3350, lng: 15.3550 } },
+    "kintambo-magasin": { name: "Av. du Tourisme (berges)", o: { lat: -4.3310, lng: 15.2420 }, d: { lat: -4.3250, lng: 15.2650 } },
+    "matadi-upn": { name: "Avenue de la Montagne", o: { lat: -4.3450, lng: 15.2650 }, d: { lat: -4.3300, lng: 15.2600 } },
+    "lumumba-pascal": { name: "Av. Ndjoku (Masina)", o: { lat: -4.3750, lng: 15.4100 }, d: { lat: -4.3900, lng: 15.4300 } },
+    "bypass-triangle": { name: "Avenue Elengesa", o: { lat: -4.3520, lng: 15.3200 }, d: { lat: -4.3600, lng: 15.3350 } },
+    "mandela-30juin": { name: "Avenue de la Justice", o: { lat: -4.3030, lng: 15.2940 }, d: { lat: -4.3070, lng: 15.3020 } },
+    "kalamu-victoire": { name: "Avenue de l'Enseignement", o: { lat: -4.3400, lng: 15.3050 }, d: { lat: -4.3480, lng: 15.3150 } },
+    "universite-pontgabu": { name: "Avenue Kapela", o: { lat: -4.3500, lng: 15.3100 }, d: { lat: -4.3650, lng: 15.3150 } },
+  };
+  await Promise.all((bottlenecks as any[]).map(async b => {
+    const det = DETOURS[b.id];
+    if (!det || !(b.status === "BLOQUÉ" || b.status === "EMBOUTEILLAGE")) return;
+    try {
+      const alt = await fetchSegmentTelemetry(det.o, det.d, 1.6, isPeakHour);
+      const mainDelay = typeof b.delayMin === "number" ? b.delayMin : Infinity;
+      b.altName = det.name;
+      b.altDelayMin = alt.delayMin;
+      b.altSpeedKmh = alt.speedKmh;
+      b.altSource = alt.source;
+      b.altIsBetter = alt.delayMin < mainDelay && (typeof b.speedKmh !== "number" || alt.speedKmh > b.speedKmh);
+    } catch { /* détour non vérifié : on garde la voie bis habituelle */ }
+  }));
+
   // Panneau « Pourquoi » : signalements, événements, votes, GPS et météo réels
   const [weather, trafficEvents] = await Promise.all([loadKinshasaWeather(), loadActiveTrafficEvents()]);
   for (const b of bottlenecks as any[]) b.why = buildWhy(b, { weather, events: trafficEvents });
@@ -1820,6 +1886,13 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
     }
   ];
 
+  const COMMUTE_DETOURS: Record<string, { o: { lat: number; lng: number }; d: { lat: number; lng: number } }> = {
+    "upn-gombe": { o: { lat: -4.3310, lng: 15.2420 }, d: { lat: -4.3042, lng: 15.3150 } },
+    "masina-gombe": { o: { lat: -4.3150, lng: 15.3400 }, d: { lat: -4.3042, lng: 15.3150 } },
+    "lemba-gombe": { o: { lat: -4.3520, lng: 15.3200 }, d: { lat: -4.3042, lng: 15.3150 } },
+    "kintambo-gombe": { o: { lat: -4.3220, lng: 15.2700 }, d: { lat: -4.3042, lng: 15.3150 } },
+  };
+
   const commutes = await Promise.all(COMMUTE_NODES.map(async (c) => {
     try {
       const seg = await fetchSegmentTelemetry(c.origin, c.dest, c.rushMult, isPeakHour);
@@ -1838,6 +1911,19 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
         badgeColor = "bg-amber-500";
       }
 
+      // Échappatoire vérifiée en direct quand le trajet est chargé (repris de main)
+      let escape = c.escape;
+      const det = COMMUTE_DETOURS[c.id];
+      if (det && (status === "BLOQUÉ" || status === "EMBOUTEILLAGE")) {
+        try {
+          const alt = await fetchSegmentTelemetry(det.o, det.d, Math.max(1.2, c.rushMult * 0.7), isPeakHour);
+          const tag = alt.source === "google" ? "mesuré en direct" : "estimation";
+          escape = alt.durationMin < seg.durationMin
+            ? `${c.escape} — vérifié plus rapide : ${alt.durationMin} min au lieu de ${seg.durationMin} (${tag})`
+            : `${c.escape} — aussi chargé : ${alt.durationMin} min (${tag})`;
+        } catch { /* on garde l'échappatoire habituelle */ }
+      }
+
       return {
         id: c.id,
         title: c.title,
@@ -1852,7 +1938,7 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
         source: seg.source,
         isLive,
         confidence: confidenceScore(isLive, status === "BLOQUÉ" || status === "EMBOUTEILLAGE", 0),
-        escape: c.escape
+        escape
       };
     } catch {
       return {
