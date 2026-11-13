@@ -1,10 +1,10 @@
 /**
  * Illustrations originales de Kinshasa Flow (SVG pur, aucune image externe).
  *
- * - WewaRider      : Ya Flow, notre wewa, sur sa moto (avec ou sans passagère en pagne wax)
+ * - WewaRider      : K-Flow, notre wewa, sur sa moto (avec ou sans passagère en pagne wax)
  * - EspritDeMort   : le minibus jaune et bleu de Kin
  * - KinSkyline     : la silhouette de Kin, avec la Tour de l'Échangeur et les palmiers
- * - YaFlowAvatar   : tête du narrateur (casque jaune), avec humeur
+ * - KFlowAvatar   : tête du narrateur (casque jaune), avec humeur
  * - Libulu         : le nid-de-poule, avec sa flaque
  *
  * Les animations sont des classes CSS « kf-* » (globals.css), coupées si l'usager
@@ -45,12 +45,12 @@ function Wheel({ cx, cy, r = 19, spin = true }: { cx: number; cy: number; r?: nu
   );
 }
 
-/** Ya Flow sur sa wewa. Regarde vers la droite. */
+/** K-Flow sur sa wewa. Regarde vers la droite. */
 export function WewaRider({
   className,
   passenger = false,
   moving = true,
-  title = 'Ya Flow, le wewa de Kinshasa Flow, sur sa moto',
+  title = 'K-Flow, le wewa de Kinshasa Flow, sur sa moto',
 }: {
   className?: string;
   passenger?: boolean;
@@ -118,7 +118,7 @@ export function WewaRider({
           </g>
         )}
 
-        {/* Ya Flow */}
+        {/* K-Flow */}
         <g>
           {/* jambe (jean) */}
           <path d="M94 74 L114 88 L110 104" fill="none" stroke="#1E3A5F" strokeWidth={10} strokeLinecap="round" strokeLinejoin="round" />
@@ -243,7 +243,7 @@ export function KinSkyline({ className, tone = 'dusk', ...svg }: { className?: s
 }
 
 /** Tête du narrateur. L'humeur change le visage. */
-export function YaFlowAvatar({ mood = 'neutre', className }: { mood?: Mood; className?: string }) {
+export function KFlowAvatar({ mood = 'neutre', className }: { mood?: Mood; className?: string }) {
   const mouth =
     mood === 'bloque' ? 'M20 34 Q24 31 28 34'
       : mood === 'dense' || mood === 'pluie' ? 'M20 33 L28 33'

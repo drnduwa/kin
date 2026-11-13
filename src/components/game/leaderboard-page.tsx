@@ -12,7 +12,7 @@ import { useUser, useFirebase, useCollection, useDoc, useMemoFirebase } from '@/
 import { cn } from '@/lib/utils';
 import { kinshasaWeekId, weekEndsAt } from '@/lib/game';
 import { rivalTaunt } from '@/lib/kin-slang';
-import { YaFlowSays } from '@/components/kin/street';
+import { KFlowSays } from '@/components/kin/street';
 
 function useCountdown(target: Date) {
   const [now, setNow] = useState(() => Date.now());
@@ -71,7 +71,7 @@ export default function LeaderboardPage() {
           ) : (
             <p className="text-sm text-[#8EA8BD]">La semaine vient de commencer : aucune commune n'a encore de points. Votez sur un carrefour pour ouvrir le score de la vôtre.</p>
           )}
-          <YaFlowSays
+          <KFlowSays
             mood={leader && profile?.commune && leader.commune !== profile.commune ? 'dense' : 'fluide'}
             label="Radio trottoir"
             lines={[rivalTaunt(leader?.commune, profile?.commune), `Fin de la semaine dans ${remaining}. Malembe te — mbangu !`]}

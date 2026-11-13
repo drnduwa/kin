@@ -1,25 +1,25 @@
 'use client';
 
 /**
- * Composants « rue » réutilisables : la bulle du narrateur Ya Flow et l'écran de chargement.
+ * Composants « rue » réutilisables : la bulle du narrateur K-Flow et l'écran de chargement.
  */
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { LOADING_LINES, MOOD_LINES, pickLine, type Mood } from '@/lib/kin-slang';
-import { YaFlowAvatar } from './illustrations';
+import { KFlowAvatar } from './illustrations';
 import { FlowCarBadge } from './vehicles';
 
 /**
- * Ya Flow parle. Touchez la bulle pour entendre la phrase suivante.
+ * K-Flow parle. Touchez la bulle pour entendre la phrase suivante.
  * `lines` remplace les phrases par défaut de l'humeur.
  */
-export function YaFlowSays({
+export function KFlowSays({
   mood = 'neutre',
   lines,
   className,
   tone = 'dark',
-  label = 'Ya Flow',
+  label = 'K-Flow',
 }: {
   mood?: Mood;
   lines?: string[];
@@ -41,7 +41,7 @@ export function YaFlowSays({
       className={cn('group flex w-full items-start gap-2.5 text-left', className)}
       aria-label={`${label} dit : ${line}. Touchez pour la suite.`}
     >
-      <YaFlowAvatar mood={mood} className="h-10 w-10 kf-bob-slow" />
+      <KFlowAvatar mood={mood} className="h-10 w-10 kf-bob-slow" />
       <div
         className={cn(
           'relative min-w-0 flex-1 rounded-2xl rounded-tl-sm px-3 py-2 text-sm leading-snug shadow-sm',

@@ -8,7 +8,7 @@ import React, { useState, useEffect } from 'react';
 import { TrafficHeroScene } from './kin/traffic-scene';
 import { FlowIntro } from './kin/intro';
 import { FlowLogo } from './kin/brand';
-import { KinSkyline, YaFlowAvatar } from './kin/illustrations';
+import { KinSkyline, KFlowAvatar } from './kin/illustrations';
 import { Bus207, Car } from './kin/vehicles';
 import { EPISODES, LEXIQUE, RUNS } from '@/lib/kin-slang';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -132,7 +132,7 @@ export default function WelcomePage() {
                             <AppIconSmall className="w-12 h-12 shrink-0 ring-4 ring-primary/20" />
                             <div className="flex-1 space-y-1">
                                 <p className="font-black text-sm tracking-tight">Installer Kinshasa Flow</p>
-                                <p className="text-[10px] text-slate-400 font-medium leading-tight">Ya Flow dans ta poche, sans passer par le navigateur.</p>
+                                <p className="text-[10px] text-slate-400 font-medium leading-tight">K-Flow dans ta poche, sans passer par le navigateur.</p>
                             </div>
                             <Button onClick={() => handleInstallClick('mobile')} size="sm" className="rounded-xl h-10 px-4 font-black text-xs uppercase bg-[#FFD23F] text-[#0B1118] hover:bg-[#FFD23F]/90">
                                 Installer
@@ -190,7 +190,7 @@ export default function WelcomePage() {
                             <span className="text-[#FFD23F]">Toi, tu passes.</span>
                         </motion.h1>
                         <motion.p variants={itemVariants} className="mt-5 max-w-2xl text-base sm:text-lg text-white/70 font-medium leading-relaxed">
-                            Ya Flow, le chauffeur qui connaît chaque libulu de Kinshasa, te dit où ça roule et où <i>nzela ekangami</i>.
+                            K-Flow, le chauffeur qui connaît chaque libulu de Kinshasa, te dit où ça roule et où <i>nzela ekangami</i>.
                             Vote les carrefours, signale les bouchons, gagne tes FC et fais gagner ta commune.
                         </motion.p>
 
@@ -235,9 +235,9 @@ export default function WelcomePage() {
                     </motion.div>
                 </section>
 
-                {/* ── L'histoire de Ya Flow ── */}
+                {/* ── L'histoire de K-Flow ── */}
                 <section id="histoire" className="container mx-auto px-4 pt-20 scroll-mt-20">
-                    <SectionTitle kicker="Lisolo · l'histoire" title="Comment Ya Flow a sauvé ses matinées" />
+                    <SectionTitle kicker="Lisolo · l'histoire" title="Comment K-Flow a sauvé ses matinées" />
                     <div className="mt-8 grid gap-4 md:grid-cols-3">
                         {EPISODES.map((ep, i) => (
                             <motion.article
@@ -267,7 +267,7 @@ export default function WelcomePage() {
                                             <div className="flex -space-x-3">
                                                 {(['fluide', 'dense', 'neutre', 'bloque', 'fluide'] as const).map((m, k) => (
                                                     <span key={k} className="kf-bob-slow" style={{ animationDelay: `${k * 0.2}s` }}>
-                                                        <YaFlowAvatar mood={m} className="h-14 w-14 ring-4 ring-[#7A2E5C] rounded-full" />
+                                                        <KFlowAvatar mood={m} className="h-14 w-14 ring-4 ring-[#7A2E5C] rounded-full" />
                                                     </span>
                                                 ))}
                                             </div>
@@ -293,7 +293,7 @@ export default function WelcomePage() {
 
                 {/* ── Les runs ── */}
                 <section id="runs" className="container mx-auto px-4 pt-20 scroll-mt-20">
-                    <SectionTitle kicker="Le grand tour" title="Les runs que Ya Flow surveille" />
+                    <SectionTitle kicker="Le grand tour" title="Les runs que K-Flow surveille" />
                     <ol className="mt-8 grid gap-2 sm:grid-cols-2">
                         {RUNS.map((r, i) => (
                             <motion.li
@@ -332,7 +332,7 @@ export default function WelcomePage() {
                     variants={{ hidden: { opacity: 1 }, visible: { transition: { staggerChildren: 0.1 } } }}
                     className="container mx-auto px-4 pt-20"
                 >
-                    <SectionTitle kicker="Garage · tes outils" title="Ce que Ya Flow te donne" />
+                    <SectionTitle kicker="Garage · tes outils" title="Ce que K-Flow te donne" />
                     <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                         <FeatureCard
                             icon={<Activity size={28} className="text-white" />}
@@ -364,7 +364,7 @@ export default function WelcomePage() {
                 {/* ── Lexique ── */}
                 <section id="lexique" className="container mx-auto px-4 pt-20 pb-20 scroll-mt-20">
                     <SectionTitle kicker="Pale lokola mwana Kin" title="Parle comme un Kinois" />
-                    <p className="mt-3 text-sm text-white/60 max-w-xl">Ya Flow parle la langue de la rue. Touche un mot pour voir ce qu&apos;il veut dire.</p>
+                    <p className="mt-3 text-sm text-white/60 max-w-xl">K-Flow parle la langue de la rue. Touche un mot pour voir ce qu&apos;il veut dire.</p>
                     <ul className="mt-6 flex flex-wrap gap-2">
                         {LEXIQUE.map(w => <LexiqueChip key={w.mot} mot={w.mot} sens={w.sens} />)}
                     </ul>

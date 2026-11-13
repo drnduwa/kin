@@ -52,7 +52,7 @@ import { CONFIG } from '@/lib/config';
 import { useUser, useFirebase, useDoc, useMemoFirebase } from '@/firebase';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { UserProfile } from '@/lib/types';
-import { YaFlowSays } from '@/components/kin/street';
+import { KFlowSays } from '@/components/kin/street';
 import KinshasaCityMap, { type CityMapNode, type CorridorLive } from '@/components/kin/city-map';
 import { MOOD_LINES, moodFromClock, type Mood } from '@/lib/kin-slang';
 
@@ -331,7 +331,7 @@ export default function TrafficCommandDashboard() {
     };
   });
 
-  // Humeur de Ya Flow : pluie d'abord, puis la pire situation sur la carte, sinon l'heure.
+  // Humeur de K-Flow : pluie d'abord, puis la pire situation sur la carte, sinon l'heure.
   const blockedNodes = mapNodes.filter(n => n.level === 'block');
   const denseNodes = mapNodes.filter(n => n.level === 'dense' || n.level === 'mod');
   const okNodes = mapNodes.filter(n => n.level === 'ok');
@@ -629,7 +629,7 @@ export default function TrafficCommandDashboard() {
 
         {/* ── 1b. JOUEUR + CARTE VIVANTE ── */}
         <PlayerHud profile={profile} />
-        <YaFlowSays mood={narratorMood} lines={narratorLines} tone="light" />
+        <KFlowSays mood={narratorMood} lines={narratorLines} tone="light" />
 
         <div className="rounded-3xl bg-[#0A1A29] text-[#EAF3FA] p-3 sm:p-4 border border-[#22425C] shadow-xl space-y-3">
           <div className="flex flex-wrap items-center gap-2">

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Flame, Trophy, ChevronRight } from 'lucide-react';
 import { levelProgress, rankFor, kinshasaDayKey } from '@/lib/game';
 import { RANK_TAGLINES } from '@/lib/kin-slang';
-import { YaFlowAvatar } from '@/components/kin/illustrations';
+import { KFlowAvatar } from '@/components/kin/illustrations';
 
 export default function PlayerHud({ profile }: { profile: any }) {
   if (!profile) return null;
@@ -23,7 +23,7 @@ export default function PlayerHud({ profile }: { profile: any }) {
       className="flex items-center gap-3 rounded-2xl bg-[#0A1A29] text-[#EAF3FA] border border-[#22425C] px-3 py-2.5 hover:border-[#2EB6F0] transition-colors"
     >
       <div className="relative h-11 w-11 shrink-0">
-        <YaFlowAvatar mood={streak > 0 ? 'fluide' : 'neutre'} className="h-11 w-11" />
+        <KFlowAvatar mood={streak > 0 ? 'fluide' : 'neutre'} className="h-11 w-11" />
         <span className="absolute -bottom-1 -right-1 grid place-items-center min-w-5 h-5 px-1 rounded-full bg-[#FFD23F] text-[#0A1A29] text-[10px] font-black ring-2 ring-[#0A1A29]">{level}</span>
       </div>
       <div className="min-w-0 flex-1">

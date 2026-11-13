@@ -18,7 +18,7 @@ import {
 import { DAILY_REWARD_CAP_CDF, REWARD_CDF } from '@/lib/pricing';
 import SpeedSharingToggle from '@/components/game/speed-sharing-toggle';
 import { FlowCarBadge } from '@/components/kin/vehicles';
-import { KinLoader, YaFlowSays } from '@/components/kin/street';
+import { KinLoader, KFlowSays } from '@/components/kin/street';
 import { RANK_TAGLINES } from '@/lib/kin-slang';
 
 export default function QuestsPage() {
@@ -81,7 +81,7 @@ export default function QuestsPage() {
               </div>
             </div>
           </div>
-          <YaFlowSays
+          <KFlowSays
             lines={[
               completed.length === DAILY_MISSIONS.length
                 ? 'Toutes les missions du jour sont faites. Mokonzi ! Reviens lobi.'

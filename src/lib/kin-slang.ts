@@ -1,7 +1,7 @@
 /**
  * Voix de Kinshasa Flow : narration, argot kinois et lingala.
  *
- * Le narrateur s'appelle « Ya Flow » — un chauffeur de Kin qui connaît chaque libulu et chaque bouchon.
+ * Le narrateur s'appelle « K-Flow » — un chauffeur de Kin qui connaît chaque libulu et chaque bouchon.
  * Il parle comme la rue : français de Kin + lingala. Chaque ligne garde une traduction courte
  * pour que tout le monde suive, même ceux qui débarquent à Kin.
  */
@@ -41,17 +41,17 @@ export const RUNS: Array<{ id: string; nom: string; commune: string; reputation:
   { id: 'aeroport', nom: 'Route de l’Aéroport', commune: "N'djili", reputation: 'Le run des pressés. Libulu en embuscade.', danger: 2 },
 ];
 
-/** Le récit : l'histoire de Ya Flow, racontée sur l'accueil. */
+/** Le récit : l'histoire de K-Flow, racontée sur l'accueil. */
 export const EPISODES: Array<{ num: string; titre: string; texte: string }> = [
   {
     num: '01',
     titre: 'Kin bouge, mais Kin bloque',
-    texte: '6 h 30 à Limete. Ya Flow démarre sa voiture. Devant lui : 3 esprits de mort, un fula-fula en panne et un roulage qui siffle. « Nzela ekangami… encore ! »',
+    texte: '6 h 30 à Limete. K-Flow démarre sa voiture. Devant lui : 3 esprits de mort, un fula-fula en panne et un roulage qui siffle. « Nzela ekangami… encore ! »',
   },
   {
     num: '02',
     titre: 'Les yeux de la ville',
-    texte: 'Ya Flow comprend : chaque Kinois voit un bout de route. Si on met nos yeux ensemble, on voit tout Kin. Un vote, un signalement — et la ville entière sait.',
+    texte: 'K-Flow comprend : chaque Kinois voit un bout de route. Si on met nos yeux ensemble, on voit tout Kin. Un vote, un signalement — et la ville entière sait.',
   },
   {
     num: '03',
@@ -70,7 +70,7 @@ export const RANK_TAGLINES: Record<string, string> = {
   'Mokonzi ya Nzela': 'Mokonzi ya nzela — la route t’appartient.',
 };
 
-/** Ce que Ya Flow dit selon l'état de la route. */
+/** Ce que K-Flow dit selon l'état de la route. */
 export const MOOD_LINES: Record<Mood, string[]> = {
   fluide: [
     'Nzela ezali polele ! Tokende mbangu.',
@@ -104,7 +104,7 @@ export const MOOD_LINES: Record<Mood, string[]> = {
 
 /** Lignes d'attente (chargements). */
 export const LOADING_LINES = [
-  'Ya Flow démarre la moto…',
+  'K-Flow démarre la voiture…',
   'On demande aux roulages…',
   'On évite les libulu…',
   'On compte les esprits de mort…',
