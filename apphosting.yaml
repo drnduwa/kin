@@ -8,3 +8,9 @@ runConfig:
 env:
   - variable: CRON_SECRET
     secret: CRON_SECRET
+  # Clé publique Web Push (paire « Current pair » de Firebase Cloud Messaging). Publique : pas un secret.
+  - variable: NEXT_PUBLIC_VAPID_KEY
+    value: BHEaJ7Dy5w0tUBMdj_7N5ei9UJp4G6gz2gz1JAcMXHiFIII2HwAqW2uPtRvK2OBY_Xu9L6iZ8-1CtJALAmYph28
+    availability:
+      - BUILD
+      - RUNTIME
