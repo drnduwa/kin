@@ -1,13 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import Image from 'next/image';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Activity, Bot, Megaphone, ArrowRight, ShieldCheck, Zap, Monitor, X, Smartphone as PhoneIcon, MessagesSquare, MessageCircle, Share2, Wallet, TrafficCone } from 'lucide-react';
+import { Activity, Bot, ArrowRight, ShieldCheck, Zap, Monitor, X, MessageCircle, Share2, Wallet } from 'lucide-react';
 import { Button } from './ui/button';
-import { Logo } from './logo';
 import React, { useState, useEffect } from 'react';
-import { Badge } from './ui/badge';
+import { KinStreetScene } from './kin/street';
+import { EspritDeMort, KinSkyline, WewaRider, YaFlowAvatar } from './kin/illustrations';
+import { EPISODES, LEXIQUE, RUNS } from '@/lib/kin-slang';
 import { useIsMobile } from '@/hooks/use-mobile';
 
 const containerVariants = {
@@ -33,13 +33,13 @@ const FeatureCard = ({ icon, title, description, color }: { icon: React.ReactNod
             scale: 1.02,
             transition: { duration: 0.3, ease: "backOut" } 
         }}
-        className="group bg-card/60 backdrop-blur-xl p-8 rounded-3xl border border-primary/10 shadow-xl hover:shadow-2xl hover:bg-card/80 transition-all cursor-default"
+        className="group bg-[#121B26] p-6 rounded-3xl border border-white/10 hover:border-[#FFD23F]/50 transition-colors cursor-default"
     >
-        <div className={`inline-flex p-4 rounded-xl mb-6 transition-transform group-hover:scale-110 group-hover:rotate-3 shadow-lg ${color}`}>
+        <div className={`inline-flex p-3 rounded-xl mb-5 transition-transform group-hover:scale-110 group-hover:rotate-3 shadow-lg ${color}`}>
             {icon}
         </div>
-        <h3 className="text-xl font-bold mb-3 text-foreground group-hover:text-primary transition-colors">{title}</h3>
-        <p className="text-muted-foreground leading-relaxed text-sm">{description}</p>
+        <h3 className="text-lg font-black mb-2 text-[#F3F0E8] group-hover:text-[#FFD23F] transition-colors">{title}</h3>
+        <p className="text-white/65 leading-relaxed text-sm">{description}</p>
     </motion.div>
 );
 
@@ -57,8 +57,6 @@ export default function WelcomePage() {
     const [installPrompt, setInstallPrompt] = useState<any>(null);
     const [showInstallSuggestion, setShowInstallSuggestion] = useState(false);
     
-    const echangeurBgUrl = "https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&q=80&w=1200";
-    const heroImageUrl = "https://images.unsplash.com/photo-1449824913935-59a10b8d2000?auto=format&fit=crop&q=80&w=1600";
     const whatsappChannelUrl = "https://whatsapp.com/channel/0029Vb7S97n7oQhlHe5k1k1f";
     const whatsappBusinessUrl = "https://wa.me/243892293178";
 
@@ -100,10 +98,10 @@ export default function WelcomePage() {
     };
 
     return (
-        <div className="relative min-h-screen w-full text-foreground overflow-x-hidden flex flex-col">
+        <div className="relative min-h-screen w-full overflow-x-hidden flex flex-col bg-[#0B1118] text-[#F3F0E8]">
             <AnimatePresence>
                 {showInstallSuggestion && (
-                    <motion.div 
+                    <motion.div
                         initial={{ y: 100, opacity: 0 }}
                         animate={{ y: 0, opacity: 1 }}
                         exit={{ y: 100, opacity: 0 }}
@@ -111,16 +109,16 @@ export default function WelcomePage() {
                     >
                         <div className="bg-slate-900 text-white p-5 rounded-[2rem] shadow-2xl border border-white/10 flex items-center gap-4 relative overflow-hidden">
                             <div className="absolute top-0 right-0 p-2">
-                                <button onClick={() => setShowInstallSuggestion(false)} className="text-white/40 hover:text-white p-1">
+                                <button onClick={() => setShowInstallSuggestion(false)} className="text-white/40 hover:text-white p-1" aria-label="Fermer">
                                     <X size={16} />
                                 </button>
                             </div>
                             <AppIconSmall className="w-12 h-12 shrink-0 ring-4 ring-primary/20" />
                             <div className="flex-1 space-y-1">
                                 <p className="font-black text-sm tracking-tight">Installer Kinshasa Flow</p>
-                                <p className="text-[10px] text-slate-400 font-medium leading-tight">Accédez au trafic plus vite sans passer par le navigateur.</p>
+                                <p className="text-[10px] text-slate-400 font-medium leading-tight">Ya Flow dans ta poche, sans passer par le navigateur.</p>
                             </div>
-                            <Button onClick={() => handleInstallClick('mobile')} size="sm" className="rounded-xl h-10 px-4 font-black text-xs uppercase bg-primary hover:bg-primary/90">
+                            <Button onClick={() => handleInstallClick('mobile')} size="sm" className="rounded-xl h-10 px-4 font-black text-xs uppercase bg-[#FFD23F] text-[#0B1118] hover:bg-[#FFD23F]/90">
                                 Installer
                             </Button>
                         </div>
@@ -128,215 +126,279 @@ export default function WelcomePage() {
                 )}
             </AnimatePresence>
 
-            <div className="fixed inset-0 -z-50 bg-background"></div>
-            <div className="fixed inset-0 -z-40 bg-[radial-gradient(hsl(var(--primary))_0.5px,transparent_0.5px)] [background-size:24px_24px] opacity-[0.12]"></div>
-            
-            <div className="fixed top-[-5%] left-[-5%] -z-30 h-[600px] w-[600px] rounded-full bg-primary/15 blur-[120px] pointer-events-none"></div>
-            <div className="fixed top-[30%] right-[-10%] -z-30 h-[500px] w-[500px] rounded-full bg-accent/10 blur-[130px] pointer-events-none"></div>
-
-            <div className="fixed inset-0 -z-20 pointer-events-none overflow-hidden">
-                <Image
-                    src={echangeurBgUrl}
-                    alt=""
-                    fill
-                    className="object-cover object-center"
-                    style={{ opacity: 0.15 }}
-                    priority
-                />
-            </div>
-
+            {/* ── En-tête façon tableau de bord de course ── */}
             <motion.header
                 initial={{ opacity: 0, y: -20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5 }}
-                className="container mx-auto p-6 flex justify-between items-center z-50"
+                className="sticky top-0 z-50 border-b border-white/10 bg-[#0B1118]/90 backdrop-blur"
             >
-                <Logo className="h-10 w-auto text-primary" />
-                <div className="flex items-center gap-4">
-                    <Link href="/login">
-                        <Button variant="ghost" className="hidden sm:inline-flex hover:bg-primary/10 font-bold">
-                            Se connecter
-                        </Button>
+                <div className="container mx-auto px-4 py-3 flex justify-between items-center gap-3">
+                    <Link href="/" className="flex items-center gap-2 min-w-0">
+                        <span className="grid place-items-center h-9 w-9 shrink-0 rounded-lg bg-[#FFD23F] text-[#0B1118] font-display text-lg leading-none">KF</span>
+                        <span className="font-display text-lg sm:text-xl tracking-wide uppercase truncate">Kinshasa Flow<span className="text-[#FFD23F]">.</span></span>
                     </Link>
-                    <Link href="/signup">
-                        <Button className="shadow-lg shadow-primary/20 font-bold px-6">
-                            Commencer
-                        </Button>
-                    </Link>
+                    <nav className="hidden md:flex items-center gap-6 text-xs font-bold uppercase tracking-widest text-white/60">
+                        <a href="#histoire" className="hover:text-[#FFD23F]">L&apos;histoire</a>
+                        <a href="#runs" className="hover:text-[#FFD23F]">Les runs</a>
+                        <a href="#lexique" className="hover:text-[#FFD23F]">Lexique</a>
+                    </nav>
+                    <div className="flex items-center gap-2 shrink-0">
+                        <Link href="/login">
+                            <Button variant="ghost" className="hidden sm:inline-flex text-white hover:bg-white/10 hover:text-white font-bold">
+                                Se connecter
+                            </Button>
+                        </Link>
+                        <Link href="/signup">
+                            <Button className="font-black uppercase bg-[#FFD23F] text-[#0B1118] hover:bg-[#FFE27A]">
+                                Kota
+                            </Button>
+                        </Link>
+                    </div>
                 </div>
             </motion.header>
 
-            <main className="container mx-auto px-4 py-8 md:py-16 text-center flex-grow flex flex-col items-center justify-center gap-12 relative z-10">
-                 <motion.div
-                    variants={containerVariants}
-                    initial="hidden"
-                    animate="visible"
-                    className="max-w-4xl"
-                >
-                    <motion.div variants={itemVariants} className="flex justify-center mb-6">
-                        <Badge variant="outline" className="px-4 py-1.5 border-primary/30 bg-primary/10 text-primary text-sm font-semibold rounded-full animate-bounce shadow-sm">
-                            <Zap className="w-3 h-3 mr-2 fill-current" />
-                            Votre copilote intelligent sur les routes de Kinshasa
-                        </Badge>
-                    </motion.div>
+            <main className="flex-grow">
+                {/* ── Héros : la rue de Kin, en mouvement ── */}
+                <section className="relative">
+                    <KinStreetScene className="h-[38vh] sm:h-[52vh] min-h-[260px] max-h-[600px] w-full" />
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#0B1118] to-transparent" />
+                </section>
 
-                    <motion.h1 variants={itemVariants} className="text-5xl md:text-8xl font-black tracking-tighter text-foreground mb-8 leading-[1.1]">
-                        Naviguez <span className="text-primary bg-clip-text text-transparent bg-gradient-to-r from-primary to-blue-600">Kinshasa</span><br /> 
-                        <span className="relative inline-block">
-                            sans stress.
-                            <svg className="absolute -bottom-2 left-0 w-full" viewBox="0 0 338 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M1 10C56.3333 3.66667 188.6 -5.2 337 10" stroke="hsl(var(--accent))" strokeWidth="6" strokeLinecap="round"/>
-                            </svg>
-                        </span>
-                    </motion.h1>
+                <section className="container mx-auto px-4 pt-6 relative z-10">
+                    <motion.div variants={containerVariants} initial="hidden" animate="visible" className="max-w-4xl">
+                        <motion.p variants={itemVariants} className="inline-flex items-center gap-2 rounded-full bg-[#FFD23F]/15 border border-[#FFD23F]/40 px-3 py-1 text-[11px] font-black uppercase tracking-widest text-[#FFD23F]">
+                            <Zap className="w-3 h-3 fill-current" /> Mbote ndeko · Le trafic de Kin en direct
+                        </motion.p>
+                        <motion.h1 variants={itemVariants} className="mt-4 font-display uppercase text-6xl sm:text-7xl md:text-8xl leading-[0.9] tracking-wide text-[#F3F0E8]">
+                            Kin bouge.<br />
+                            <span className="text-[#FFD23F]">Toi, tu passes.</span>
+                        </motion.h1>
+                        <motion.p variants={itemVariants} className="mt-5 max-w-2xl text-base sm:text-lg text-white/70 font-medium leading-relaxed">
+                            Ya Flow, le wewa qui connaît chaque libulu de Kinshasa, te dit où ça roule et où <i>nzela ekangami</i>.
+                            Vote les carrefours, signale les bouchons, gagne tes FC et fais gagner ta commune.
+                        </motion.p>
 
-                    <motion.p variants={itemVariants} className="max-w-2xl mx-auto text-xl md:text-2xl text-muted-foreground mb-12 font-medium leading-relaxed">
-                        Évitez les bouchons et échangez en direct avec la communauté. Le futur de la mobilité urbaine est ici.
-                    </motion.p>
-
-                    <motion.div variants={itemVariants} className="flex flex-col sm:flex-row justify-center gap-4">
-                        <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-                            <Link href="/verifier-trafic">
-                                <Button size="lg" className="w-full text-lg py-7 px-8 rounded-2xl shadow-2xl shadow-primary/30 group font-black gap-3 bg-primary hover:bg-primary/90 text-white">
-                                    <TrafficCone className="w-6 h-6" />
-                                    Vérifier le Trafic
-                                    <ArrowRight className="ml-1 w-5 h-5 transition-transform group-hover:translate-x-1" />
-                                </Button>
-                            </Link>
-                        </motion.div>
-
-                        <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-                            <Link href="/e-wallet">
-                                <Button size="lg" className="w-full text-lg py-7 px-8 rounded-2xl shadow-2xl shadow-emerald-500/20 group font-black gap-3 bg-emerald-600 hover:bg-emerald-500 text-white">
-                                    <Wallet className="w-6 h-6" />
-                                    E-Wallet & Gains (+CASH)
-                                </Button>
-                            </Link>
-                        </motion.div>
-                        
-                        <div className="flex flex-col gap-2">
-                            <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-                                <Button asChild size="lg" variant="outline" className="w-full text-sm py-5 px-6 rounded-2xl border-emerald-500/40 text-emerald-700 hover:bg-emerald-50 font-bold gap-2">
-                                    <a href={whatsappChannelUrl} target="_blank" rel="noopener noreferrer">
-                                        <Share2 className="w-4 h-4 text-emerald-600" />
-                                        Canal WhatsApp
-                                    </a>
-                                </Button>
+                        <motion.div variants={itemVariants} className="mt-8 flex flex-col sm:flex-row gap-3">
+                            <motion.div whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}>
+                                <Link href="/verifier-trafic" className="relative overflow-hidden flex items-center justify-between gap-6 rounded-2xl bg-[#FFD23F] text-[#0B1118] px-6 py-4 shadow-[0_10px_40px_-10px_rgba(255,210,63,.7)]">
+                                    <span className="absolute inset-0 kf-shine pointer-events-none" />
+                                    <span className="relative">
+                                        <span className="block font-display uppercase text-3xl leading-none tracking-wide">Tokende !</span>
+                                        <span className="block text-[11px] font-black uppercase tracking-widest opacity-70">Voir le trafic maintenant</span>
+                                    </span>
+                                    <ArrowRight className="relative w-7 h-7" />
+                                </Link>
                             </motion.div>
-                        </div>
-                    </motion.div>
-                </motion.div>
+                            <motion.div whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}>
+                                <Link href="/e-wallet" className="flex h-full items-center gap-3 rounded-2xl border border-emerald-400/40 bg-emerald-500/10 px-5 py-4 text-emerald-200 hover:bg-emerald-500/20">
+                                    <Wallet className="w-6 h-6" />
+                                    <span>
+                                        <span className="block font-black">Mbongo na tshombo</span>
+                                        <span className="block text-[11px] opacity-80">Tes gains en FC · M-Pesa, Orange, Airtel</span>
+                                    </span>
+                                </Link>
+                            </motion.div>
+                            <a href={whatsappChannelUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 rounded-2xl border border-white/15 px-5 py-4 text-sm font-bold text-white/80 hover:bg-white/5">
+                                <Share2 className="w-4 h-4" /> Canal WhatsApp
+                            </a>
+                        </motion.div>
 
-                <div className="w-full max-w-7xl px-4 flex flex-col items-center gap-12 group">
-                    <motion.div 
-                        initial={{ opacity: 0, scale: 0.95, y: 40 }}
-                        whileInView={{ opacity: 1, scale: 1, y: 0 }}
-                        viewport={{ once: true, amount: 0.3 }}
-                        whileHover={{ scale: 1.05 }}
-                        whileTap={{ scale: 0.98 }}
-                        transition={{ 
-                            type: "spring", 
-                            stiffness: 260, 
-                            damping: 20,
-                            opacity: { duration: 0.8 },
-                            y: { duration: 0.8 }
-                        }}
-                        className="relative w-full cursor-pointer"
-                    >
-                        <div className="absolute -inset-4 bg-gradient-to-r from-primary via-accent to-blue-400 rounded-[2.5rem] blur-2xl opacity-15 group-hover:opacity-30 transition duration-1000"></div>
-                        <div className="relative aspect-[4/3] md:aspect-video lg:aspect-[21/9] rounded-[2.5rem] overflow-hidden shadow-2xl border-4 border-white/50 ring-1 ring-white/20 bg-white">
-                            <Image 
-                                src={heroImageUrl} 
-                                alt="Kinshasa Flow Dashboard" 
-                                fill 
-                                className="object-cover transition-transform duration-700 group-hover:scale-105"
-                                priority
-                            />
-                        </div>
+                        <motion.dl variants={itemVariants} className="mt-10 grid grid-cols-3 max-w-xl divide-x divide-white/10 border-y border-white/10">
+                            {[
+                                { v: `${RUNS.length}`, l: 'runs suivis' },
+                                { v: '24', l: 'communes en bataille' },
+                                { v: '+FC', l: 'à chaque signalement' },
+                            ].map(s => (
+                                <div key={s.l} className="py-3 px-3 first:pl-0">
+                                    <dt className="sr-only">{s.l}</dt>
+                                    <dd className="font-display text-3xl text-[#FFD23F] leading-none">{s.v}</dd>
+                                    <dd className="mt-1 text-[11px] uppercase tracking-wider text-white/50 font-bold">{s.l}</dd>
+                                </div>
+                            ))}
+                        </motion.dl>
                     </motion.div>
-                    
-                    <motion.div 
-                        initial={{ opacity: 0, x: -20 }}
-                        whileInView={{ opacity: 1, x: 0 }}
-                        viewport={{ once: true }}
-                        transition={{ delay: 0.5, duration: 0.6 }}
-                        className="text-center md:text-left md:self-start bg-white/60 backdrop-blur-xl p-6 md:p-8 rounded-2xl border border-white/50 shadow-sm md:ml-10 z-20 relative"
-                    >
-                        <p className="text-[10px] md:text-xs font-bold uppercase tracking-widest text-primary mb-1">Ville de Kinshasa</p>
-                        <h4 className="text-lg md:text-2xl font-bold flex items-center justify-center md:justify-start gap-2">
-                            <Monitor className="w-4 h-4 md:w-6 md:h-6 text-primary animate-pulse"/> 
-                            Logiciel disponible sur PC & Mac
-                        </h4>
-                    </motion.div>
-                </div>
+                </section>
+
+                {/* ── L'histoire de Ya Flow ── */}
+                <section id="histoire" className="container mx-auto px-4 pt-20 scroll-mt-20">
+                    <SectionTitle kicker="Lisolo · l'histoire" title="Comment Ya Flow a sauvé ses matinées" />
+                    <div className="mt-8 grid gap-4 md:grid-cols-3">
+                        {EPISODES.map((ep, i) => (
+                            <motion.article
+                                key={ep.num}
+                                initial={{ opacity: 0, y: 30 }}
+                                whileInView={{ opacity: 1, y: 0 }}
+                                viewport={{ once: true, amount: 0.3 }}
+                                transition={{ delay: i * 0.12, duration: 0.5 }}
+                                className="relative overflow-hidden rounded-3xl border border-white/10 bg-[#121B26] p-5"
+                            >
+                                <div className="h-32 -mx-5 -mt-5 mb-4 relative overflow-hidden bg-gradient-to-b from-[#1A1240] to-[#B4436C]">
+                                    {i === 0 && (
+                                        <>
+                                            <KinSkyline className="absolute inset-x-0 bottom-0 h-full w-full" />
+                                            <div className="absolute inset-x-0 bottom-0 h-6 bg-[#2A2F36]" />
+                                            <EspritDeMort className="absolute bottom-1 left-3 w-32" moving={false} />
+                                            <WewaRider className="absolute bottom-0 right-3 w-24" moving={false} />
+                                            <span className="absolute right-6 top-3 rounded-xl rounded-br-none bg-white px-2 py-1 text-[11px] font-black text-[#0B1622]">Nzela ekangami…</span>
+                                        </>
+                                    )}
+                                    {i === 1 && (
+                                        <div className="absolute inset-0 grid place-items-center">
+                                            <div className="flex -space-x-3">
+                                                {(['fluide', 'dense', 'neutre', 'bloque', 'fluide'] as const).map((m, k) => (
+                                                    <span key={k} className="kf-bob-slow" style={{ animationDelay: `${k * 0.2}s` }}>
+                                                        <YaFlowAvatar mood={m} className="h-14 w-14 ring-4 ring-[#7A2E5C] rounded-full" />
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                    {i === 2 && (
+                                        <div className="absolute inset-0 overflow-hidden">
+                                            <div className="absolute inset-x-0 bottom-0 h-8 bg-[#2A2F36]"><div className="absolute inset-x-0 top-3 h-1 kf-road-dash" /></div>
+                                            <WewaRider passenger className="absolute bottom-0 left-1/2 -translate-x-1/2 w-36" />
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="absolute right-3 top-32 font-display text-7xl text-white/5 select-none" aria-hidden="true">{ep.num}</div>
+                                <p className="text-[11px] font-black uppercase tracking-widest text-[#FFD23F]">Épisode {ep.num}</p>
+                                <h3 className="mt-1 font-display uppercase text-2xl tracking-wide text-[#F3F0E8]">{ep.titre}</h3>
+                                <p className="mt-2 text-sm leading-relaxed text-white/70">{ep.texte}</p>
+                            </motion.article>
+                        ))}
+                    </div>
+                </section>
+
+                {/* ── Les runs ── */}
+                <section id="runs" className="container mx-auto px-4 pt-20 scroll-mt-20">
+                    <SectionTitle kicker="Le grand tour" title="Les runs que Ya Flow surveille" />
+                    <ol className="mt-8 grid gap-2 sm:grid-cols-2">
+                        {RUNS.map((r, i) => (
+                            <motion.li
+                                key={r.id}
+                                initial={{ opacity: 0, x: -16 }}
+                                whileInView={{ opacity: 1, x: 0 }}
+                                viewport={{ once: true }}
+                                transition={{ delay: i * 0.05 }}
+                            >
+                                <Link href="/verifier-trafic" className="group flex items-center gap-4 rounded-2xl border border-white/10 bg-[#121B26] px-4 py-3 hover:border-[#FFD23F]/60 transition-colors">
+                                    <span className="font-display text-2xl text-[#FFD23F] w-8 tabular-nums">{String(i + 1).padStart(2, '0')}</span>
+                                    <span className="min-w-0 flex-1">
+                                        <span className="flex items-center justify-between gap-2">
+                                            <span className="font-black truncate">{r.nom}</span>
+                                            <span className="flex gap-0.5 shrink-0" role="img" aria-label={`Difficulté ${r.danger} sur 3`}>
+                                                {[1, 2, 3].map(d => (
+                                                    <span key={d} className={`h-2 w-4 rounded-sm ${d <= r.danger ? (r.danger === 3 ? 'bg-red-500' : 'bg-[#FF7A45]') : 'bg-white/10'}`} />
+                                                ))}
+                                            </span>
+                                        </span>
+                                        <span className="block text-[11px] uppercase tracking-wider text-white/40 font-bold">{r.commune}</span>
+                                        <span className="block text-xs text-white/65 mt-0.5">{r.reputation}</span>
+                                    </span>
+                                    <ArrowRight className="h-4 w-4 shrink-0 text-white/30 group-hover:text-[#FFD23F] group-hover:translate-x-1 transition-all" />
+                                </Link>
+                            </motion.li>
+                        ))}
+                    </ol>
+                </section>
+
+                {/* ── Ce que tu gagnes ── */}
+                <motion.section
+                    initial="hidden"
+                    whileInView="visible"
+                    viewport={{ once: true, amount: 0.1 }}
+                    variants={{ hidden: { opacity: 1 }, visible: { transition: { staggerChildren: 0.1 } } }}
+                    className="container mx-auto px-4 pt-20"
+                >
+                    <SectionTitle kicker="Garage · tes outils" title="Ce que Ya Flow te donne" />
+                    <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <FeatureCard
+                            icon={<Activity size={28} className="text-white" />}
+                            title="Trafic en direct"
+                            description="Les Kinois votent chaque carrefour : fluide, dense ou nzela ekangami."
+                            color="bg-red-500"
+                        />
+                        <FeatureCard
+                            icon={<ShieldCheck size={28} className="text-white" />}
+                            title="Keba ! Alertes & voies bis"
+                            description="Accident, roulage, libulu, mbula : on te prévient et on te donne le détour."
+                            color="bg-[#2EB6F0]"
+                        />
+                        <FeatureCard
+                            icon={<Wallet size={28} className="text-white" />}
+                            title="Mbongo pour tes yeux"
+                            description="Signale un bouchon, gagne des Francs Congolais, retire sur ton tshombo."
+                            color="bg-emerald-600"
+                        />
+                        <FeatureCard
+                            icon={<Bot size={28} className="text-[#0B1118]" />}
+                            title="Assistant vocal"
+                            description="Il te répond en français et en lingala, même quand tu as les mains sur le guidon."
+                            color="bg-[#FFD23F]"
+                        />
+                    </div>
+                </motion.section>
+
+                {/* ── Lexique ── */}
+                <section id="lexique" className="container mx-auto px-4 pt-20 pb-20 scroll-mt-20">
+                    <SectionTitle kicker="Pale lokola mwana Kin" title="Parle comme un Kinois" />
+                    <p className="mt-3 text-sm text-white/60 max-w-xl">Ya Flow parle la langue de la rue. Touche un mot pour voir ce qu&apos;il veut dire.</p>
+                    <ul className="mt-6 flex flex-wrap gap-2">
+                        {LEXIQUE.map(w => <LexiqueChip key={w.mot} mot={w.mot} sens={w.sens} />)}
+                    </ul>
+                </section>
             </main>
 
-            <motion.section 
-                initial="hidden"
-                whileInView="visible"
-                viewport={{ once: true, amount: 0.1 }}
-                variants={{ 
-                    hidden: { opacity: 1 }, 
-                    visible: { transition: { staggerChildren: 0.1 } } 
-                }}
-                className="container mx-auto px-4 py-24 z-10"
-            >
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-                    <FeatureCard
-                        icon={<Activity size={32} className="text-white" />}
-                        title="Trafic en Temps Réel"
-                        description="Vivez l'info trafic en direct grâce aux rapports communautaires vérifiés."
-                        color="bg-red-500 shadow-red-200"
-                    />
-                    <FeatureCard
-                        icon={<ShieldCheck size={32} className="text-white" />}
-                        title="Alertes Sécurité & Voies Bis"
-                        description="Soyez prévenu des blocages, pannes et des avenues de délestage sécurisées."
-                        color="bg-primary shadow-blue-200"
-                    />
-                    <FeatureCard
-                        icon={<Wallet size={32} className="text-white" />}
-                        title="E-Wallet & Gains Cash"
-                        description="Signalez un bouchon, gagnez des Francs Congolais et retirez via M-Pesa, Orange ou Airtel."
-                        color="bg-emerald-600 shadow-emerald-200"
-                    />
-                    <FeatureCard
-                        icon={<Bot size={32} className="text-white" />}
-                        title="Assistant IA Vocal"
-                        description="L'IA qui vous répond et vous guide oralement en Français et en Lingala."
-                        color="bg-accent shadow-yellow-200"
-                    />
-                </div>
-            </motion.section>
-            
-            <motion.footer 
-                initial={{ opacity: 0 }}
-                whileInView={{ opacity: 1 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.5 }}
-                className="text-center p-12 border-t border-primary/10 bg-white/80 backdrop-blur-md z-20 mt-auto"
-            >
-                <div className="flex flex-col items-center gap-6">
-                    <Logo className="h-8 w-auto text-muted-foreground opacity-60" />
-                    <div className="flex flex-wrap justify-center gap-x-8 gap-y-4 text-sm font-medium text-muted-foreground">
-                        <Link href="/privacy" className="hover:text-primary transition-colors flex items-center gap-2">
+            <footer className="border-t border-white/10 bg-[#080C11] p-10 text-center">
+                <div className="flex flex-col items-center gap-5">
+                    <span className="font-display uppercase text-2xl tracking-wide">Kinshasa Flow<span className="text-[#FFD23F]">.</span></span>
+                    <div className="flex flex-wrap justify-center gap-x-8 gap-y-3 text-sm font-medium text-white/60">
+                        <Link href="/privacy" className="hover:text-[#FFD23F] transition-colors flex items-center gap-2">
                             <ShieldCheck className="h-4 w-4" />
                             Confidentialité & CGU
                         </Link>
-                        <a href={whatsappBusinessUrl} target="_blank" rel="noopener noreferrer" className="hover:text-primary transition-colors flex items-center gap-2 text-emerald-600 font-bold">
+                        <a href={whatsappBusinessUrl} target="_blank" rel="noopener noreferrer" className="hover:text-[#FFD23F] transition-colors flex items-center gap-2 text-emerald-400 font-bold">
                             <MessageCircle className="h-4 w-4" />
                             Support WhatsApp
                         </a>
-                        <Link href="/contact" className="hover:text-primary transition-colors">Contact</Link>
+                        <Link href="/contact" className="hover:text-[#FFD23F] transition-colors">Contact</Link>
+                        <span className="inline-flex items-center gap-2"><Monitor className="h-4 w-4" />Aussi sur PC & Mac</span>
                     </div>
-                    <p className="text-xs text-muted-foreground max-w-sm font-medium">
-                        Simplifier la vie des Kinois, un kilomètre à la fois.
+                    <p className="text-xs text-white/50 max-w-sm font-medium">
+                        Simplifier la vie des Kinois, un kilomètre à la fois. Malembe, mais on arrive.
                     </p>
-                    <a href="http://www.swaziapplilab.co.za" target="_blank" rel="noopener noreferrer" className="text-[10px] font-semibold hover:text-primary transition-colors uppercase tracking-widest opacity-50">
+                    <a href="http://www.swaziapplilab.co.za" target="_blank" rel="noopener noreferrer" className="text-[10px] font-semibold text-white/40 hover:text-[#FFD23F] transition-colors uppercase tracking-widest">
                         &copy; {new Date().getFullYear()} Swazi Appli Lab sarl. Tous droits réservés.
                     </a>
                 </div>
-            </motion.footer>
+            </footer>
         </div>
+    );
+}
+
+function SectionTitle({ kicker, title }: { kicker: string; title: string }) {
+    return (
+        <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.25em] text-[#FFD23F]">{kicker}</p>
+            <h2 className="mt-2 font-display uppercase text-4xl sm:text-5xl tracking-wide text-[#F3F0E8] leading-none">{title}</h2>
+        </div>
+    );
+}
+
+function LexiqueChip({ mot, sens }: { mot: string; sens: string }) {
+    const [open, setOpen] = useState(false);
+    return (
+        <li>
+            <button
+                type="button"
+                onClick={() => setOpen(o => !o)}
+                aria-expanded={open}
+                className={`rounded-full border px-4 py-2 text-sm transition-colors ${open ? 'bg-[#FFD23F] text-[#0B1118] border-[#FFD23F]' : 'border-white/15 bg-white/5 text-white hover:border-[#FFD23F]/60'}`}
+            >
+                <span className="font-black">{mot}</span>
+                {open && <span className="ml-2 font-medium">= {sens}</span>}
+            </button>
+        </li>
     );
 }

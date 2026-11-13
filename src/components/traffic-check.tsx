@@ -52,6 +52,8 @@ import { CONFIG } from '@/lib/config';
 import { useUser, useFirebase, useDoc, useMemoFirebase } from '@/firebase';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { UserProfile } from '@/lib/types';
+import { YaFlowSays } from '@/components/kin/street';
+import { MOOD_LINES, moodFromClock, type Mood } from '@/lib/kin-slang';
 
 const STATUS_CONFIG = {
   BLOQUÉ: { color: "bg-purple-600 text-white", border: "border-purple-300", icon: "🔴", label: "Bloqué", badgeBg: "bg-purple-600" },
@@ -308,6 +310,22 @@ export default function TrafficCommandDashboard() {
     };
   });
   const forecastKnown = timeOffset > 0 ? mapNodes.filter(n => n.level !== 'none').length : 0;
+
+  // Humeur de Ya Flow : pluie d'abord, puis la pire situation sur la carte, sinon l'heure.
+  const blockedNodes = mapNodes.filter(n => n.level === 'block');
+  const denseNodes = mapNodes.filter(n => n.level === 'dense' || n.level === 'mod');
+  const okNodes = mapNodes.filter(n => n.level === 'ok');
+  const narratorMood: Mood =
+    (globalMetrics?.weather?.rainMmH ?? 0) >= 0.5 ? 'pluie'
+      : blockedNodes.length > 0 ? 'bloque'
+        : denseNodes.length > okNodes.length ? 'dense'
+          : okNodes.length > 0 ? 'fluide'
+            : moodFromClock();
+  const narratorLines = [
+    ...(blockedNodes.length > 0 ? [`Keba ! ${blockedNodes.slice(0, 2).map(n => n.name).join(' et ')} : nzela ekangami.`] : []),
+    ...(okNodes.length > 0 && narratorMood !== 'bloque' ? [`${okNodes[0].name} ezali polele. Tokende !`] : []),
+    ...MOOD_LINES[narratorMood],
+  ];
 
   const selectNode = (id: string) => {
     setSelectedNodeId(id);
@@ -590,6 +608,7 @@ export default function TrafficCommandDashboard() {
 
         {/* ── 1b. JOUEUR + CARTE VIVANTE ── */}
         <PlayerHud profile={profile} />
+        <YaFlowSays mood={narratorMood} lines={narratorLines} tone="light" />
 
         <div className="rounded-3xl bg-[#0A1A29] text-[#EAF3FA] p-3 sm:p-4 border border-[#22425C] shadow-xl space-y-3">
           <div className="flex flex-wrap items-center gap-2">

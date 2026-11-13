@@ -17,6 +17,9 @@ import {
 } from '@/lib/game';
 import { DAILY_REWARD_CAP_CDF, REWARD_CDF } from '@/lib/pricing';
 import SpeedSharingToggle from '@/components/game/speed-sharing-toggle';
+import { WewaRider } from '@/components/kin/illustrations';
+import { KinLoader, YaFlowSays } from '@/components/kin/street';
+import { RANK_TAGLINES } from '@/lib/kin-slang';
 
 export default function QuestsPage() {
   const { user } = useUser();
@@ -31,7 +34,7 @@ export default function QuestsPage() {
   const [savingCommune, setSavingCommune] = useState(false);
 
   if (!profile) {
-    return <div className="p-6 text-sm text-slate-500">Chargement de votre progression…</div>;
+    return <KinLoader className="p-10" />;
   }
 
   const xp = Number(profile.xp || 0);
@@ -61,12 +64,15 @@ export default function QuestsPage() {
       <div className="max-w-3xl mx-auto w-full space-y-4 pb-24 md:pb-12">
 
         {/* Joueur */}
-        <section className="rounded-3xl bg-[#0A1A29] text-[#EAF3FA] border border-[#22425C] p-4 sm:p-5 space-y-4">
-          <div className="flex items-center gap-4">
+        <section className="relative overflow-hidden rounded-3xl bg-[#0A1A29] text-[#EAF3FA] border border-[#22425C] p-4 sm:p-5 space-y-4">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-1 kf-road-dash opacity-70" />
+          <WewaRider passenger={level >= 3} className="pointer-events-none absolute -right-4 -top-2 w-36 opacity-90 hidden sm:block" />
+          <div className="relative flex items-center gap-4 sm:pr-32">
             <div className="grid place-items-center h-16 w-16 shrink-0 rounded-2xl bg-gradient-to-br from-[#2EB6F0] to-[#1A5E8C] text-2xl font-black">{level}</div>
             <div className="min-w-0 flex-1">
               <div className="text-xs uppercase tracking-wider text-[#8EA8BD] font-bold">Niveau {level}</div>
-              <h1 className="text-xl sm:text-2xl font-black leading-tight">{rankFor(level)}</h1>
+              <h1 className="font-display uppercase tracking-wide text-2xl sm:text-3xl leading-none">{rankFor(level)}</h1>
+              <p className="mt-1 text-xs text-[#8EA8BD] italic">{RANK_TAGLINES[rankFor(level)]}</p>
               <div className="mt-2 h-2 rounded-full bg-[#173248] overflow-hidden">
                 <div className="h-full rounded-full bg-gradient-to-r from-[#2EB6F0] to-[#FFD23F]" style={{ width: `${pct}%` }} />
               </div>
@@ -75,6 +81,15 @@ export default function QuestsPage() {
               </div>
             </div>
           </div>
+          <YaFlowSays
+            lines={[
+              completed.length === DAILY_MISSIONS.length
+                ? 'Toutes les missions du jour sont faites. Mokonzi ! Reviens lobi.'
+                : `Encore ${DAILY_MISSIONS.length - completed.length} mission(s) aujourd’hui, ndeko. Tokende !`,
+              streak > 0 ? `${streak} jour(s) na nzela sans t’arrêter. Ne casse pas la série !` : 'Joue un coup aujourd’hui pour lancer ta série.',
+              nextRank ? `Encore un effort et tu deviens « ${nextRank.name} ».` : 'Tu es tout en haut. Respect, mokonzi ya nzela.',
+            ]}
+          />
           <div className="grid grid-cols-3 gap-2 text-center">
             <Stat icon={<Flame className="h-4 w-4 text-[#FF7A45]" />} value={streak} label={streak > 1 ? 'jours de suite' : 'jour de suite'} />
             <Stat icon={<Target className="h-4 w-4 text-[#2EB6F0]" />} value={Number(profile.gameVotes || 0)} label="votes" />
@@ -102,7 +117,7 @@ export default function QuestsPage() {
         {/* Missions du jour */}
         <section className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="font-black text-slate-900 dark:text-white">Missions du jour</h2>
+            <h2 className="font-black text-slate-900 dark:text-white">Mosala ya lelo · Missions du jour</h2>
             <span className="text-[11px] text-slate-500">Nouvelles missions à minuit</span>
           </div>
           <ul className="space-y-3">
@@ -116,7 +131,7 @@ export default function QuestsPage() {
                       <span className="font-semibold text-slate-800 dark:text-slate-200 inline-flex items-center gap-2">
                         {done && <Check className="h-4 w-4 text-emerald-600" />}{m.label}
                       </span>
-                      <span className="text-xs font-black text-amber-600 shrink-0">+{m.xp} XP</span>
+                      <span className={cn("text-xs font-black shrink-0", done ? "text-emerald-600" : "text-amber-600")}>{done ? 'Ezali malamu !' : `+${m.xp} XP`}</span>
                     </div>
                     <div className="mt-2 flex items-center gap-2">
                       <div className="h-1.5 flex-1 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">

@@ -11,6 +11,8 @@ import { Trophy, Clock, MapPin } from 'lucide-react';
 import { useUser, useFirebase, useCollection, useDoc, useMemoFirebase } from '@/firebase';
 import { cn } from '@/lib/utils';
 import { kinshasaWeekId, weekEndsAt } from '@/lib/game';
+import { rivalTaunt } from '@/lib/kin-slang';
+import { YaFlowSays } from '@/components/kin/street';
 
 function useCountdown(target: Date) {
   const [now, setNow] = useState(() => Date.now());
@@ -69,6 +71,11 @@ export default function LeaderboardPage() {
           ) : (
             <p className="text-sm text-[#8EA8BD]">La semaine vient de commencer : aucune commune n'a encore de points. Votez sur un carrefour pour ouvrir le score de la vôtre.</p>
           )}
+          <YaFlowSays
+            mood={leader && profile?.commune && leader.commune !== profile.commune ? 'dense' : 'fluide'}
+            label="Radio trottoir"
+            lines={[rivalTaunt(leader?.commune, profile?.commune), `Fin de la semaine dans ${remaining}. Malembe te — mbangu !`]}
+          />
           {sponsor?.active && sponsor?.name && (
             <p className="rounded-xl bg-[#FFD23F]/15 border border-[#FFD23F]/40 px-3 py-2 text-xs">
               Prix de la semaine offert par <b>{sponsor.name}</b>{sponsor.prize ? ` : ${sponsor.prize}` : ''}
@@ -94,7 +101,7 @@ export default function LeaderboardPage() {
           {loading ? (
             <p className="text-sm text-slate-500">Chargement…</p>
           ) : list.length === 0 ? (
-            <p className="text-sm text-slate-500">Personne n'a encore marqué de points cette semaine. Soyez le premier !</p>
+            <p className="text-sm text-slate-500">Personne n'a encore marqué de points cette semaine. Sois le premier, ndeko !</p>
           ) : (
             <ol className="space-y-2.5">
               {list.map((r: any, i: number) => {
