@@ -1185,7 +1185,7 @@ export async function getWalletTransactionsAction(idToken: string) {
   try {
     const { uid } = await verifyCaller(idToken);
     const snap = await adminDb().collection('users').doc(uid).collection('wallet_transactions')
-      .orderBy('timestamp', 'desc').limit(15).get();
+      .orderBy('timestamp', 'desc').limit(40).get();
     return {
       success: true,
       transactions: snap.docs.map(d => {
