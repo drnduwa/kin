@@ -57,6 +57,7 @@ import { KFlowSays } from '@/components/kin/street';
 import KinshasaCityMap, { type CityMapNode, type CorridorLive } from '@/components/kin/city-map';
 import { RouteScout, RouteStory } from '@/components/kin/route-story';
 import { FullPanel } from '@/components/kin/full-panel';
+import { play } from '@/lib/sfx';
 import { MOOD_LINES, moodFromClock, type Mood } from '@/lib/kin-slang';
 
 const STATUS_CONFIG = {
@@ -429,6 +430,7 @@ export default function TrafficCommandDashboard() {
     try {
       const data = await checkTrafficAction({ ...coords, address: name });
       setActiveAnalysis({ ...data, name });
+      play(['BLOQUÉ', 'EMBOUTEILLAGE'].includes(String(data?.status)) ? 'honk' : 'pop');
     } catch (e: any) {
       closePanel();
       toast({ title: "Erreur", description: "Impossible d'analyser cet axe.", variant: "destructive" });
@@ -486,6 +488,7 @@ export default function TrafficCommandDashboard() {
       return;
     }
     setVotedNodes(prev => ({ ...prev, [nodeId]: vote }));
+    play('ding');
     fetchRealtimeTraffic(true);
     try {
       const res = await awardWalletContributionAction({

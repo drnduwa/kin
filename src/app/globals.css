@@ -157,11 +157,24 @@ html, body {
   background-size: 18px 18px;
 }
 
+/* Chat Direct : égaliseur, voyant « on air », alertes qui palpitent, gyrophares. */
+@keyframes kf-eq { 0%, 100% { transform: scaleY(.35); } 50% { transform: scaleY(1); } }
+@keyframes kf-onair { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+@keyframes kf-alert-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,.0); } 50% { box-shadow: 0 0 0 6px rgba(255,255,255,.12); } }
+@keyframes kf-siren { 0%, 49% { opacity: 1; } 50%, 100% { opacity: .15; } }
+.kf-eq { transform-origin: bottom; animation: kf-eq .7s ease-in-out infinite; }
+.kf-onair { animation: kf-onair 1.6s ease-in-out infinite; }
+.kf-alert-pulse { animation: kf-alert-pulse 2.2s ease-in-out infinite; }
+.kf-siren-red { animation: kf-siren .5s steps(1) infinite; }
+.kf-siren-blue { animation: kf-siren .5s steps(1) infinite; animation-delay: -.25s; }
+.kf-lane-run { animation: kf-lane 1.2s linear infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   .kf-spin, .kf-spin-slow, .kf-bob, .kf-bob-slow, .kf-puff, .kf-beam, .kf-blink, .kf-wiggle,
   .kf-scan, .kf-dash-run,
   .kf-leg-a, .kf-leg-b, .kf-wave, .kf-marquee, .kf-ripple, .kf-wave-flow, .kf-rays, .kf-fly,
-  .kf-drift, .kf-drift-fast, .kf-cross, .kf-cross-fast, .kf-pop, .kf-road-dash, .kf-rain, .kf-shine {
+  .kf-drift, .kf-drift-fast, .kf-cross, .kf-cross-fast, .kf-pop, .kf-road-dash, .kf-rain, .kf-shine,
+  .kf-eq, .kf-onair, .kf-alert-pulse, .kf-siren-red, .kf-siren-blue, .kf-lane-run {
     animation: none !important;
   }
   .kf-pop { opacity: 1; }

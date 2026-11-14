@@ -18,6 +18,7 @@ import { STAR_PACK_CATALOG, PASS_CATALOG, DATA_PACK_CATALOG, REWARD_CDF, DAILY_R
 import { fulfillVerifiedFlexPayPayment, markPaymentFailed } from "@/lib/payments-server";
 import { loadRecentProbeSpeeds, statusFromSpeed } from "@/lib/probes-server";
 import { BLACK_SPOTS, MEASURED_SEGMENTS, segMid } from "@/lib/corridors";
+import { cleanText, softenInsults, ALERT_TO_REPORT, type ChatAlertType } from "@/lib/chat-check";
 import { XP, DAILY_MISSIONS, BADGES, COMMUNES, levelFromXp, rankFor, kinshasaDayKey, kinshasaWeekId, type MissionKind } from "@/lib/game";
 
 /** Identifiants SMTP lus dans l'environnement uniquement (les mots de passe ne doivent plus être dans le code). */
@@ -64,7 +65,12 @@ async function loadFreshReports(): Promise<any[]> {
         const cutoff = nowMs - REPORT_FRESH_MINUTES * 60 * 1000;
         return snap.docs
             .map(d => ({ id: d.id, ...(d.data() as any) }))
-            .filter(r => r.status !== 'expired' && r.coords && (tsToMillis(r.createdAt) ?? 0) >= cutoff)
+            .filter(r => {
+                if (r.status === 'expired' || !r.coords) return false;
+                // Un signalement confirmé par d'autres Kinois (Chat Direct, carte) reste visible plus longtemps.
+                const keep = Number(r.votes || 0) >= 2 ? cutoff - REPORT_FRESH_MINUTES * 30 * 1000 : cutoff;
+                return (tsToMillis(r.createdAt) ?? 0) >= keep;
+            })
             .map(r => ({
                 id: r.id,
                 type: r.type ?? null,
@@ -72,6 +78,8 @@ async function loadFreshReports(): Promise<any[]> {
                 locationName: r.locationName ?? null,
                 coords: { lat: Number(r.coords.lat), lng: Number(r.coords.lng) },
                 ageMin: Math.max(0, Math.round((nowMs - (tsToMillis(r.createdAt) ?? nowMs)) / 60000)),
+                votes: Number(r.votes || 0),
+                source: r.source ?? null,
             }));
     } catch (err) {
         console.warn('[Reports] lecture impossible:', err);
@@ -2122,4 +2130,105 @@ export async function getCityForecastAction(): Promise<{
   const data = { generatedAt: kin.timeLabel, nodes };
   cityForecastCache = { data, expires: Date.now() + 10 * 60 * 1000 };
   return data;
+}
+
+/**
+ * Alerte du Chat Direct, vérifiée par le serveur avant d'entrer dans les données trafic :
+ *  1. usager connecté, au plus une alerte toutes les 3 minutes ;
+ *  2. lieu retrouvé à Kinshasa (référentiel des axes, sinon Google) — sinon refus ;
+ *  3. doublon (même type, à moins de ~800 m, moins de 30 min) → on ajoute une confirmation
+ *     au signalement existant au lieu d'en créer un second ;
+ *  4. nouveau signalement → road_condition_reports (lu par la carte et le Centre de Contrôle),
+ *     police_reports pour un contrôle, message dans le chat, récompense et e-mail d'alerte.
+ */
+export async function postChatAlertAction(params: {
+  idToken: string;
+  type: ChatAlertType;
+  place: string;
+  note?: string;
+}): Promise<
+  | { success: true; duplicate: boolean; locationName: string; reward?: { rewardCDF?: number; xpGained?: number; message?: string; levelUp?: boolean } }
+  | { success: false; error: string }
+> {
+  let caller;
+  try { caller = await verifyCaller(params.idToken); } catch (err: any) { return { success: false, error: authErrorMessage(err, 'Connexion requise.') }; }
+  if (!['embouteillage', 'travaux', 'police'].includes(params.type)) return { success: false, error: "Type d'alerte inconnu." };
+  const place = cleanText(params.place).slice(0, 80);
+  const note = softenInsults(cleanText(params.note || '')).slice(0, 160);
+  if (place.length < 3) return { success: false, error: 'Indiquez le lieu (ex. : Rond-point Victoire).' };
+
+  const db = adminDb();
+  const uid = caller.uid;
+
+  // 1. Limite de fréquence
+  const limitRef = db.collection('chat_alert_limits').doc(uid);
+  const gate = await db.runTransaction(async tx => {
+    const snap = await tx.get(limitRef);
+    const last = snap.exists ? (snap.data()!.lastAt?.toMillis?.() ?? 0) : 0;
+    const waitS = Math.ceil((last + 3 * 60 * 1000 - Date.now()) / 1000);
+    if (waitS > 0) return { ok: false as const, waitS };
+    tx.set(limitRef, { lastAt: FieldValue.serverTimestamp() }, { merge: true });
+    return { ok: true as const };
+  });
+  if (!gate.ok) return { success: false, error: `Doucement ndeko ! Nouvelle alerte possible dans ${gate.waitS} s.` };
+
+  // 2. Lieu vérifié
+  const loc = await locateAxisAction(place);
+  if (!loc.found) return { success: false, error: `« ${place} » introuvable à Kinshasa. Essayez un nom d'avenue ou de rond-point connu.` };
+  const coords = { lat: loc.lat, lng: loc.lng };
+  const locationName = loc.source === 'référentiel' ? loc.name : place;
+
+  const userSnap = await db.collection('users').doc(uid).get();
+  const profile = (userSnap.data() || {}) as any;
+  const userName = String(profile.firstName || profile.displayName || profile.name || 'Kinois').split(' ')[0].slice(0, 30);
+  const reportType = ALERT_TO_REPORT[params.type];
+
+  // 3. Doublon ?
+  const since = new Date(Date.now() - 30 * 60 * 1000);
+  const recent = await db.collection('road_condition_reports').where('createdAt', '>=', since).orderBy('createdAt', 'desc').limit(60).get();
+  const dup = recent.docs.find(d => {
+    const r = d.data() as any;
+    return r.type === reportType && r.status !== 'expired' && r.coords
+      && Math.abs(Number(r.coords.lat) - coords.lat) < 0.007 && Math.abs(Number(r.coords.lng) - coords.lng) < 0.007;
+  });
+
+  const label = { embouteillage: 'Embouteillage', travaux: 'Travaux / route abîmée', police: 'Contrôle de police' }[params.type];
+  const text = `${label} à ${locationName}${note ? ` — ${note}` : ''}`;
+
+  if (dup) {
+    await dup.ref.update({ votes: FieldValue.increment(1) });
+    await db.collection('community_chat').add({
+      userId: uid, userName, userAvatar: String(profile.photoURL || ''), text, mediaUrl: '', mediaType: null,
+      locationName, coords, alertType: params.type, reportId: dup.id, verified: true, confirmation: true,
+      likes: 0, commentCount: 0, reactions: {}, timestamp: FieldValue.serverTimestamp(),
+    });
+    return { success: true, duplicate: true, locationName };
+  }
+
+  // 4. Nouveau signalement
+  const reportRef = await db.collection('road_condition_reports').add({
+    userId: uid, userName, type: reportType, description: text, imageUrl: '',
+    coords, locationName, votes: 0, status: 'active', source: 'chat', createdAt: FieldValue.serverTimestamp(),
+  });
+  if (params.type === 'police') {
+    await db.collection('police_reports').add({ userId: uid, location: locationName, note: note || 'Signalé dans le Chat Direct', coords, source: 'chat', timestamp: FieldValue.serverTimestamp() });
+  }
+  await db.collection('community_chat').add({
+    userId: uid, userName, userAvatar: String(profile.photoURL || ''), text, mediaUrl: '', mediaType: null,
+    locationName, coords, alertType: params.type, reportId: reportRef.id, verified: true,
+    likes: 0, commentCount: 0, reactions: {}, timestamp: FieldValue.serverTimestamp(),
+  });
+
+  const reward = await awardWalletContributionAction({ idToken: params.idToken, type: 'incident_report', refId: reportRef.id, road: locationName }).catch(() => null);
+
+  // E-mail d'alerte : seulement pour une alerte vérifiée et nouvelle (plus pour chaque message du chat).
+  broadcastEmailAction({ title: `🚨 ALERTE : ${label.toUpperCase()}`, message: text, userName, type: 'alert', location: locationName, idToken: params.idToken })
+    .catch(err => console.warn('[Chat alert email]', err));
+
+  return {
+    success: true,
+    duplicate: false,
+    locationName,
+    reward: reward && reward.success ? { rewardCDF: reward.rewardCDF, xpGained: reward.xpGained, message: reward.message, levelUp: reward.levelUp } : undefined,
+  };
 }
