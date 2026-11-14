@@ -2,12 +2,11 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { AppShell } from '@/components/app-shell';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useFirebase, useDoc, useCollection, useMemoFirebase } from '@/firebase';
 import { doc, collection, query, orderBy, limit } from 'firebase/firestore';
-import { UserProfile, StarTransaction, WithId } from '@/lib/types';
+import { UserProfile, StarTransaction, WithId, STAR_COSTS } from '@/lib/types';
 import { initiateFlexPayPaymentAction, checkFlexPayStatusAction } from '@/app/actions';
 import { 
   Star, 
@@ -26,7 +25,11 @@ import {
   ArrowRight,
   ShieldCheck,
   Check,
-  RefreshCw
+  RefreshCw,
+  Navigation,
+  MessageCircle,
+  Map as MapIcon,
+  ChevronRight
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
@@ -37,7 +40,6 @@ import { fr } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
 // Définition des Packs de Stars
 const STAR_PACKS = [
@@ -124,6 +126,13 @@ function MesStarsContent() {
     return query(collection(firestore, 'users', user.uid, 'star_transactions'), orderBy('timestamp', 'desc'), limit(20));
   }, [firestore, user]);
   const { data: transactions, isLoading: isTransLoading } = useCollection<StarTransaction>(transactionsQuery);
+
+  // Consommation récente (100 dernières opérations) pour conseiller l'offre la plus économique.
+  const usageQuery = useMemoFirebase(() => {
+    if (!user) return null;
+    return query(collection(firestore, 'users', user.uid, 'star_transactions'), orderBy('timestamp', 'desc'), limit(100));
+  }, [firestore, user]);
+  const { data: usage } = useCollection<StarTransaction>(usageQuery);
 
   // Sélecteur de devise
   const [currency, setCurrency] = useState<'CDF' | 'USD'>('CDF');
@@ -356,289 +365,200 @@ function MesStarsContent() {
     }
   };
 
+  // ── Ce que l'usager peut faire maintenant, et l'offre qui lui convient d'après SA consommation ──
+  const balance = Number(profile?.currentStarsBalance || 0);
+  const passExpiry: Date | null = isPassActive && profile?.passExpiresAt
+    ? (profile.passExpiresAt.toDate ? profile.passExpiresAt.toDate() : new Date(profile.passExpiresAt))
+    : null;
+  const passDaysLeft = passExpiry ? Math.max(0, Math.ceil((passExpiry.getTime() - Date.now()) / 86400000)) : 0;
+
+  const spent30 = useMemo(() => {
+    const since = Date.now() - 30 * 86400000;
+    return (usage || [])
+      .filter(t => t.type === 'spent' && (t.timestamp?.toMillis ? t.timestamp.toMillis() : 0) >= since)
+      .reduce((sum, t) => sum + Math.abs(Number(t.starsChange || 0)), 0);
+  }, [usage]);
+
+  // Prix d'une Star au pack « Essentiel » : base de comparaison avec le Pass mensuel.
+  const essential = STAR_PACKS.find(p => p.id === 'pack_150')!;
+  const monthly = UNLIMITED_PASSES.find(p => p.id === 'pass_monthly')!;
+  const starCost = essential.prices[currency] / essential.stars;
+  const monthlySpendValue = spent30 * starCost;
+  const passPays = spent30 > 0 && monthlySpendValue >= monthly.prices[currency] * 0.9;
+  const recommended: { kind: 'pack' | 'pass'; id: string; why: string } = isPassActive
+    ? { kind: 'pass', id: 'pass_monthly', why: `Prolongez votre accès illimité avant le ${format(passExpiry!, 'd MMMM', { locale: fr })}.` }
+    : passPays
+      ? { kind: 'pass', id: 'pass_monthly', why: `Vous avez utilisé ${spent30} Stars en 30 jours (≈ ${fmt(monthlySpendValue, currency)}). Le Pass mensuel vous revient moins cher.` }
+      : spent30 > 0
+        ? { kind: 'pack', id: spent30 > 150 ? 'pack_400' : 'pack_150', why: `Vous utilisez environ ${spent30} Stars par mois : ce pack couvre votre usage.` }
+        : { kind: 'pack', id: 'pack_150', why: 'Le plus choisi pour démarrer : GPS, alertes et assistant au quotidien.' };
+
+  const offers = [
+    ...UNLIMITED_PASSES.map(p => ({ kind: 'pass' as const, id: p.id, title: `Pass ${p.durationDays} jours`, line: 'Accès illimité', price: p.prices[currency], perUnit: `${fmt(p.prices[currency] / p.durationDays, currency)}/jour`, pick: () => handleSelectPass(p) })),
+    ...STAR_PACKS.map(p => ({ kind: 'pack' as const, id: p.id, title: `${p.stars} Stars`, line: p.title.replace('Pack ', ''), price: p.prices[currency], perUnit: `${fmt(p.prices[currency] / p.stars, currency)}/Star`, pick: () => handleSelectPack(p) })),
+  ];
+  const rec = offers.find(o => o.id === recommended.id)!;
+  const [showAllHistory, setShowAllHistory] = useState(false);
+  const history = (transactions || []).slice(0, showAllHistory ? 20 : 4);
+
   return (
     <AppShell>
-      <div className="w-full h-full overflow-y-auto bg-slate-50/50 pb-20">
-        <div className="max-w-6xl mx-auto p-4 md:p-8 space-y-8">
-          
-          {/* Bannière de Bienvenue / Statut Utilisateur */}
-          <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 text-white p-6 sm:p-8 shadow-xl">
-            <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/30 uppercase text-[10px] tracking-widest font-black">
-                    Paiement Sécurisé FlexPay RDC
-                  </Badge>
-                  {isPassActive && (
-                    <Badge className="bg-emerald-500 text-white font-black text-[10px] tracking-wider flex items-center gap-1">
-                      <Crown className="h-3 w-3 fill-white" /> Pass Illimité Actif
-                    </Badge>
-                  )}
-                </div>
-                <h1 className="text-2xl sm:text-4xl font-black tracking-tight">
-                  Recharger mon compte
-                </h1>
-                <p className="text-sm text-slate-300 max-w-xl">
-                  {isPassActive
-                    ? `Votre Pass Illimité est actif jusqu'au ${passExpiryFormatted}. Vous bénéficiez de tous les services sans décompte de Stars.`
-                    : 'Achetez des Stars à l\'unité ou activez un Pass Illimité via Mobile Money (M-Pesa, Orange, Airtel, Afrimoney) ou Carte Bancaire.'}
-                </p>
-              </div>
+      <div className="w-full h-full overflow-y-auto bg-slate-50 dark:bg-slate-950">
+        <div className="max-w-2xl mx-auto p-3 sm:p-6 space-y-4 pb-24 md:pb-12">
 
-              {/* Solde & Statut */}
-              <div className="bg-white/10 backdrop-blur-md border border-white/10 p-5 rounded-2xl flex items-center gap-5 shrink-0">
-                <div className="p-3 bg-amber-500/20 border border-amber-500/40 rounded-2xl text-amber-400">
-                  <Star className="h-8 w-8 fill-amber-400" />
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-slate-300 uppercase tracking-wider">Solde Actuel</p>
-                  <div className="text-3xl font-black text-white">
-                    {profile?.currentStarsBalance || 0} <span className="text-amber-400 text-xl">Stars</span>
+          {/* 1. MON ACCÈS MAINTENANT */}
+          <section className="relative overflow-hidden rounded-3xl bg-[#0A1A29] text-white border border-[#22425C] p-5 shadow-xl">
+            <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-[#1E9BFF]/20 blur-3xl" />
+            {isProfileLoading ? (
+              <div className="py-6 text-center"><Loader2 className="mx-auto h-6 w-6 animate-spin text-[#2EB6F0]" /></div>
+            ) : isPassActive ? (
+              <div className="relative flex items-center gap-4">
+                <DaysRing days={passDaysLeft} total={passDaysLeft > 7 ? 30 : 7} />
+                <div className="min-w-0">
+                  <div className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-emerald-300">
+                    <Crown className="h-3 w-3" /> Accès illimité
                   </div>
-                  {isPassActive && (
-                    <p className="text-[11px] text-emerald-400 font-bold mt-0.5 flex items-center gap-1">
-                      <Check className="h-3 w-3 stroke-[3]" /> Accès illimité sans décompte
-                    </p>
-                  )}
+                  <h1 className="mt-1 text-2xl font-black leading-tight text-white">Tout est ouvert</h1>
+                  <p className="text-xs text-[#8EA8BD]">GPS, carte et assistant sans compter, jusqu'au {passExpiryFormatted}.</p>
                 </div>
               </div>
-            </div>
-          </div>
-
-          {/* Sélecteur de Devise */}
-          <div className="flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
-            <div className="flex items-center gap-2 text-slate-700">
-              <Sparkles className="h-4 w-4 text-primary" />
-              <span className="text-xs sm:text-sm font-bold">Choisissez votre devise d'affichage :</span>
-            </div>
-            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
-              <Button
-                size="sm"
-                variant={currency === 'CDF' ? 'default' : 'ghost'}
-                onClick={() => setCurrency('CDF')}
-                className={cn("rounded-lg text-xs font-black h-8 px-4", currency === 'CDF' ? "bg-primary text-white shadow-sm" : "text-slate-600")}
-              >
-                Franc Congolais (CDF)
-              </Button>
-              <Button
-                size="sm"
-                variant={currency === 'USD' ? 'default' : 'ghost'}
-                onClick={() => setCurrency('USD')}
-                className={cn("rounded-lg text-xs font-black h-8 px-4", currency === 'USD' ? "bg-primary text-white shadow-sm" : "text-slate-600")}
-              >
-                Dollar US (USD)
-              </Button>
-            </div>
-          </div>
-
-          {/* Onglets : Packs de Stars VS Pass Illimités */}
-          <Tabs defaultValue="packs" className="space-y-6">
-            <TabsList className="grid grid-cols-2 w-full max-w-md mx-auto h-12 rounded-2xl bg-slate-200/70 p-1">
-              <TabsTrigger value="packs" className="rounded-xl font-black text-xs sm:text-sm data-[state=active]:bg-white data-[state=active]:shadow-sm">
-                ⭐ Packs de Stars
-              </TabsTrigger>
-              <TabsTrigger value="passes" className="rounded-xl font-black text-xs sm:text-sm data-[state=active]:bg-white data-[state=active]:shadow-sm">
-                👑 Pass Illimités
-              </TabsTrigger>
-            </TabsList>
-
-            {/* TAB 1: PACKS DE STARS */}
-            <TabsContent value="packs" className="space-y-4">
-              <div className="text-center max-w-lg mx-auto mb-4">
-                <h2 className="text-xl font-black text-slate-900">Recharges de Stars à la carte</h2>
-                <p className="text-xs text-slate-500">Payez uniquement ce que vous consommez. Vos Stars n'expirent jamais.</p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {STAR_PACKS.map((pack) => (
-                  <Card 
-                    key={pack.id} 
-                    className={cn(
-                      "relative border-2 rounded-3xl transition-all duration-300 hover:shadow-xl flex flex-col justify-between overflow-hidden",
-                      pack.popular ? "border-amber-500 bg-amber-50/20 shadow-md" : "border-slate-200/80 bg-white"
-                    )}
-                  >
-                    {pack.popular && (
-                      <div className="bg-amber-500 text-slate-950 font-black text-[10px] uppercase tracking-wider py-1 text-center">
-                        ⭐ Plus Populaire
-                      </div>
-                    )}
-                    <CardHeader className="p-6 pb-2">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-black uppercase text-slate-400 tracking-wider">Pack</span>
-                        <div className="h-8 w-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 font-black">
-                          ⭐
-                        </div>
-                      </div>
-                      <CardTitle className="text-3xl font-black text-slate-900">
-                        {pack.stars} <span className="text-base text-amber-500">Stars</span>
-                      </CardTitle>
-                      <p className="text-xs font-semibold text-slate-700 mt-1">{pack.title}</p>
-                      <CardDescription className="text-[11px] text-slate-500 leading-tight">
-                        {pack.subtitle}
-                      </CardDescription>
-                    </CardHeader>
-
-                    <CardContent className="p-6 pt-4">
-                      <div className="pt-3 border-t border-slate-100 flex items-baseline justify-between">
-                        <span className="text-xs text-slate-400 font-bold">Prix</span>
-                        <span className="text-xl font-black text-slate-900">{pack.labels[currency]}</span>
-                      </div>
-                    </CardContent>
-
-                    <CardFooter className="p-6 pt-0">
-                      <Button
-                        onClick={() => handleSelectPack(pack)}
-                        className={cn(
-                          "w-full h-12 rounded-2xl font-black text-xs uppercase tracking-wider transition-all",
-                          pack.popular 
-                            ? "bg-amber-500 hover:bg-amber-600 text-white shadow-md shadow-amber-500/20" 
-                            : "bg-slate-900 hover:bg-slate-800 text-white"
-                        )}
-                      >
-                        Acheter ce Pack <ArrowRight className="ml-2 h-4 w-4" />
-                      </Button>
-                    </CardFooter>
-                  </Card>
-                ))}
-              </div>
-            </TabsContent>
-
-            {/* TAB 2: PASS ILLIMITÉS */}
-            <TabsContent value="passes" className="space-y-4">
-              <div className="text-center max-w-lg mx-auto mb-4">
-                <h2 className="text-xl font-black text-slate-900">Abonnements Pass Illimités</h2>
-                <p className="text-xs text-slate-500">Zéro souci de solde. Accès 100% illimité au GPS K-Flow, alertes en temps réel et IA.</p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto">
-                {UNLIMITED_PASSES.map((pass) => (
-                  <Card 
-                    key={pass.id} 
-                    className={cn(
-                      "relative border-2 rounded-3xl transition-all duration-300 hover:shadow-2xl flex flex-col justify-between overflow-hidden",
-                      pass.popular ? "border-primary bg-primary/[0.03] shadow-lg ring-2 ring-primary/20" : "border-slate-200 bg-white"
-                    )}
-                  >
-                    {pass.popular && (
-                      <div className="bg-primary text-white font-black text-[10px] uppercase tracking-widest py-1.5 text-center flex items-center justify-center gap-1">
-                        <Crown className="h-3 w-3 fill-white" /> Meilleure Valeur
-                      </div>
-                    )}
-                    <CardHeader className="p-6 sm:p-8 pb-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <Badge variant="outline" className="text-xs font-bold text-slate-600">
-                          {pass.durationDays} Jours
-                        </Badge>
-                        <div className="h-10 w-10 rounded-2xl bg-primary/10 text-primary flex items-center justify-center font-black">
-                          <Crown className="h-5 w-5 fill-primary" />
-                        </div>
-                      </div>
-                      <CardTitle className="text-2xl font-black text-slate-900">
-                        {pass.title}
-                      </CardTitle>
-                      <CardDescription className="text-xs text-slate-500 mt-1">
-                        {pass.subtitle}
-                      </CardDescription>
-
-                      <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
-                        <div className="flex items-center gap-2 text-xs text-slate-700 font-semibold">
-                          <Check className="h-4 w-4 text-emerald-600 stroke-[3]" /> GPS K-Flow Nav illimité
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-slate-700 font-semibold">
-                          <Check className="h-4 w-4 text-emerald-600 stroke-[3]" /> Requêtes Assistant IA illimitées
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-slate-700 font-semibold">
-                          <Check className="h-4 w-4 text-emerald-600 stroke-[3]" /> Radar et Carte des Bouchons 24/7
-                        </div>
-                      </div>
-                    </CardHeader>
-
-                    <CardContent className="p-6 sm:p-8 pt-0">
-                      <div className="p-4 rounded-2xl bg-slate-50 flex items-baseline justify-between mb-4">
-                        <span className="text-xs font-bold text-slate-500">Tarif tout inclus</span>
-                        <span className="text-2xl font-black text-slate-900">{pass.labels[currency]}</span>
-                      </div>
-
-                      <Button
-                        onClick={() => handleSelectPass(pass)}
-                        className={cn(
-                          "w-full h-12 rounded-2xl font-black text-xs uppercase tracking-wider transition-all shadow-md",
-                          pass.popular 
-                            ? "bg-primary hover:bg-primary/90 text-white shadow-primary/20" 
-                            : "bg-slate-900 hover:bg-slate-800 text-white"
-                        )}
-                      >
-                        Activer le Pass ({pass.labels[currency]})
-                      </Button>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </TabsContent>
-          </Tabs>
-
-          {/* Historique des Transactions */}
-          <div className="mt-12 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-black text-slate-900">Historique de vos recharges & utilisations</h3>
-              <Badge variant="outline" className="text-[11px] font-bold text-slate-500">
-                20 dernières opérations
-              </Badge>
-            </div>
-
-            <Card className="border-none shadow-sm rounded-3xl overflow-hidden bg-white">
-              <CardContent className="p-0">
-                {isTransLoading ? (
-                  <div className="p-8 text-center"><Loader2 className="animate-spin mx-auto text-primary" /></div>
-                ) : !transactions || transactions.length === 0 ? (
-                  <div className="p-8 text-center text-sm text-slate-400 font-medium">
-                    Aucune transaction enregistrée pour le moment.
+            ) : (
+              <div className="relative space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-amber-400/15 text-amber-300">
+                    <Star className="h-7 w-7 fill-amber-300" />
                   </div>
-                ) : (
-                  <div className="divide-y divide-slate-100">
-                    {transactions.map((t) => {
-                      const isPurchase = t.type === 'purchase';
-                      const isSpent = t.type === 'spent';
-                      const date = t.timestamp?.toDate ? format(t.timestamp.toDate(), 'dd MMM yyyy, HH:mm', { locale: fr }) : '...';
-
-                      return (
-                        <div key={t.id} className="p-4 flex items-center justify-between hover:bg-slate-50/50 transition-colors">
-                          <div className="flex items-center gap-3">
-                            <div className={cn(
-                              "h-10 w-10 rounded-2xl flex items-center justify-center shrink-0",
-                              isPurchase ? "bg-emerald-100 text-emerald-600" :
-                              isSpent ? "bg-orange-100 text-orange-600" : "bg-blue-100 text-blue-600"
-                            )}>
-                              {isPurchase ? <ShoppingCart className="h-5 w-5" /> :
-                               isSpent ? <ArrowDownCircle className="h-5 w-5" /> :
-                               <Sparkles className="h-5 w-5" />}
-                            </div>
-                            <div>
-                              <p className="text-xs sm:text-sm font-bold text-slate-900">{t.description}</p>
-                              <p className="text-[10px] text-slate-400">{date}</p>
-                            </div>
-                          </div>
-
-                          <div className="text-right">
-                            <p className={cn(
-                              "text-xs sm:text-sm font-black",
-                              isPurchase ? "text-emerald-600" :
-                              isSpent ? "text-orange-600" : "text-slate-900"
-                            )}>
-                              {isPurchase && t.starsChange > 0 ? `+${t.starsChange} ⭐` :
-                               isSpent ? `-${Math.abs(t.starsChange)} ⭐` :
-                               'Pass Actif'}
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })}
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-[#8EA8BD]">Mon solde</div>
+                    <h1 className="text-3xl font-black leading-none text-white tabular-nums">{balance} <span className="text-lg text-amber-300">Stars</span></h1>
                   </div>
+                </div>
+                {/* Ce que le solde permet, concrètement */}
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <Can n={Math.floor(balance / STAR_COSTS.NAVIGATION_SESSION)} label="trajets GPS" />
+                  <Can n={Math.floor(balance / STAR_COSTS.AI_MESSAGE)} label="questions IA" />
+                  <Can n={Math.floor(balance / STAR_COSTS.MAP_VIEW)} label="cartes live" />
+                </div>
+                {balance < 10 && (
+                  <p className="rounded-xl bg-red-500/15 border border-red-500/30 px-3 py-2 text-xs font-bold text-red-200">
+                    {balance <= 0 ? 'Solde épuisé : rechargez pour continuer à utiliser le GPS et l’assistant.' : 'Solde presque vide : pensez à recharger.'}
+                  </p>
                 )}
-              </CardContent>
-            </Card>
-          </div>
+              </div>
+            )}
+          </section>
+
+          {/* 2. NOTRE CONSEIL (d'après votre consommation réelle) */}
+          {rec && (
+            <section className="rounded-3xl border-2 border-[#1E9BFF] bg-white dark:bg-slate-900 p-4 shadow-sm space-y-3">
+              <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider text-[#1E9BFF]">
+                <Sparkles className="h-3.5 w-3.5" /> Notre conseil pour vous
+              </div>
+              <div className="flex items-end justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-lg font-black text-slate-900 dark:text-white leading-tight">{rec.title}</div>
+                  <p className="text-xs text-slate-500 leading-snug mt-0.5">{recommended.why}</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-xl font-black text-slate-900 dark:text-white">{fmt(rec.price, currency)}</div>
+                  <div className="text-[10px] font-bold text-slate-400">{rec.perUnit}</div>
+                </div>
+              </div>
+              <Button onClick={rec.pick} className="w-full h-12 rounded-2xl font-black bg-[#1E9BFF] hover:bg-[#1789E6] text-white">
+                {isPassActive ? 'Prolonger mon accès' : rec.kind === 'pass' ? 'Activer ce pass' : 'Recharger'} <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </section>
+          )}
+
+          {/* 3. TOUTES LES OFFRES, en une liste */}
+          <section className="space-y-2">
+            <div className="flex items-center justify-between px-1">
+              <h2 className="text-sm font-black text-slate-900 dark:text-white">Toutes les offres</h2>
+              <div className="flex rounded-full bg-slate-200/70 dark:bg-slate-800 p-0.5 text-[11px] font-black" role="group" aria-label="Devise">
+                {(['CDF', 'USD'] as const).map(c => (
+                  <button key={c} type="button" onClick={() => setCurrency(c)} aria-pressed={currency === c}
+                    className={cn('rounded-full px-3 py-1 transition-colors', currency === c ? 'bg-white dark:bg-slate-950 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500')}>
+                    {c === 'CDF' ? 'FC' : '$'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
+              {offers.map(o => (
+                <button key={o.id} type="button" onClick={o.pick} className="w-full flex items-center gap-3 p-3.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors">
+                  <span className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl', o.kind === 'pass' ? 'bg-[#1E9BFF]/10 text-[#1E9BFF]' : 'bg-amber-100 text-amber-600 dark:bg-amber-500/15')}>
+                    {o.kind === 'pass' ? <Crown className="h-5 w-5" /> : <Star className="h-5 w-5 fill-current" />}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-sm font-black text-slate-900 dark:text-white">{o.title}</span>
+                      {o.id === recommended.id && <span className="rounded-full bg-[#1E9BFF] px-1.5 py-0.5 text-[9px] font-black uppercase text-white">Conseillé</span>}
+                    </span>
+                    <span className="block text-[11px] text-slate-500">{o.line} · {o.perUnit}</span>
+                  </span>
+                  <span className="text-sm font-black text-slate-900 dark:text-white shrink-0">{fmt(o.price, currency)}</span>
+                  <ChevronRight className="h-4 w-4 text-slate-300 shrink-0" />
+                </button>
+              ))}
+            </div>
+            <p className="px-1 text-[11px] text-slate-500 flex items-center gap-1">
+              <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 shrink-0" /> M-Pesa, Orange Money, Airtel Money, Afrimoney ou carte. Les Stars n'expirent jamais.
+            </p>
+          </section>
+
+          {/* 4. COMBIEN ÇA COÛTE */}
+          {!isPassActive && (
+            <section className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 p-4 space-y-2">
+              <h2 className="text-sm font-black text-slate-900 dark:text-white">Ce que coûte chaque service</h2>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <Cost icon={<Navigation className="h-4 w-4" />} label="Trajet GPS" stars={STAR_COSTS.NAVIGATION_SESSION} />
+                <Cost icon={<MessageCircle className="h-4 w-4" />} label="Assistant IA" stars={STAR_COSTS.AI_MESSAGE} />
+                <Cost icon={<MapIcon className="h-4 w-4" />} label="Carte live" stars={STAR_COSTS.MAP_VIEW} />
+                <Cost icon={<Zap className="h-4 w-4" />} label="Vérif. route" stars={STAR_COSTS.ROAD_VERIFY} />
+              </div>
+              <p className="text-[11px] text-slate-500">Signaler, voter et chatter restent gratuits — et vous font même gagner des FC.</p>
+            </section>
+          )}
+
+          {/* 5. HISTORIQUE (replié) */}
+          <section className="space-y-2">
+            <h2 className="px-1 text-sm font-black text-slate-900 dark:text-white">Mes dernières opérations</h2>
+            <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 overflow-hidden">
+              {isTransLoading ? (
+                <div className="p-6 text-center"><Loader2 className="animate-spin mx-auto h-5 w-5 text-primary" /></div>
+              ) : history.length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-400 font-medium">Aucune opération pour le moment.</div>
+              ) : (
+                <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {history.map(t => {
+                    const isPurchase = t.type === 'purchase';
+                    const isSpent = t.type === 'spent';
+                    const change = Number(t.starsChange || 0);
+                    return (
+                      <div key={t.id} className="flex items-center gap-3 px-3.5 py-2.5">
+                        <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-xl',
+                          isPurchase ? 'bg-emerald-100 text-emerald-600' : isSpent ? 'bg-orange-100 text-orange-600' : 'bg-blue-100 text-blue-600')}>
+                          {isPurchase ? <ShoppingCart className="h-4 w-4" /> : isSpent ? <ArrowDownCircle className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-xs font-bold text-slate-800 dark:text-slate-200">{t.description}</span>
+                          <span className="block text-[10px] text-slate-400">{t.timestamp?.toDate ? format(t.timestamp.toDate(), 'd MMM, HH:mm', { locale: fr }) : '…'}</span>
+                        </span>
+                        <span className={cn('text-xs font-black tabular-nums shrink-0', change > 0 ? 'text-emerald-600' : change < 0 ? 'text-orange-600' : 'text-slate-500')}>
+                          {change > 0 ? `+${change}` : change < 0 ? `${change}` : '—'} ⭐
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {(transactions?.length || 0) > 4 && (
+                <button type="button" onClick={() => setShowAllHistory(v => !v)} className="w-full border-t border-slate-100 dark:border-slate-800 py-2.5 text-xs font-black text-primary">
+                  {showAllHistory ? 'Voir moins' : `Voir tout (${transactions!.length})`}
+                </button>
+              )}
+            </div>
+          </section>
 
         </div>
       </div>
@@ -921,5 +841,46 @@ export default function MesStarsPage() {
     }>
       <MesStarsContent />
     </React.Suspense>
+  );
+}
+
+function fmt(amount: number, currency: 'CDF' | 'USD') {
+  return currency === 'CDF'
+    ? `${Math.round(amount).toLocaleString('fr-FR')} FC`
+    : `${amount < 10 ? amount.toFixed(2).replace(/\.00$/, '') : Math.round(amount)} $`;
+}
+
+/** Anneau des jours restants du pass. */
+function DaysRing({ days, total }: { days: number; total: number }) {
+  const r = 26, c = 2 * Math.PI * r, pct = Math.min(1, days / total);
+  return (
+    <div className="relative h-16 w-16 shrink-0">
+      <svg viewBox="0 0 64 64" className="h-16 w-16 -rotate-90">
+        <circle cx="32" cy="32" r={r} fill="none" stroke="#173248" strokeWidth="6" />
+        <circle cx="32" cy="32" r={r} fill="none" stroke="#3DDC97" strokeWidth="6" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - pct)} />
+      </svg>
+      <div className="absolute inset-0 grid place-items-center text-center leading-none">
+        <span className="text-lg font-black">{days}<span className="block text-[9px] font-bold text-[#8EA8BD]">jour{days > 1 ? 's' : ''}</span></span>
+      </div>
+    </div>
+  );
+}
+
+function Can({ n, label }: { n: number; label: string }) {
+  return (
+    <div className="rounded-2xl bg-white/5 border border-white/10 py-2">
+      <div className="text-lg font-black tabular-nums">{n}</div>
+      <div className="text-[10px] text-[#8EA8BD]">{label}</div>
+    </div>
+  );
+}
+
+function Cost({ icon, label, stars }: { icon: React.ReactNode; label: string; stars: number }) {
+  return (
+    <div className="flex items-center gap-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 px-2.5 py-2">
+      <span className="text-slate-500">{icon}</span>
+      <span className="min-w-0 flex-1 truncate font-semibold text-slate-700 dark:text-slate-200">{label}</span>
+      <span className="font-black text-amber-600 shrink-0">{stars} ⭐</span>
+    </div>
   );
 }
