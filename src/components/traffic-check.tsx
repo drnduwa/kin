@@ -40,7 +40,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { checkTrafficAction, awardWalletContributionAction, getRealtimeCommandDashboardAction, locateAxisAction, getCityForecastAction } from '@/app/actions';
+import { checkTrafficAction, awardWalletContributionAction, getRealtimeCommandDashboardAction, locateAxisAction, getCityForecastAction, getForecastAccuracyAction } from '@/app/actions';
 import { levelFromStatus, levelFromDelay, type MapNode } from '@/components/game/live-city-map';
 import PlayerHud from '@/components/game/player-hud';
 import { CloudRain, CalendarDays } from 'lucide-react';
@@ -326,6 +326,13 @@ export default function TrafficCommandDashboard() {
   useEffect(() => {
     getCityForecastAction().then(setCityForecast).catch(() => setCityForecast(null));
   }, []);
+
+  // Précision mesurée des prévisions : chargée seulement quand l'usager regarde +1 h / +2 h.
+  const [accuracy, setAccuracy] = useState<Awaited<ReturnType<typeof getForecastAccuracyAction>> | null>(null);
+  useEffect(() => {
+    if (timeOffset === 0 || accuracy) return;
+    getForecastAccuracyAction().then(setAccuracy).catch(() => {});
+  }, [timeOffset, accuracy]);
 
   const mapNodes: MapNode[] = bottlenecks.map(b => {
     const f = timeOffset > 0 ? cityForecast?.nodes?.[b.id]?.[timeOffset - 1] : null;
@@ -835,6 +842,16 @@ export default function TrafficCommandDashboard() {
             corridorStates={timeOffset === 0 ? corridorStates : undefined}
             timeLabel={timeOffset === 0 ? (lastRefreshedAt ? `maj ${lastRefreshedAt}` : undefined) : `prévision +${timeOffset} h`}
           />
+          {timeOffset > 0 && accuracy && (() => {
+            const h = accuracy.horizons.find(x => x.horizonMin === timeOffset * 60);
+            return (
+              <p className="px-1 text-[11px] text-[#8EA8BD] leading-snug">
+                {accuracy.ready && h?.hitPct != null
+                  ? <>Vérifié sur les 14 derniers jours : bon niveau <b className="text-[#EAF3FA]">{h.hitPct} %</b> du temps à +{timeOffset} h, à un niveau près {h.nearPct} % ({h.checked} vérifications, écart moyen {h.mae} min).</>
+                  : <>Prévisions en apprentissage : {accuracy.days}/7 jours de mesures. Le taux de réussite s&apos;affichera dès qu&apos;il sera vérifiable.</>}
+              </p>
+            );
+          })()}
         </div>
 
         {/* ── 3. TUILES : chaque rubrique s'ouvre en plein écran, seulement si l'usager la demande ── */}

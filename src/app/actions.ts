@@ -12,6 +12,8 @@ import { getServerFirestore } from "@/firebase/server";
 import { collection, getDocs, query, where, Timestamp, limit, orderBy, doc, getDoc, setDoc, updateDoc, runTransaction, serverTimestamp, addDoc } from "firebase/firestore";
 import { CONFIG } from "@/lib/config";
 import { kinshasaNow, voteSlot } from "@/lib/kinshasa-time";
+import { predict, backtest, mergeScores, type BacktestScore } from "@/lib/forecast";
+import { recordMeasurements, loadSamples, daysCovered } from "@/lib/traffic-profiles-server";
 import { adminDb, verifyCaller, verifyAdmin, AuthError } from "@/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { STAR_PACK_CATALOG, PASS_CATALOG, DATA_PACK_CATALOG, REWARD_CDF, DAILY_REWARD_CAP_CDF, MIN_CASHOUT_CDF, CDF_PER_USD } from "@/lib/pricing";
@@ -517,24 +519,8 @@ export async function getGoogleTrafficStatusAction(axes: any[]) {
 
                 const result = { road: axis.name, status, speed, delay };
 
-                // Enregistrement passif dans traffic_history pour alimenter le modèle d'apprentissage IA
-                try {
-                    const kin = kinshasaNow();
-                    // Écriture serveur (Admin SDK) : traffic_history n'est plus modifiable par les clients.
-                    adminDb().collection('traffic_history').add({
-                        road: axis.name,
-                        status,
-                        speed,
-                        delay,
-                        dayOfWeek: kin.dayOfWeek,
-                        hourOfDay: kin.hour,
-                        minuteOfHour: kin.minute,
-                        tz: 'Africa/Kinshasa',
-                        timestamp: FieldValue.serverTimestamp()
-                    }).catch(() => {});
-                } catch (logErr) {
-                    // Silencieux pour ne pas impacter le flux principal
-                }
+                // Mémoire des mesures en direct (une par quart d'heure) : alimente les prévisions.
+                await recordMeasurements([{ key: `axis:${axis.name}`, delay }]).catch(() => {});
 
                 return result;
             } catch (e) {
@@ -1058,92 +1044,30 @@ export async function getTrafficForecastAction(routeName: string): Promise<Traff
     return 'FLUIDE';
   };
 
-  // 2. Interrogation de l'historique Firestore pour chaque heure future
+  // 2. Prévision heure par heure (lib/forecast) : profil habituel de l'axe + écart mesuré maintenant.
+  //    Sans historique suffisant, on garde le repère horaire générique de Kinshasa.
   const hourlyForecast: HourlyForecast[] = [];
-
+  let samples: Awaited<ReturnType<typeof loadSamples>> = [];
   try {
-    const firestore = getServerFirestore();
-    const historyCol = collection(firestore, 'traffic_history');
-
-    // Récupérer les données historiques enregistrées pour cet axe
-    let historicalDocs: any[] = [];
-    try {
-      const q = query(
-        historyCol,
-        where('road', '==', routeName),
-        limit(500)
-      );
-      const snap = await getDocs(q);
-      // Les anciens relevés (sans champ `tz`) ont été enregistrés à l'heure UTC du serveur :
-      // on les recale sur l'heure de Kinshasa (UTC+1).
-      historicalDocs = snap.docs.map(d => {
-        const h = d.data() as any;
-        if (h.tz === 'Africa/Kinshasa' || typeof h.hourOfDay !== 'number') return h;
-        const hour = (h.hourOfDay + 1) % 24;
-        const dayOfWeek = hour === 0 && typeof h.dayOfWeek === 'number' ? (h.dayOfWeek + 1) % 7 : h.dayOfWeek;
-        return { ...h, hourOfDay: hour, dayOfWeek };
-      });
-    } catch (dbErr) {
-      console.warn('[Forecast] Erreur lecture traffic_history:', dbErr);
-    }
-
-    for (let i = 1; i <= 6; i++) {
-      const targetHour = (currentHour + i) % 24;
-      const timeStr = `${targetHour.toString().padStart(2, '0')}:00`;
-
-      // 1. Chercher des relevés correspondant à cette heure et au même jour de la semaine
-      let matchingRecords = historicalDocs.filter(d => 
-        d.hourOfDay === targetHour && d.dayOfWeek === currentDayOfWeek
-      );
-
-      // 2. Si pas assez de données pour ce jour spécifique, élargir à tous les jours pour cette heure
-      if (matchingRecords.length === 0) {
-        matchingRecords = historicalDocs.filter(d => d.hourOfDay === targetHour);
-      }
-
-      let predictedDelay = 0;
-      let predictedStatus: any = 'FLUIDE';
-
-      if (matchingRecords.length > 0) {
-        // Calcul de la moyenne historique observée
-        const totalHistoricalDelay = matchingRecords.reduce((acc, curr) => acc + (Number(curr.delay) || 0), 0);
-        const avgHistoricalDelay = Math.round(totalHistoricalDelay / matchingRecords.length);
-
-        // Modèle hybride adaptatif :
-        // Les 2 premières heures donnent plus de poids au trafic réel actuel
-        // Les heures plus lointaines se basent davantage sur la moyenne historique
-        const currentWeight = i <= 2 ? 0.45 : 0.2;
-        const historicalWeight = 1 - currentWeight;
-
-        predictedDelay = Math.max(0, Math.round((currentDelay * currentWeight) + (avgHistoricalDelay * historicalWeight)));
-        predictedStatus = delayToStatus(predictedDelay);
-      } else {
-        // Fallback heuristique calibré Kinshasa
-        const fallback = heuristicStatus(targetHour);
-        predictedDelay = i <= 2 
-          ? Math.round(0.5 * currentDelay + 0.5 * fallback.delay)
-          : fallback.delay;
-        predictedStatus = delayToStatus(predictedDelay);
-      }
-
-      hourlyForecast.push({
-        time: timeStr,
-        status: predictedStatus,
-        delay: predictedDelay
-      });
-    }
+    samples = await loadSamples(`axis:${routeName}`);
   } catch (err) {
-    console.error('[Forecast] Erreur modèle prédictif:', err);
-    for (let i = 1; i <= 6; i++) {
-      const nextHour = (currentHour + i) % 24;
-      const fallback = heuristicStatus(nextHour);
-      hourlyForecast.push({
-        time: `${nextHour.toString().padStart(2, '0')}:00`,
-        status: fallback.status,
-        delay: fallback.delay
-      });
-    }
+    console.warn('[Forecast] historique illisible:', err);
   }
+  const { minute: currentMinute } = kinshasaNow();
+  const nowMs = Date.now();
+  const live = currentStatus !== 'INCONNU' ? currentDelay : null;
+  for (let i = 1; i <= 6; i++) {
+    const targetHour = (currentHour + i) % 24;
+    const horizon = (60 - currentMinute) + (i - 1) * 60; // jusqu'à HH:00 pile
+    const p = predict(samples, nowMs, horizon, live);
+    const delay = p ? p.delay : heuristicStatus(targetHour).delay;
+    hourlyForecast.push({
+      time: `${targetHour.toString().padStart(2, '0')}:00`,
+      status: delayToStatus(delay),
+      delay,
+    });
+  }
+  void currentDayOfWeek;
 
   // 3. Alternatives : mesurées en direct quand l'axe est connu, sinon marquées « non mesuré ».
   const alternativesMap: Array<[string, string[]]> = [
@@ -1615,6 +1539,7 @@ async function getCorridorStates(isPeakHour: boolean, activeReports: any[]): Pro
       }
     }));
     corridorCache = { data: Object.fromEntries(entries), expires: now + 5 * 60 * 1000 };
+    await recordMeasurements(entries.filter(([, st]) => st.isLive).map(([id, st]) => ({ key: `corridor:${id}`, delay: st.delayMin }))).catch(() => {});
   }
 
   // Signalements récents à moins de ~1 km du milieu du tronçon : appliqués à chaque appel (pas mis en cache).
@@ -1808,6 +1733,9 @@ export async function getRealtimeCommandDashboardAction(forceRefresh = false) {
       };
     }
   }));
+
+  // Mémoire des mesures Google en direct des 8 carrefours (jamais les estimations).
+  await recordMeasurements((bottlenecks as any[]).filter(b => b.source === "google").map(b => ({ key: `node:${b.id}`, delay: b.delayMin }))).catch(() => {});
 
   // GPS anonyme des usagers volontaires et des flottes partenaires (15 dernières minutes).
   // À partir de 3 contributeurs distincts, c'est une mesure en direct à part entière.
@@ -2089,46 +2017,77 @@ const NODE_HISTORY_AXIS: Record<string, string> = {
 let cityForecastCache: { data: any; expires: number } | null = null;
 
 /**
- * Prévision +1 h / +2 h pour les 8 nœuds de la carte, à partir de l'historique réel
- * (même heure, même jour de semaine en priorité, heure de Kinshasa).
- * Sans assez de relevés (< 3), on renvoie delay = null : la carte affiche « pas assez d'historique »
- * au lieu d'inventer une couleur.
+ * Prévision +1 h / +2 h des 8 carrefours de la carte (lib/forecast) : profil habituel du carrefour
+ * appris de ses propres mesures Google, corrigé par l'écart mesuré maintenant.
+ * delay = null quand l'historique ne suffit pas : la carte dit « pas de données » au lieu d'inventer.
  */
 export async function getCityForecastAction(): Promise<{
   generatedAt: string;
-  nodes: Record<string, Array<{ offsetH: number; hour: number; delay: number | null; samples: number }>>;
+  nodes: Record<string, Array<{ offsetH: number; hour: number; delay: number | null; samples: number; confidence: number }>>;
 }> {
   if (cityForecastCache && cityForecastCache.expires > Date.now()) return cityForecastCache.data;
   const kin = kinshasaNow();
-  const firestore = getServerFirestore();
-  const nodes: Record<string, Array<{ offsetH: number; hour: number; delay: number | null; samples: number }>> = {};
+  const nowMs = Date.now();
+  // Mesure du moment (tableau de bord en cache 90 s : pas d'appel Google en plus la plupart du temps).
+  let liveById: Record<string, number | null> = {};
+  try {
+    const dash = await getRealtimeCommandDashboardAction();
+    for (const b of (dash?.bottlenecks || []) as any[]) {
+      liveById[b.id] = b.source === 'google' && typeof b.delayMin === 'number' ? b.delayMin : null;
+    }
+  } catch { liveById = {}; }
 
-  await Promise.all(Object.entries(NODE_HISTORY_AXIS).map(async ([nodeId, road]) => {
-    let docs: any[] = [];
+  const nodes: Record<string, Array<{ offsetH: number; hour: number; delay: number | null; samples: number; confidence: number }>> = {};
+  await Promise.all(Object.keys(NODE_HISTORY_AXIS).map(async nodeId => {
+    let samples: Awaited<ReturnType<typeof loadSamples>> = [];
     try {
-      const snap = await getDocs(query(collection(firestore, 'traffic_history'), where('road', '==', road), limit(500)));
-      docs = snap.docs.map(d => {
-        const h = d.data() as any;
-        if (h.tz === 'Africa/Kinshasa' || typeof h.hourOfDay !== 'number') return h;
-        const hour = (h.hourOfDay + 1) % 24; // anciens relevés en UTC
-        return { ...h, hourOfDay: hour, dayOfWeek: hour === 0 && typeof h.dayOfWeek === 'number' ? (h.dayOfWeek + 1) % 7 : h.dayOfWeek };
-      });
+      samples = await loadSamples(`node:${nodeId}`);
     } catch (err) {
-      console.warn('[CityForecast] lecture impossible:', road, err);
+      console.warn('[CityForecast] lecture impossible:', nodeId, err);
     }
     nodes[nodeId] = [1, 2].map(offsetH => {
-      const hour = (kin.hour + offsetH) % 24;
-      const dow = kin.hour + offsetH >= 24 ? (kin.dayOfWeek + 1) % 7 : kin.dayOfWeek;
-      let match = docs.filter(d => d.hourOfDay === hour && d.dayOfWeek === dow && typeof d.delay === 'number');
-      if (match.length < 3) match = docs.filter(d => d.hourOfDay === hour && typeof d.delay === 'number');
-      if (match.length < 3) return { offsetH, hour, delay: null, samples: match.length };
-      const delay = Math.round(match.reduce((a, d) => a + Number(d.delay), 0) / match.length);
-      return { offsetH, hour, delay, samples: match.length };
+      const p = predict(samples, nowMs, offsetH * 60, liveById[nodeId] ?? null);
+      return { offsetH, hour: (kin.hour + offsetH) % 24, delay: p ? p.delay : null, samples: samples.length, confidence: p ? p.confidence : 0 };
     });
   }));
 
   const data = { generatedAt: kin.timeLabel, nodes };
   cityForecastCache = { data, expires: Date.now() + 10 * 60 * 1000 };
+  return data;
+}
+
+let accuracyCache: { data: any; expires: number } | null = null;
+
+/**
+ * Précision RÉELLE des prévisions : on rejoue les 2 dernières semaines des 8 carrefours
+ * (chaque prévision n'utilise que ce qui était connu à ce moment-là) et on compte les bons niveaux.
+ * Comparé à l'ancien modèle (moyenne horaire) et à « ça restera comme maintenant ».
+ */
+export async function getForecastAccuracyAction(): Promise<{
+  days: number;
+  ready: boolean;
+  horizons: Array<{ horizonMin: number; checked: number; hitPct: number | null; nearPct: number | null; mae: number; oldPct: number | null; persistencePct: number | null }>;
+}> {
+  if (accuracyCache && accuracyCache.expires > Date.now()) return accuracyCache.data;
+  const all = await Promise.all(Object.keys(NODE_HISTORY_AXIS).map(id => loadSamples(`node:${id}`).catch(() => [])));
+  const days = Math.max(0, ...all.map(daysCovered));
+  const since = Date.now() - 14 * 86400000;
+  const pct = (a: number, b: number) => (b >= 20 ? Math.round((100 * a) / b) : null);
+  const horizons = [60, 120].map(h => {
+    const m: BacktestScore = mergeScores(all.map(s => backtest(s, h, { since, stepMin: 60 })), h);
+    return {
+      horizonMin: h,
+      checked: m.checked,
+      hitPct: pct(m.hits, m.checked),
+      nearPct: pct(m.near, m.checked),
+      mae: m.mae,
+      oldPct: pct(m.oldModel.hits, m.oldModel.checked),
+      persistencePct: pct(m.persistence.hits, m.persistence.checked),
+    };
+  });
+  // Il faut au moins une semaine (tous les jours de la semaine vus) et 20 vérifications.
+  const data = { days, ready: days >= 7 && horizons[0].checked >= 20, horizons };
+  accuracyCache = { data, expires: Date.now() + 3 * 3600 * 1000 };
   return data;
 }
 

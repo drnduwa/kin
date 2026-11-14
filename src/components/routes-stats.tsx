@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useFirebase, errorEmitter } from '@/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { getGoogleTrafficStatusAction } from '@/app/actions';
+import { getGoogleTrafficStatusAction, getForecastAccuracyAction } from '@/app/actions';
 import { MAJOR_AXES } from '@/lib/constants';
 import { FirestorePermissionError } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
@@ -35,6 +35,13 @@ export default function RoutesStats() {
   const { firestore } = useFirebase();
   const { toast } = useToast();
   const [isUpdating, setIsUpdating] = useState(false);
+  const [accuracy, setAccuracy] = useState<Awaited<ReturnType<typeof getForecastAccuracyAction>> | null>(null);
+  useEffect(() => { getForecastAccuracyAction().then(setAccuracy).catch(() => {}); }, []);
+  const h1 = accuracy?.horizons.find(h => h.horizonMin === 60);
+  const accuracyValue = accuracy?.ready && h1?.hitPct != null ? `${h1.hitPct} %` : '--';
+  const accuracySub = accuracy?.ready && h1?.hitPct != null
+    ? `Bon niveau à +1 h (${h1.checked} vérif.)`
+    : accuracy ? `En apprentissage · ${accuracy.days}/7 j` : "Précision des prévisions";
 
   const handleArchiveState = async () => {
     setIsUpdating(true);
@@ -105,7 +112,7 @@ export default function RoutesStats() {
           <MetricCard title="Chantiers Actifs" value={officialRoadWorks.length.toString()} sub="Travaux en cours" icon={HardHat} color="text-primary" bg="bg-primary/5" />
           <MetricCard title="Nids-de-poule" value="0" sub="Signalés ce mois" icon={AlertCircle} color="text-red-500" bg="bg-red-50" />
           <MetricCard title="Ponts Critiques" value="0" sub="Vigilance accrue" icon={ShieldAlert} color="text-orange-500" bg="bg-orange-50" />
-          <MetricCard title="Données Prédites" value="--" sub="Précision de l'IA" icon={BrainCircuit} color="text-emerald-600" bg="bg-emerald-50" />
+          <MetricCard title="Prévisions justes" value={accuracyValue} sub={accuracySub} icon={BrainCircuit} color="text-emerald-600" bg="bg-emerald-50" />
         </div>
 
         <div className="grid lg:grid-cols-3 gap-8">
@@ -163,8 +170,8 @@ export default function RoutesStats() {
                         <div className="p-4 bg-white/10 rounded-2xl border border-white/10 flex items-center gap-4">
                             <TrendingUp className="h-6 w-6 text-emerald-400" />
                             <div>
-                                <p className="text-xs font-black uppercase">Fiabilité</p>
-                                <p className="text-xl font-black">En hausse</p>
+                                <p className="text-xs font-black uppercase">Précision à +1 h</p>
+                                <p className="text-xl font-black">{accuracyValue === '--' ? 'En apprentissage' : accuracyValue}</p>
                             </div>
                         </div>
                     </div>
