@@ -1,5 +1,7 @@
-'use server';
 /**
+ * Module serveur uniquement (importé par app/actions.ts) — pas de « use server » : il exporte une
+ * fonction synchrone et un type, interdits dans un fichier d'actions.
+ *
  * Comprendre une note vocale de Radio Trottoir (Gemini, audio en entrée).
  * Le Kinois parle français, lingala ou les deux : on rend un texte en français, plus l'alerte
  * routière éventuelle (type + lieu) pour proposer « en faire une alerte vérifiée » en un geste.
