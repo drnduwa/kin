@@ -27,13 +27,19 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { compressImageForUpload } from '@/lib/image-compress';
 import { useToast } from '@/hooks/use-toast';
-import { postChatAlertAction } from '@/app/actions';
+import { postChatAlertAction, transcribeVoiceNoteAction } from '@/app/actions';
+import { VoiceRecorder } from '@/components/kin/voice-recorder';
+import { voiceFileInfo, formatDuration } from '@/lib/voice';
 import { KFlowAvatar } from '@/components/kin/illustrations';
 import { KinoisFace, kinoisFor, KINOIS_TITLES } from '@/components/kin/kinois-face';
 import { play, isMuted, setMuted, onMutedChange } from '@/lib/sfx';
 import { checkChatText, CHAT_MAX_LEN, type ChatAlertType } from '@/lib/chat-check';
 
-type Msg = WithId<CommunityMessage> & { reactions?: Record<string, string>; verified?: boolean; reportId?: string; confirmation?: boolean };
+type Msg = WithId<CommunityMessage> & {
+  reactions?: Record<string, string>; verified?: boolean; reportId?: string; confirmation?: boolean;
+  /** notes vocales : durée, texte compris par K-Flow (écrit par le serveur) et alerte détectée */
+  mediaDuration?: number; transcript?: string; voiceAlert?: { type: ChatAlertType; place: string | null } | null;
+};
 
 const REACTIONS = ['🔥', '😂', '🙏', '😡', '❤️'] as const;
 
@@ -263,14 +269,38 @@ const MessageBubble = ({ message, isOwn, onReply }: { message: Msg; isOwn: boole
     return c;
   }, [reactions, message.likes]);
 
+  const [progress, setProgress] = useState(0);
+  const [audioLen, setAudioLen] = useState<number | null>(message.mediaDuration ?? null);
+  const [loadingAudio, setLoadingAudio] = useState(false);
+  useEffect(() => () => { audioRef.current?.pause(); }, []);
+
   const toggleAudio = () => {
     if (!message.mediaUrl) return;
     if (!audioRef.current) {
-      audioRef.current = new Audio(message.mediaUrl);
-      audioRef.current.onended = () => setIsPlaying(false);
+      const a = new Audio();
+      a.preload = 'auto';
+      a.onended = () => { setIsPlaying(false); setProgress(0); };
+      a.ontimeupdate = () => { if (a.duration && isFinite(a.duration)) setProgress(a.currentTime / a.duration); };
+      a.onloadedmetadata = () => { if (isFinite(a.duration) && a.duration > 0) setAudioLen(a.duration); };
+      a.onwaiting = () => setLoadingAudio(true);
+      a.onplaying = () => setLoadingAudio(false);
+      a.src = message.mediaUrl;
+      audioRef.current = a;
     }
-    if (isPlaying) audioRef.current.pause(); else audioRef.current.play();
-    setIsPlaying(!isPlaying);
+    const a = audioRef.current;
+    if (isPlaying) { a.pause(); setIsPlaying(false); return; }
+    setLoadingAudio(true);
+    a.play().then(() => { setIsPlaying(true); setLoadingAudio(false); }).catch(err => {
+      setLoadingAudio(false);
+      setIsPlaying(false);
+      audioRef.current = null;
+      const notSupported = (err as { name?: string })?.name === 'NotSupportedError';
+      toast({
+        title: notSupported ? 'Format non lu par ce téléphone' : 'Lecture impossible',
+        description: notSupported ? 'Cette ancienne note n’est pas lisible ici. Les nouvelles notes vocales le sont sur tous les téléphones.' : 'Vérifiez votre connexion puis réessayez.',
+        variant: 'destructive',
+      });
+    });
   };
 
   const react = async (emoji: string) => {
@@ -347,15 +377,28 @@ const MessageBubble = ({ message, isOwn, onReply }: { message: Msg; isOwn: boole
               <video src={message.mediaUrl} controls className="rounded-2xl mb-2 max-h-64 bg-black min-w-[220px]" />
             )}
             {message.mediaUrl && message.mediaType === 'audio' && (
-              <div className="flex items-center gap-3 py-1 pr-1">
-                <Button onClick={toggleAudio} size="icon" variant="ghost" className={cn('rounded-full h-10 w-10 shrink-0', isOwn ? 'text-white hover:bg-white/10' : 'text-primary hover:bg-primary/10')}>
-                  {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 fill-current" />}
-                </Button>
-                <div className="flex items-end gap-[3px] h-6 min-w-[120px]" aria-hidden>
-                  {Array.from({ length: 18 }).map((_, i) => (
-                    <span key={i} className={cn('w-[3px] rounded-full bg-current opacity-70', isPlaying && 'kf-eq')} style={{ height: `${30 + ((i * 37) % 70)}%`, animationDelay: `${(i % 6) * 0.08}s` }} />
-                  ))}
+              <div className="py-1 pr-1">
+                <div className="flex items-center gap-2.5">
+                  <Button onClick={toggleAudio} size="icon" variant="ghost" aria-label={isPlaying ? 'Pause' : 'Écouter la note vocale'}
+                    className={cn('rounded-full h-10 w-10 shrink-0', isOwn ? 'text-white hover:bg-white/10' : 'text-primary hover:bg-primary/10')}>
+                    {loadingAudio ? <Loader2 className="h-5 w-5 animate-spin" /> : isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 fill-current" />}
+                  </Button>
+                  <div className="flex items-center gap-[3px] h-7 min-w-[120px]" aria-hidden>
+                    {Array.from({ length: 22 }).map((_, i) => (
+                      <span key={i}
+                        className={cn('w-[3px] rounded-full bg-current transition-opacity', i / 22 < progress ? 'opacity-100' : 'opacity-40', isPlaying && 'kf-eq')}
+                        style={{ height: `${30 + ((i * 37) % 70)}%`, animationDelay: `${(i % 6) * 0.08}s` }} />
+                    ))}
+                  </div>
+                  <span className={cn('text-[11px] font-bold tabular-nums shrink-0', isOwn ? 'text-white/80' : 'text-slate-500')}>
+                    {audioLen ? formatDuration(isPlaying ? audioLen * (1 - progress) : audioLen) : '🎙'}
+                  </span>
                 </div>
+                {message.transcript ? (
+                  <p className={cn('mt-1 text-[12px] leading-snug italic', isOwn ? 'text-white/90' : 'text-slate-600 dark:text-slate-300')}>
+                    <span aria-hidden>📝 </span>« {message.transcript} »
+                  </p>
+                ) : null}
               </div>
             )}
             {message.text && <p className="text-[14px] leading-relaxed whitespace-pre-wrap break-words">{message.text}</p>}
@@ -418,7 +461,8 @@ function HostBubble({ text }: { text: string }) {
 export default function CommunityChat() {
   const [inputText, setInputText] = useState('');
   const [isUploading, setIsUploading] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [voiceSuggest, setVoiceSuggest] = useState<{ type: ChatAlertType; place: string | null; transcript: string } | null>(null);
   const [alertOpen, setAlertOpen] = useState(false);
   const [alertType, setAlertType] = useState<ChatAlertType>('embouteillage');
   const [alertPlace, setAlertPlace] = useState('');
@@ -428,8 +472,6 @@ export default function CommunityChat() {
   const [hostLine, setHostLine] = useState(0);
   const [hostEvents, setHostEvents] = useState<{ id: number; text: string }[]>([]);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const camInputRef = useRef<HTMLInputElement>(null);
   const imgInputRef = useRef<HTMLInputElement>(null);
@@ -489,16 +531,19 @@ export default function CommunityChat() {
   const hostSay = (text: string) => setHostEvents(ev => [...ev.slice(-3), { id: Date.now(), text }]);
 
   /* Envoi d'un message libre (texte ou média), vérifié avant l'envoi */
-  const sendMessage = async (params: { text?: string; mediaFile?: File | Blob; mediaType?: 'image' | 'video' | 'audio' }) => {
-    if (!user) { toast({ title: 'Connexion requise', variant: 'destructive' }); return; }
+  const sendMessage = async (params: {
+    text?: string; mediaFile?: File | Blob; mediaType?: 'image' | 'video' | 'audio';
+    contentType?: string; ext?: string; durationSec?: number;
+  }): Promise<{ ok: boolean; id?: string }> => {
+    if (!user) { toast({ title: 'Connexion requise', description: 'Connectez-vous pour parler sur Radio Trottoir.', variant: 'destructive' }); return { ok: false }; }
     let text = '';
     if (params.text !== undefined && !params.mediaFile) {
       const check = checkChatText(params.text);
-      if (!check.ok) { toast({ title: 'Message refusé', description: check.reason, variant: 'destructive' }); return; }
+      if (!check.ok) { toast({ title: 'Message refusé', description: check.reason, variant: 'destructive' }); return { ok: false }; }
       text = check.text;
       if (check.suggest) setSuggest(check.suggest);
     }
-    if (!text && !params.mediaFile) return;
+    if (!text && !params.mediaFile) return { ok: false };
 
     setIsUploading(true);
     try {
@@ -506,22 +551,24 @@ export default function CommunityChat() {
       if (params.mediaFile) {
         try {
           const storage = getStorage(firebaseApp);
-          const ext = params.mediaType === 'audio' ? 'webm' : params.mediaType === 'video' ? 'mp4' : 'jpg';
-          const snap = await uploadBytes(storageRef(storage, `chat/${user.uid}/${Date.now()}.${ext}`), params.mediaFile);
+          const ext = params.ext || (params.mediaType === 'video' ? 'mp4' : 'jpg');
+          const contentType = params.contentType || params.mediaFile.type || undefined;
+          const snap = await uploadBytes(storageRef(storage, `chat/${user.uid}/${Date.now()}.${ext}`), params.mediaFile, contentType ? { contentType } : undefined);
           mediaUrl = await getDownloadURL(snap.ref);
         } catch (err) {
           console.error('STORAGE ERROR:', err);
-          toast({ title: 'Erreur média', description: "Le fichier n'a pas pu être envoyé.", variant: 'destructive' });
-          return;
+          toast({ title: 'Envoi impossible', description: params.mediaType === 'audio' ? "La note vocale n'est pas partie (réseau ?). Elle est gardée : réessayez." : "Le fichier n'a pas pu être envoyé.", variant: 'destructive' });
+          return { ok: false };
         }
       }
-      await addDocumentNonBlocking(collection(firestore, 'community_chat'), {
+      const created = await addDocumentNonBlocking(collection(firestore, 'community_chat'), {
         userId: user.uid,
         userName: user.displayName || 'Kinois',
         userAvatar: user.photoURL || '',
         text,
         mediaUrl,
         mediaType: params.mediaType || null,
+        ...(params.mediaType === 'audio' && params.durationSec ? { mediaDuration: Math.round(params.durationSec) } : {}),
         locationName: '',
         alertType: null,
         likes: 0,
@@ -529,11 +576,14 @@ export default function CommunityChat() {
         reactions: {},
         timestamp: serverTimestamp(),
       });
+      if (!created) return { ok: false };
       play('send');
-      setInputText('');
+      if (!params.mediaFile) setInputText('');
+      return { ok: true, id: created.id };
     } catch (e) {
       console.error('CHAT SEND ERROR:', e);
       toast({ title: "Erreur d'envoi", variant: 'destructive' });
+      return { ok: false };
     } finally {
       setIsUploading(false);
     }
@@ -560,6 +610,7 @@ export default function CommunityChat() {
       setAlertPlace('');
       setAlertNote('');
       setSuggest(null);
+      setVoiceSuggest(null);
       if (res.duplicate) {
         play('ding');
         hostSay(`Bien vu ndeko ! Quelqu'un avait déjà signalé ${res.locationName} : j'ai ajouté ta confirmation, l'alerte est plus sûre.`);
@@ -574,36 +625,33 @@ export default function CommunityChat() {
     }
   };
 
-  /* Note vocale */
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const rec = new MediaRecorder(stream);
-      mediaRecorderRef.current = rec;
-      audioChunksRef.current = [];
-      rec.ondataavailable = e => audioChunksRef.current.push(e.data);
-      rec.onstop = () => {
-        const blob = new Blob(audioChunksRef.current, { type: rec.mimeType || 'audio/webm' });
-        sendMessage({ mediaFile: blob, mediaType: 'audio' });
-        stream.getTracks().forEach(t => t.stop());
-      };
-      rec.start();
-      setIsRecording(true);
-      play('tick');
-    } catch {
-      toast({ title: 'Microphone bloqué', description: 'Autorisez le micro pour envoyer une note vocale.', variant: 'destructive' });
-    }
+  /* Note vocale : envoi, puis K-Flow écoute et propose d'en faire une alerte vérifiée */
+  const sendVoice = async (note: { blob: Blob; mime: string; durationSec: number }) => {
+    const info = voiceFileInfo(note.mime);
+    const res = await sendMessage({ mediaFile: note.blob, mediaType: 'audio', contentType: info.contentType, ext: info.ext, durationSec: note.durationSec });
+    if (res.ok && res.id && user) void listenToVoice(res.id);
+    return res.ok;
   };
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) { mediaRecorderRef.current.stop(); setIsRecording(false); }
+
+  const listenToVoice = async (messageId: string) => {
+    try {
+      const out = await transcribeVoiceNoteAction({ idToken: await user!.getIdToken(), messageId });
+      if (!out.success) return; // transcription indisponible : la note vocale reste une note vocale
+      if (out.alertType) {
+        setVoiceSuggest({ type: out.alertType, place: out.place, transcript: out.transcript });
+        setSuggest(null);
+        play('pop');
+        hostSay(`J'ai bien entendu ndeko : ${ALERTS[out.alertType].label.toLowerCase()}${out.place ? ` à ${out.place}` : ''}. On le met sur la carte ?`);
+      }
+    } catch { /* silencieux : ne bloque jamais le chat */ }
   };
 
   const pickImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = '';
-    try { sendMessage({ mediaFile: await compressImageForUpload(file, 1280, 0.75), mediaType: 'image' }); }
-    catch { sendMessage({ mediaFile: file, mediaType: 'image' }); }
+    try { await sendMessage({ mediaFile: await compressImageForUpload(file, 1280, 0.75), mediaType: 'image', contentType: 'image/jpeg', ext: 'jpg' }); }
+    catch { await sendMessage({ mediaFile: file, mediaType: 'image' }); }
   };
 
   let lastDay = '';
@@ -677,9 +725,30 @@ export default function CommunityChat() {
         </div>
       </ScrollArea>
 
+      {/* ── K-Flow a compris une note vocale : en faire une alerte vérifiée ── */}
+      <AnimatePresence>
+        {voiceSuggest && (
+          <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }}
+            className="mx-3 mb-2 rounded-2xl bg-[#0A1A29] text-white p-3 shadow-xl space-y-2">
+            <div className="flex items-start gap-2">
+              <KFlowAvatar mood="dense" className="h-8 w-8 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs leading-snug">J&apos;ai entendu <b>{ALERTS[voiceSuggest.type].label.toLowerCase()}</b>{voiceSuggest.place ? <> à <b>{voiceSuggest.place}</b></> : null}. On le met sur la carte ?</p>
+                {voiceSuggest.transcript && <p className="mt-1 text-[11px] italic text-[#8EA8BD] line-clamp-2">« {voiceSuggest.transcript} »</p>}
+              </div>
+              <button type="button" onClick={() => setVoiceSuggest(null)} className="p-1 text-[#8EA8BD]" aria-label="Non merci"><X className="h-4 w-4" /></button>
+            </div>
+            <Button size="sm" onClick={() => { setAlertPlace(voiceSuggest.place || ''); openAlert(voiceSuggest.type, voiceSuggest.transcript.slice(0, 160)); }}
+              className={cn('w-full h-9 rounded-full text-xs font-black', ALERTS[voiceSuggest.type].color)}>
+              <Megaphone className="h-3.5 w-3.5 mr-1" /> Oui, alerte vérifiée
+            </Button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ── Suggestion : ce message ressemble à une alerte ── */}
       <AnimatePresence>
-        {suggest && (
+        {suggest && !voiceSuggest && (
           <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }}
             className="mx-3 mb-2 flex items-center gap-2 rounded-2xl bg-[#0A1A29] text-white p-2.5 pl-3 shadow-xl">
             <KFlowAvatar mood="dense" className="h-8 w-8 shrink-0" />
@@ -705,6 +774,7 @@ export default function CommunityChat() {
         <div className="max-w-3xl mx-auto flex items-center gap-1.5 px-3 pt-2">
           <input type="file" ref={camInputRef} className="hidden" accept="image/*" capture="environment" onChange={pickImage} />
           <input type="file" ref={imgInputRef} className="hidden" accept="image/*" onChange={pickImage} />
+          {!voiceActive && (<>
           <Button type="button" variant="ghost" size="icon" onClick={() => camInputRef.current?.click()} className="rounded-full h-10 w-10 shrink-0 text-slate-400 hover:text-primary" aria-label="Prendre une photo"><Camera className="h-5 w-5" /></Button>
           <Button type="button" variant="ghost" size="icon" onClick={() => imgInputRef.current?.click()} className="rounded-full h-10 w-10 shrink-0 text-slate-400 hover:text-primary hidden sm:inline-flex" aria-label="Choisir une image"><ImageIcon className="h-5 w-5" /></Button>
 
@@ -726,11 +796,9 @@ export default function CommunityChat() {
             </Button>
           </div>
 
-          {isRecording ? (
-            <Button onClick={stopRecording} className="h-11 w-11 shrink-0 rounded-full bg-red-500 hover:bg-red-600 animate-pulse" aria-label="Arrêter et envoyer la note vocale"><Square className="h-4 w-4 fill-white text-white" /></Button>
-          ) : (
-            <Button onClick={startRecording} variant="outline" size="icon" className="h-11 w-11 shrink-0 rounded-full border-2 text-slate-500" aria-label="Note vocale"><Mic className="h-5 w-5" /></Button>
-          )}
+          </>)}
+
+          <VoiceRecorder onSend={sendVoice} onActiveChange={setVoiceActive} disabled={isUploading} />
         </div>
       </div>
 

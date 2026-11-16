@@ -34,6 +34,13 @@ export type ChatCheck =
   | { ok: false; reason: string };
 
 /** Vérifie un message libre avant envoi. */
+/** Pour un texte produit automatiquement (transcription) : on masque liens et numéros au lieu de refuser. */
+export function maskForChat(raw: string): string {
+  const LINK_G = new RegExp(LINK.source, 'gi');
+  const PHONE_G = new RegExp(PHONE.source, 'g');
+  return softenInsults(cleanText(raw).replace(LINK_G, '[lien retiré]').replace(PHONE_G, '[numéro retiré]')).slice(0, CHAT_MAX_LEN);
+}
+
 export function checkChatText(raw: string): ChatCheck {
   const text = cleanText(raw);
   if (text.length < 2) return { ok: false, reason: 'Message trop court.' };

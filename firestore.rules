@@ -120,7 +120,10 @@ service cloud.firestore {
         && request.resource.data.get('text', '').size() <= 300
         && request.resource.data.get('alertType', null) == null
         && !('verified' in request.resource.data)
-        && !('reportId' in request.resource.data);
+        && !('reportId' in request.resource.data)
+        // transcription des notes vocales : écrite seulement par le serveur
+        && !('transcript' in request.resource.data)
+        && !('voiceAlert' in request.resource.data);
       // Les autres peuvent seulement : poser/retirer LEUR réaction, +1 commentaire, +1 like (anciennes versions).
       allow update: if isAdmin() || (isSignedIn() && (
         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])

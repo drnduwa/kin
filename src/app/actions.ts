@@ -20,7 +20,8 @@ import { STAR_PACK_CATALOG, PASS_CATALOG, DATA_PACK_CATALOG, REWARD_CDF, DAILY_R
 import { fulfillVerifiedFlexPayPayment, markPaymentFailed } from "@/lib/payments-server";
 import { loadRecentProbeSpeeds, statusFromSpeed } from "@/lib/probes-server";
 import { BLACK_SPOTS, MEASURED_SEGMENTS, segMid } from "@/lib/corridors";
-import { cleanText, softenInsults, ALERT_TO_REPORT, type ChatAlertType } from "@/lib/chat-check";
+import { cleanText, softenInsults, maskForChat, ALERT_TO_REPORT, type ChatAlertType } from "@/lib/chat-check";
+import { understandVoiceNote, hasGeminiKey } from "@/ai/flows/voice-note-flow";
 import { XP, DAILY_MISSIONS, BADGES, COMMUNES, levelFromXp, rankFor, kinshasaDayKey, kinshasaWeekId, type MissionKind } from "@/lib/game";
 
 /** Identifiants SMTP lus dans l'environnement uniquement (les mots de passe ne doivent plus être dans le code). */
@@ -2190,4 +2191,67 @@ export async function postChatAlertAction(params: {
     locationName,
     reward: reward && reward.success ? { rewardCDF: reward.rewardCDF, xpGained: reward.xpGained, message: reward.message, levelUp: reward.levelUp } : undefined,
   };
+}
+
+/**
+ * Note vocale de Radio Trottoir → texte + alerte routière éventuelle.
+ * Le serveur relit lui-même le fichier stocké (jamais un audio fourni par le client), seulement pour
+ * une note de l'appelant, une seule fois par note. Le texte passe les mêmes filtres que le chat
+ * (insultes adoucies, liens et numéros retirés) et est écrit sur le message par l'Admin SDK :
+ * un client ne peut pas fabriquer une fausse transcription (firestore.rules).
+ */
+export async function transcribeVoiceNoteAction(params: { idToken: string; messageId: string }): Promise<
+  | { success: true; transcript: string; alertType: ChatAlertType | null; place: string | null }
+  | { success: false; error: string; unavailable?: boolean }
+> {
+  let caller;
+  try { caller = await verifyCaller(params.idToken); } catch (err: any) { return { success: false, error: authErrorMessage(err, 'Connexion requise.') }; }
+  if (!hasGeminiKey()) return { success: false, unavailable: true, error: 'Transcription non configurée.' };
+  if (typeof params.messageId !== 'string' || !/^[A-Za-z0-9_-]{6,64}$/.test(params.messageId)) return { success: false, error: 'Message inconnu.' };
+
+  const db = adminDb();
+  const ref = db.collection('community_chat').doc(params.messageId);
+  const snap = await ref.get();
+  const msg = snap.data() as any;
+  if (!snap.exists || !msg) return { success: false, error: 'Message introuvable.' };
+  if (msg.userId !== caller.uid) return { success: false, error: 'Ce n’est pas votre note vocale.' };
+  if (msg.mediaType !== 'audio' || typeof msg.mediaUrl !== 'string') return { success: false, error: 'Pas de note vocale.' };
+  if (typeof msg.transcript === 'string') {
+    return { success: true, transcript: msg.transcript, alertType: msg.voiceAlert?.type ?? null, place: msg.voiceAlert?.place ?? null };
+  }
+
+  // Seulement un fichier de NOTRE stockage, dans le dossier de l'appelant.
+  let url: URL;
+  try { url = new URL(msg.mediaUrl); } catch { return { success: false, error: 'Lien audio invalide.' }; }
+  const bucket = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || 'studio-874039458-d0447.firebasestorage.app';
+  const objectPath = decodeURIComponent(url.pathname.split('/o/')[1] || '');
+  if (url.hostname !== 'firebasestorage.googleapis.com' || !url.pathname.includes(`/b/${bucket}/o/`) || !objectPath.startsWith(`chat/${caller.uid}/`)) {
+    return { success: false, error: 'Fichier audio non reconnu.' };
+  }
+
+  try {
+    const res = await fetch(url.toString());
+    if (!res.ok) return { success: false, error: 'Fichier audio illisible.' };
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length < 500 || buf.length > 4 * 1024 * 1024) return { success: false, error: 'Note vocale trop courte ou trop longue.' };
+    const headerType = (res.headers.get('content-type') || '').split(';')[0];
+    const ext = objectPath.split('.').pop();
+    // Anciennes notes étiquetées « wav » : c'était du WebM.
+    const contentType = ext === 'm4a' ? 'audio/mp4' : ext === 'ogg' ? 'audio/ogg' : ext === 'webm' || ext === 'wav' ? 'audio/webm' : (headerType.startsWith('audio/') ? headerType : 'audio/webm');
+
+    const out = await understandVoiceNote({ base64: buf.toString('base64'), contentType });
+    const transcript = out.language === 'inaudible' ? '' : maskForChat(out.transcript || '');
+    const alertType = out.isTraffic && out.alertType && ['embouteillage', 'travaux', 'police'].includes(out.alertType) ? out.alertType as ChatAlertType : null;
+    const place = out.place ? cleanText(out.place).replace(/\d{6,}/g, '').slice(0, 80) || null : null;
+    await ref.update({
+      transcript,
+      transcriptLang: out.language,
+      voiceAlert: alertType ? { type: alertType, place } : null,
+      transcribedAt: FieldValue.serverTimestamp(),
+    });
+    return { success: true, transcript, alertType, place };
+  } catch (err: any) {
+    console.error('[VoiceNote] transcription:', err?.message || err);
+    return { success: false, error: 'K-Flow n’a pas pu écouter cette note.' };
+  }
 }
