@@ -1,0 +1,4 @@
+# Seuls cloudbuild.yaml et Dockerfile sont nécessaires : les données sont téléchargées dans le build.
+README.md
+deploy.ps1
+.gcloudignore

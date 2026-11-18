@@ -52,3 +52,6 @@ flexpaie/
 firebase-debug.log
 # caches OpenStreetMap (re-téléchargés par scripts/road-reports)
 /data/osm/
+
+# copié depuis node_modules/maplibre-gl par « npm install » (postinstall)
+/public/maplibre-gl-worker.js
