@@ -17,6 +17,7 @@ import {
   createFleetPartnerAction, listFleetPartnersAction, setFleetPartnerActiveAction,
   setSentinelAction, listSentinelsAction,
 } from '@/app/scale-actions';
+import { getDriveTripStatsAction } from '@/app/drive-actions';
 
 const ADMIN_EMAILS = ['drnduwa@gmail.com', 'contact.congonamotema@gmail.com'];
 const EVENT_TYPES = [['match', 'Match / stade'], ['cortege', 'Cortège officiel'], ['eglise', 'Grand rassemblement'], ['travaux', 'Travaux'], ['coupure', 'Coupure SNEL (feux éteints)'], ['autre', 'Autre']] as const;
@@ -24,7 +25,7 @@ const PLACES = [
   ...TRACKED_NODES.map(n => ({ key: `node:${n.id}`, label: n.name, lat: n.lat, lng: n.lng })),
   ...Object.entries(COMMUNE_CENTERS).map(([c, p]) => ({ key: `commune:${c}`, label: `Commune de ${c}`, ...p })),
 ];
-type Tab = 'events' | 'sentinels' | 'fleets' | 'sponsor';
+type Tab = 'events' | 'sentinels' | 'fleets' | 'sponsor' | 'drive';
 
 export default function CroissanceAdminPage() {
   const { user } = useUser();
@@ -40,8 +41,8 @@ export default function CroissanceAdminPage() {
             <p className="text-sm text-slate-500">Réservé aux administrateurs.</p>
           ) : (
             <>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 rounded-xl bg-white dark:bg-slate-900 border p-1">
-                {([['events', 'Événements'], ['sentinels', 'Sentinelles'], ['fleets', 'Flottes'], ['sponsor', 'Sponsor']] as const).map(([t, l]) => (
+              <div className="grid grid-cols-3 sm:grid-cols-5 gap-1 rounded-xl bg-white dark:bg-slate-900 border p-1">
+                {([['events', 'Événements'], ['sentinels', 'Sentinelles'], ['fleets', 'Flottes'], ['sponsor', 'Sponsor'], ['drive', 'Conduite']] as const).map(([t, l]) => (
                   <button key={t} type="button" onClick={() => setTab(t)} aria-pressed={tab === t}
                     className={cn('rounded-lg py-2 text-sm font-bold', tab === t ? 'bg-primary text-white' : 'text-slate-500')}>{l}</button>
                 ))}
@@ -50,6 +51,7 @@ export default function CroissanceAdminPage() {
               {tab === 'sentinels' && <SentinelsTab />}
               {tab === 'fleets' && <FleetsTab />}
               {tab === 'sponsor' && <SponsorTab />}
+              {tab === 'drive' && <DriveTab />}
             </>
           )}
         </div>
@@ -122,6 +124,37 @@ function EventsTab() {
         )}
       </Card>
     </>
+  );
+}
+
+/* --------------------------------------------------------------- Mode Conduite (test terrain) */
+function DriveTab() {
+  const { user } = useUser();
+  const [stats, setStats] = useState<Awaited<ReturnType<typeof getDriveTripStatsAction>> | null>(null);
+  useEffect(() => {
+    if (!user) return;
+    user.getIdToken().then(getDriveTripStatsAction).then(setStats).catch(() => {});
+  }, [user]);
+  if (!stats) return <Card title="Mode Conduite"><p className="text-sm text-slate-500">Chargement…</p></Card>;
+  if (!stats.success) return <Card title="Mode Conduite"><p className="text-sm text-red-500">{stats.error}</p></Card>;
+  const tiles: Array<[string, string | number]> = [
+    ['Trajets réels', stats.realTrips], ['Conducteurs', stats.drivers], ['Réguliers (≥ 4 jours)', stats.regularDrivers], ['Km parcourus', stats.km],
+    ['Trajets terminés', `${stats.completedRate} %`], ['Alertes reçues', stats.alerts], ['Confirmations', stats.confirmations], ['Itinéraires bis', stats.reroutes],
+  ];
+  return (
+    <Card
+      title="Mode Conduite : test terrain (14 derniers jours)"
+      hint={`Objectif : au moins la moitié des testeurs réguliers. Démos exclues (${stats.demoTrips}). Aucune position enregistrée, seulement des totaux par trajet.`}
+    >
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {tiles.map(([label, value]) => (
+          <div key={label} className="rounded-2xl bg-slate-50 dark:bg-slate-800 p-3">
+            <div className="text-2xl font-black tabular-nums">{value}</div>
+            <div className="text-[11px] font-bold uppercase text-slate-500">{label}</div>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 

@@ -1,18 +1,31 @@
 'use client';
 
 /**
- * Mode Conduite (phase 1) : carte stylisée de Kinshasa, itinéraire et consignes en plein écran.
+ * Mode Conduite : carte stylisée de Kinshasa, itinéraire, consignes et alertes en plein écran.
  *
  * - Carte MapLibre, tuiles OpenFreeMap (données © OpenStreetMap), repeinte « jeu d'arcade » à la volée.
  * - Itinéraire calculé par /api/drive-route (OSRM), suivi au GPS, recalculé si on s'en écarte.
  * - « Démo » : un trajet simulé le long de l'itinéraire, pour tester sans rouler.
- * Les alertes (bouchons, pluie, routes abîmées…) arrivent en phase 2.
+ * - Alertes (phase 2) : bouchons mesurés, signalements, presse/ministère, pluie ; voix française, une à la fois.
+ * - Itinéraire choisi selon Kinshasa (bouchons, routes fermées ou inondées) et itinéraire bis en route.
+ * - « Toujours là ? » (phase 3) : vote 1-tap récompensé, résumé du trajet, journal anonyme pour le test terrain.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { Map as MLMap, Marker as MLMarker } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { ArrowUp, Flag, Loader2, LocateFixed, Play, RotateCcw, Undo2, X, Gauge, Navigation } from 'lucide-react';
+import { ArrowUp, CloudRain, Flag, Gauge, Loader2, LocateFixed, Navigation, Play, RotateCcw, Route, Star, Undo2, Volume2, VolumeX, X } from 'lucide-react';
+import { doc, increment, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { useFirebase, useUser } from '@/firebase';
+import type { DriveActions } from './drive-mode-loader';
+import SpeedSharingToggle from '@/components/game/speed-sharing-toggle';
+import { voteSlot } from '@/lib/kinshasa-time';
+import { play } from '@/lib/sfx';
+import { pressReportsAt } from '@/lib/road-reports';
+import {
+  HAZARD_STYLE, LINGALA, delayAheadMin, hazardsOnRoute, newAnnouncer, nextAnnouncement, rainMessage, routeCostMin, shouldSlowDown, spokenAlert,
+  type AnnouncerState, type DriveIntel, type Hazard,
+} from '@/lib/drive-alerts';
 import { cn } from '@/lib/utils';
 import {
   DRIVE_PLACES, arrowFor, formatDistance, formatDuration, inKinshasa, instruction, pointAlong, prepareRoute, progressOn,
@@ -119,19 +132,55 @@ function ManeuverIcon({ kind, className }: { kind: ArrowKind; className?: string
 }
 
 // ───────────────────────────── Écran ─────────────────────────────
-export default function DriveMode() {
+type Alert = { hazard: Hazard; until: number };
+type Prompt = { hazard: Hazard; until: number };
+type AltOffer = { route: PreparedRoute; savedMin: number; avoids: string };
+type Banner = { text: string; ln?: string | null; tone: 'info' | 'rain' | 'xp'; until: number };
+
+function hazardElement(h: Hazard) {
+  const el = document.createElement('div');
+  const s = HAZARD_STYLE[h.kind];
+  el.style.cssText = `width:30px;height:30px;border-radius:9999px;background:#0b1324;border:3px solid ${s.color};display:flex;align-items:center;justify-content:center;font-size:15px;box-shadow:0 0 12px ${s.color}`;
+  el.textContent = s.icon;
+  el.title = h.title;
+  return el;
+}
+
+/** Voix française du téléphone (le lingala viendra en enregistrements). */
+function speak(text: string) {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'fr-FR';
+  u.rate = 1.05;
+  const fr = window.speechSynthesis.getVoices().find(v => v.lang?.toLowerCase().startsWith('fr'));
+  if (fr) u.voice = fr;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(u);
+}
+
+export default function DriveMode({ actions }: { actions: DriveActions }) {
+  const { user } = useUser();
+  const { firestore } = useFirebase();
+
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MLMap | null>(null);
   const mlRef = useRef<typeof import('maplibre-gl') | null>(null);
   const carRef = useRef<MLMarker | null>(null);
   const flagRef = useRef<MLMarker | null>(null);
+  const hazardMarkersRef = useRef<MLMarker[]>([]);
   const routeRef = useRef<PreparedRoute | null>(null);
   const lastIndexRef = useRef(0);
   const offCountRef = useRef(0);
   const lastRerouteRef = useRef(0);
+  const lastAltCheckRef = useRef(0);
   const simMRef = useRef(0);
   const startedAtRef = useRef(0);
   const followRef = useRef(true);
+  const posRef = useRef<LatLng | null>(null);
+  const announcerRef = useRef<AnnouncerState>(newAnnouncer());
+  const askedRef = useRef<Set<string>>(new Set());
+  const statsRef = useRef({ alerts: 0, confirmations: 0, reroutes: 0, xp: 0 });
+  const loggedRef = useRef(false);
 
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
@@ -141,14 +190,49 @@ export default function DriveMode() {
   const [destId, setDestId] = useState<string>(DRIVE_PLACES[1]?.id ?? '');
   const [pickedDest, setPickedDest] = useState<LatLng | null>(null);
   const [simulate, setSimulate] = useState(false);
+  const [route, setRoute] = useState<PreparedRoute | null>(null);
   const [progress, setProgress] = useState<DriveProgress | null>(null);
   const [speedKmh, setSpeedKmh] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [summary, setSummary] = useState<{ km: string; time: string } | null>(null);
+  const [summary, setSummary] = useState<{ km: string; time: string; alerts: number; confirmations: number; xp: number } | null>(null);
   const [following, setFollowing] = useState(true);
+  const [intel, setIntel] = useState<DriveIntel | null>(null);
+  const [alert, setAlert] = useState<Alert | null>(null);
+  const [prompt, setPrompt] = useState<Prompt | null>(null);
+  const [altOffer, setAltOffer] = useState<AltOffer | null>(null);
+  const [banner, setBanner] = useState<Banner | null>(null);
+  const [voiceOn, setVoiceOn] = useState(true);
+  const [now, setNow] = useState(() => Date.now());
 
   const startPoint: LatLng | null = startId === 'gps' ? gpsPos : DRIVE_PLACES.find(p => p.id === startId)?.point ?? null;
   const destPoint: LatLng | null = destId === 'picked' ? pickedDest : DRIVE_PLACES.find(p => p.id === destId)?.point ?? null;
+
+  const press = useMemo(() => pressReportsAt().filter(r => r.active), []);
+  const rain = rainMessage(intel?.weather ?? null);
+  const hazards = useMemo(
+    () => (route ? hazardsOnRoute(route, intel, press, rain?.level === 'raining') : []),
+    [route, intel, press, rain?.level],
+  );
+
+  // Préférence voix (mémorisée sur l'appareil)
+  useEffect(() => {
+    try { setVoiceOn(localStorage.getItem('kf-drive-voice') !== 'off'); } catch { /* stockage indisponible */ }
+  }, []);
+  const toggleVoice = () => {
+    setVoiceOn(v => {
+      try { localStorage.setItem('kf-drive-voice', v ? 'off' : 'on'); } catch { /* ignore */ }
+      if (v) window.speechSynthesis?.cancel();
+      return !v;
+    });
+  };
+  const say = useCallback((text: string) => { if (voiceOn) speak(text); }, [voiceOn]);
+
+  // Horloge pour faire disparaître les bandeaux
+  useEffect(() => {
+    if (phase !== 'driving') return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [phase]);
 
   // ── Carte ──
   useEffect(() => {
@@ -173,7 +257,7 @@ export default function DriveMode() {
         map.on('error', e => { if (!map.loaded()) setMapError(String(e.error?.message ?? 'Carte indisponible')); });
         // L'utilisateur bouge la carte : on arrête de suivre la voiture jusqu'au bouton « Recentrer »
         map.on('dragstart', () => { followRef.current = false; setFollowing(false); });
-      } catch (e) {
+      } catch {
         setMapError('Impossible de charger la carte.');
       }
     })();
@@ -192,6 +276,16 @@ export default function DriveMode() {
       { enableHighAccuracy: true, timeout: 10_000 },
     );
   }, []);
+
+  // ── État du trafic : au départ puis toutes les 60 s pendant la conduite ──
+  const refreshIntel = useCallback(async () => {
+    try { const i = await actions.getDriveIntel(); setIntel(i); return i; } catch { return null; }
+  }, []);
+  useEffect(() => {
+    if (phase !== 'driving') return;
+    const id = window.setInterval(refreshIntel, 60_000);
+    return () => window.clearInterval(id);
+  }, [phase, refreshIntel]);
 
   // ── Choisir l'arrivée en touchant la carte ──
   useEffect(() => {
@@ -216,6 +310,15 @@ export default function DriveMode() {
     else flagRef.current.setLngLat(ll(destPoint));
   }, [destPoint, mapReady]);
 
+  // ── Dangers affichés sur la carte ──
+  useEffect(() => {
+    const ml = mlRef.current, map = mapRef.current;
+    hazardMarkersRef.current.forEach(m => m.remove());
+    hazardMarkersRef.current = [];
+    if (!ml || !map || phase !== 'driving') return;
+    hazardMarkersRef.current = hazards.map(h => new ml.Marker({ element: hazardElement(h) }).setLngLat(ll(h.point)).addTo(map));
+  }, [hazards, phase]);
+
   const drawRoute = useCallback((r: PreparedRoute) => {
     const map = mapRef.current;
     if (!map) return;
@@ -229,12 +332,29 @@ export default function DriveMode() {
       paint: { 'line-color': '#a5f3fc', 'line-width': 6 } });
   }, []);
 
-  const fetchRoute = useCallback(async (from: LatLng, to: LatLng): Promise<PreparedRoute> => {
+  /** Tous les itinéraires proposés par OSRM (le premier est le plus court à vide). */
+  const fetchRoutes = useCallback(async (from: LatLng, to: LatLng): Promise<PreparedRoute[]> => {
     const res = await fetch(`/api/drive-route?from=${from[0].toFixed(6)},${from[1].toFixed(6)}&to=${to[0].toFixed(6)},${to[1].toFixed(6)}`);
     const json = await res.json() as { routes?: DriveRoute[]; error?: string };
     if (!res.ok || !json.routes?.length) throw new Error(json.error ?? 'Aucun itinéraire trouvé.');
-    return prepareRoute(json.routes[0]);
+    return json.routes.map(prepareRoute);
   }, []);
+
+  const applyRoute = useCallback((r: PreparedRoute) => {
+    routeRef.current = r;
+    lastIndexRef.current = 0;
+    announcerRef.current = newAnnouncer();
+    setRoute(r);
+    drawRoute(r);
+  }, [drawRoute]);
+
+  /** Le meilleur itinéraire selon Kinshasa : bouchons mesurés, routes fermées ou inondées. */
+  const pickBest = useCallback((routes: PreparedRoute[], i: DriveIntel | null) => {
+    const raining = rainMessage(i?.weather ?? null)?.level === 'raining';
+    const scored = routes.map(r => ({ r, hz: hazardsOnRoute(r, i, press, raining) })).map(x => ({ ...x, cost: routeCostMin(x.r, x.hz) }));
+    scored.sort((a, b) => a.cost - b.cost);
+    return { best: scored[0], first: scored.find(x => x.r === routes[0])! };
+  }, [press]);
 
   /** Place la voiture et la caméra « derrière » elle, carte inclinée, comme dans un jeu. */
   const moveCar = useCallback((pos: LatLng, heading: number, quick: boolean) => {
@@ -248,9 +368,22 @@ export default function DriveMode() {
     }
   }, []);
 
+  /** Fin du trajet (arrivée ou arrêt) : résumé et journal anonyme pour le test terrain. */
+  const finishTrip = useCallback((completed: boolean, doneM: number) => {
+    const durationS = (Date.now() - startedAtRef.current) / 1000 * (simulate ? SIM_FACTOR : 1);
+    const st = statsRef.current;
+    setSummary({ km: formatDistance(doneM), time: formatDuration(durationS), alerts: st.alerts, confirmations: st.confirmations, xp: st.xp });
+    if (loggedRef.current || !user || doneM < 200) return;
+    loggedRef.current = true;
+    user.getIdToken().then(idToken => actions.logDriveTrip({
+      idToken, distanceM: doneM, durationS, alerts: st.alerts, confirmations: st.confirmations, reroutes: st.reroutes, simulated: simulate, completed,
+    })).catch(() => {});
+  }, [simulate, user]);
+
   const update = useCallback((pos: LatLng, speedMs: number | null, quick: boolean) => {
     const r = routeRef.current;
     if (!r) return;
+    posRef.current = pos;
     const p = progressOn(r, pos, lastIndexRef.current);
     lastIndexRef.current = p.index;
     setProgress(p);
@@ -259,35 +392,60 @@ export default function DriveMode() {
     const onRoute = p.offRouteM < OFF_ROUTE_M;
     moveCar(onRoute ? p.snapped : pos, p.heading, quick);
     if (p.remainingM < 25) {
-      setSummary({ km: formatDistance(p.doneM), time: formatDuration((Date.now() - startedAtRef.current) / 1000 * (simulate ? SIM_FACTOR : 1)) });
+      finishTrip(true, p.doneM);
+      play('tada');
       setPhase('arrived');
     }
     return p;
-  }, [moveCar, simulate]);
+  }, [moveCar, finishTrip]);
 
   const start = useCallback(async (sim: boolean) => {
     if (!startPoint || !destPoint) return;
     setError(null);
     setPhase('loading');
     try {
-      const r = await fetchRoute(startPoint, destPoint);
-      routeRef.current = r;
-      lastIndexRef.current = 0;
+      // On n'attend pas plus de 6 s l'état du trafic : sinon on part, et les alertes arrivent dès qu'il répond.
+      const intelSoon = refreshIntel();
+      const [routes, i] = await Promise.all([
+        fetchRoutes(startPoint, destPoint),
+        Promise.race([intelSoon, new Promise<null>(r => window.setTimeout(() => r(null), 6000))]),
+      ]);
+      const { best, first } = pickBest(routes, i);
       offCountRef.current = 0;
       simMRef.current = 0;
       startedAtRef.current = Date.now();
+      statsRef.current = { alerts: 0, confirmations: 0, reroutes: 0, xp: 0 };
+      askedRef.current = new Set();
+      loggedRef.current = false;
       followRef.current = true;
       setFollowing(true);
       setSimulate(sim);
-      drawRoute(r);
+      setSummary(null);
+      setAltOffer(null);
+      setPrompt(null);
+      setAlert(null);
+      applyRoute(best.r);
       setPhase('driving');
-      const first = pointAlong(r, 0);
-      update(first.point, sim ? SIM_SPEED : null, false);
+      update(pointAlong(best.r, 0).point, sim ? SIM_SPEED : null, false);
+
+      // Premières informations : itinéraire choisi pour éviter un problème, pluie
+      const t = Date.now();
+      if (best.r !== first.r) {
+        const saved = Math.round(first.cost - best.cost);
+        const avoided = first.hz.find(h => !best.hz.some(b => b.id === h.id) && h.severity >= 2);
+        const text = avoided ? `Itinéraire choisi pour éviter : ${avoided.title.toLowerCase()}` : `Itinéraire plus rapide choisi (${saved} min gagnées)`;
+        setBanner({ text, tone: 'info', until: t + 8000 });
+        say(text);
+      } else {
+        const r = rainMessage(i?.weather ?? null);
+        if (r) { setBanner({ text: r.fr, ln: r.ln, tone: 'rain', until: t + 10_000 }); say(r.fr); }
+        else say(instruction(best.r.steps[0] ?? null));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erreur');
       setPhase('choose');
     }
-  }, [startPoint, destPoint, fetchRoute, drawRoute, update]);
+  }, [startPoint, destPoint, fetchRoutes, refreshIntel, pickBest, applyRoute, update, say]);
 
   // ── Conduite : GPS réel ou démo simulée ──
   useEffect(() => {
@@ -313,15 +471,105 @@ export default function DriveMode() {
         lastRerouteRef.current = Date.now();
         offCountRef.current = 0;
         try {
-          const r = await fetchRoute(pos, destPoint);
-          routeRef.current = r;
-          lastIndexRef.current = 0;
-          drawRoute(r);
+          const routes = await fetchRoutes(pos, destPoint);
+          applyRoute(pickBest(routes, intel).best.r);
+          statsRef.current.reroutes++;
+          say('Nouvel itinéraire.');
         } catch { /* on garde l'ancien itinéraire */ }
       }
     }, () => setError('GPS indisponible : activez la localisation.'), { enableHighAccuracy: true, maximumAge: 1000, timeout: 15_000 });
     return () => navigator.geolocation.clearWatch(watch);
-  }, [phase, simulate, update, fetchRoute, drawRoute, destPoint]);
+  }, [phase, simulate, update, fetchRoutes, applyRoute, pickBest, intel, destPoint, say]);
+
+  // ── Alertes : quoi annoncer, quand ralentir, quoi faire confirmer ──
+  const doneM = progress?.doneM ?? 0;
+  useEffect(() => {
+    if (phase !== 'driving' || !progress) return;
+    const t = Date.now();
+    const h = nextAnnouncement(announcerRef.current, hazards, progress.doneM, t);
+    if (h) {
+      statsRef.current.alerts++;
+      setAlert({ hazard: h, until: t + 9000 });
+      play(h.severity === 3 ? 'siren' : 'ding');
+      say(spokenAlert(h, Math.max(0, h.atM - progress.doneM)));
+    }
+    // Danger dépassé (carrefour suivi ou signalement d'usager) : « Toujours là ? »
+    const passed = hazards.find(z => (z.vote || z.reportId) && !askedRef.current.has(z.id)
+      && progress.doneM > z.atM + 60 && progress.doneM < z.atM + 600);
+    if (passed) {
+      askedRef.current.add(passed.id);
+      setPrompt({ hazard: passed, until: t + 15_000 });
+    }
+  }, [phase, progress, hazards, say]);
+
+  const slowDown = phase === 'driving' && shouldSlowDown(hazards, doneM, speedKmh);
+  useEffect(() => { if (slowDown) say('Ralentissez.'); }, [slowDown, say]);
+
+  // ── Itinéraire bis : un blocage grave apparaît devant → on cherche mieux (au plus toutes les 2 min) ──
+  useEffect(() => {
+    if (phase !== 'driving' || !route || !destPoint || altOffer) return;
+    const blocker = hazards.find(h => h.atM > doneM + 200 && h.severity === 3);
+    if (!blocker || Date.now() - lastAltCheckRef.current < 120_000 || !posRef.current) return;
+    lastAltCheckRef.current = Date.now();
+    const from = posRef.current;
+    (async () => {
+      try {
+        const routes = await fetchRoutes(from, destPoint);
+        const ahead = hazards.filter(h => h.atM > doneM);
+        const currentCost = (progress?.remainingS ?? route.duration) / 60 + delayAheadMin(ahead, doneM)
+          + ahead.filter(h => (h.kind === 'closure' || h.kind === 'flood') && h.severity === 3).length * 30;
+        const { best } = pickBest(routes, intel);
+        const saved = Math.round(currentCost - best.cost);
+        if (saved >= 3 && !best.hz.some(h => h.id === blocker.id)) {
+          setAltOffer({ route: best.r, savedMin: saved, avoids: blocker.title });
+          play('honk');
+          say(`Itinéraire bis disponible : ${saved} minutes gagnées.`);
+        }
+      } catch { /* pas d'alternative pour l'instant */ }
+    })();
+  }, [phase, route, destPoint, altOffer, hazards, doneM, fetchRoutes, pickBest, intel, progress?.remainingS, say]);
+
+  const acceptAlt = () => {
+    if (!altOffer) return;
+    applyRoute(altOffer.route);
+    statsRef.current.reroutes++;
+    setAltOffer(null);
+    say('Itinéraire bis activé.');
+  };
+
+  // ── « Toujours là ? » : vote 1-tap (carrefours suivis, récompensé) ou confirmation d'un signalement ──
+  const answer = async (stillThere: boolean) => {
+    const p = prompt;
+    setPrompt(null);
+    if (!p) return;
+    if (simulate) { setBanner({ text: 'Démo : réponse non envoyée', tone: 'info', until: Date.now() + 3000 }); return; }
+    if (!user) return;
+    statsRef.current.confirmations++;
+    const h = p.hazard;
+    try {
+      if (h.vote) {
+        const slot = voteSlot();
+        const voteId = `${user.uid}_${h.vote.nodeId}_${slot}`;
+        await setDoc(doc(firestore, 'traffic_votes', voteId), {
+          userId: user.uid, nodeId: h.vote.nodeId, vote: stillThere ? 'still' : 'clear', slot, createdAt: serverTimestamp(),
+        });
+        const res = await actions.awardContribution({ idToken: await user.getIdToken(), type: 'upvote', refId: voteId, road: h.vote.nodeName });
+        if (res.success && res.xpGained) {
+          statsRef.current.xp += res.xpGained;
+          play('tada');
+          setBanner({ text: `+${res.xpGained} XP · merci, toute la ville en profite`, tone: 'xp', until: Date.now() + 4000 });
+          return;
+        }
+      } else if (h.reportId && stillThere) {
+        await updateDoc(doc(firestore, 'road_condition_reports', h.reportId), { votes: increment(1) });
+      }
+      play('ding');
+      setBanner({ text: 'Merci pour la confirmation !', tone: 'xp', until: Date.now() + 3000 });
+    } catch {
+      // déjà voté sur ce créneau, ou hors ligne : pas grave pendant la conduite
+      setBanner({ text: 'Déjà pris en compte', tone: 'info', until: Date.now() + 3000 });
+    }
+  };
 
   // ── Écran toujours allumé pendant la conduite ──
   useEffect(() => {
@@ -333,8 +581,15 @@ export default function DriveMode() {
   }, [phase]);
 
   const stop = () => {
+    if (phase === 'driving' && progress) finishTrip(false, progress.doneM);
+    window.speechSynthesis?.cancel();
     setPhase('choose');
     setProgress(null);
+    setRoute(null);
+    setAlert(null);
+    setPrompt(null);
+    setAltOffer(null);
+    setBanner(null);
     routeRef.current = null;
     carRef.current?.remove(); carRef.current = null;
     const map = mapRef.current;
@@ -349,11 +604,16 @@ export default function DriveMode() {
 
   const next = progress?.nextStep ?? null;
   const kind = arrowFor(next);
+  const delayMin = progress ? delayAheadMin(hazards, progress.doneM) : 0;
   const eta = useMemo(() => {
     if (!progress) return '';
-    const t = new Date(Date.now() + progress.remainingS * 1000);
+    const t = new Date(Date.now() + (progress.remainingS + delayMin * 60) * 1000);
     return t.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Kinshasa' });
-  }, [progress]);
+  }, [progress, delayMin]);
+  const upcoming = hazards.filter(h => h.atM > doneM - 20 && h.atM - doneM < 5000).slice(0, 3);
+  const showAlert = alert && alert.until > now ? alert : null;
+  const showPrompt = prompt && prompt.until > now ? prompt : null;
+  const showBanner = banner && banner.until > now ? banner : null;
 
   return (
     <div className="fixed inset-0 z-[70] bg-[#0b1324] text-white">
@@ -370,15 +630,23 @@ export default function DriveMode() {
         </div>
       )}
 
-      {/* Quitter */}
-      <Link href="/verifier-trafic" aria-label="Quitter le mode conduite"
-        className="absolute right-3 top-[max(0.75rem,env(safe-area-inset-top))] z-10 flex h-11 w-11 items-center justify-center rounded-full bg-black/60 backdrop-blur">
-        <X className="h-5 w-5" />
-      </Link>
+      {/* Quitter / voix */}
+      <div className="absolute right-3 top-[max(0.75rem,env(safe-area-inset-top))] z-20 flex flex-col gap-2">
+        <Link href="/verifier-trafic" aria-label="Quitter le mode conduite"
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-black/60 backdrop-blur">
+          <X className="h-5 w-5" />
+        </Link>
+        {phase === 'driving' && (
+          <button type="button" onClick={toggleVoice} aria-label={voiceOn ? 'Couper la voix' : 'Activer la voix'}
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-black/60 backdrop-blur">
+            {voiceOn ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5 text-slate-400" />}
+          </button>
+        )}
+      </div>
 
       {/* ── Choix du trajet ── */}
       {(phase === 'choose' || phase === 'loading') && (
-        <div className="absolute inset-x-0 bottom-0 z-10 rounded-t-3xl bg-[#0f172a]/95 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl backdrop-blur">
+        <div className="absolute inset-x-0 bottom-0 z-10 max-h-[80dvh] overflow-y-auto rounded-t-3xl bg-[#0f172a]/95 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl backdrop-blur">
           <div className="mb-3 flex items-center gap-2">
             <Navigation className="h-5 w-5 text-yellow-300" />
             <h2 className="text-lg font-black tracking-tight text-white">Mode Conduite</h2>
@@ -417,12 +685,17 @@ export default function DriveMode() {
           {startId !== 'gps' && (
             <p className="mt-2 text-[11px] text-slate-400">Pour rouler avec le GPS, choisissez « Ma position » comme départ. « Démo » simule le trajet.</p>
           )}
+          <p className="mt-3 text-[11px] leading-snug text-slate-400">
+            Alertes : bouchons mesurés, signalements des Kinois, presse et ministère, pluie. Ne touchez pas l’écran en roulant : la voix vous prévient.
+          </p>
+          <div className="mt-3"><SpeedSharingToggle /></div>
         </div>
       )}
 
-      {/* ── Conduite : consigne en haut, tableau de bord en bas ── */}
+      {/* ── Conduite ── */}
       {phase === 'driving' && progress && (
         <>
+          {/* Consigne de direction */}
           <div className="absolute inset-x-3 top-[max(0.75rem,env(safe-area-inset-top))] z-10 mr-14 flex items-center gap-3 rounded-2xl bg-emerald-600 p-3 shadow-2xl ring-2 ring-emerald-300/40">
             <ManeuverIcon kind={kind} className="h-12 w-12 shrink-0" />
             <div className="min-w-0">
@@ -430,43 +703,138 @@ export default function DriveMode() {
               <div className="mt-1 line-clamp-2 text-sm font-bold leading-snug text-emerald-50">{instruction(next)}</div>
             </div>
           </div>
+
+          {/* Alerte en cours */}
+          {showAlert && (
+            <div className="absolute inset-x-3 top-[calc(max(0.75rem,env(safe-area-inset-top))+5.75rem)] z-10 mr-14 rounded-2xl p-3 shadow-2xl ring-2 ring-white/20"
+              style={{ backgroundColor: HAZARD_STYLE[showAlert.hazard.kind].color }}>
+              <div className="flex items-center gap-3">
+                <span className="text-3xl leading-none">{HAZARD_STYLE[showAlert.hazard.kind].icon}</span>
+                <div className="min-w-0">
+                  <div className="text-xs font-black uppercase tracking-wider text-white/80">
+                    Dans {formatDistance(Math.max(0, showAlert.hazard.atM - doneM))}
+                  </div>
+                  <div className="line-clamp-2 text-base font-black leading-tight">{showAlert.hazard.title}</div>
+                  {showAlert.hazard.ln && <div className="mt-0.5 truncate text-xs font-semibold italic text-white/80">{showAlert.hazard.ln}</div>}
+                </div>
+              </div>
+              {showAlert.hazard.detail && <div className="mt-1 line-clamp-2 text-[11px] text-white/80">{showAlert.hazard.detail}</div>}
+            </div>
+          )}
+
+          {/* Ralentissez */}
+          {slowDown && (
+            <div className="absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-600 px-6 py-3 text-xl font-black uppercase tracking-wider shadow-2xl ring-4 ring-red-400/40 animate-pulse">
+              Ralentissez
+              <div className="text-center text-[10px] font-bold normal-case tracking-normal text-red-100">{LINGALA.slow}</div>
+            </div>
+          )}
+
+          {/* Bandeau : pluie, itinéraire choisi, XP */}
+          {showBanner && !showAlert && (
+            <div className={cn(
+              'absolute inset-x-3 top-[calc(max(0.75rem,env(safe-area-inset-top))+5.75rem)] z-10 mr-14 flex items-start gap-2 rounded-2xl p-3 text-sm font-bold shadow-2xl',
+              showBanner.tone === 'rain' ? 'bg-sky-700' : showBanner.tone === 'xp' ? 'bg-yellow-300 text-slate-900' : 'bg-slate-800',
+            )}>
+              {showBanner.tone === 'rain' ? <CloudRain className="h-5 w-5 shrink-0" /> : showBanner.tone === 'xp' ? <Star className="h-5 w-5 shrink-0" /> : <Route className="h-5 w-5 shrink-0" />}
+              <div>
+                <div>{showBanner.text}</div>
+                {showBanner.ln && <div className="text-xs font-semibold italic opacity-80">{showBanner.ln}</div>}
+              </div>
+            </div>
+          )}
+
           {simulate && (
-            <div className="absolute left-3 top-[calc(max(0.75rem,env(safe-area-inset-top))+5.5rem)] z-10 rounded-full bg-fuchsia-600 px-3 py-1 text-[10px] font-black uppercase tracking-wider">
+            <div className="absolute left-3 top-[calc(max(0.75rem,env(safe-area-inset-top))+5.75rem)] z-[5] rounded-full bg-fuchsia-600 px-3 py-1 text-[10px] font-black uppercase tracking-wider">
               Démo ×{SIM_FACTOR}
             </div>
           )}
 
           {!following && (
             <button type="button" onClick={recenter}
-              className="absolute bottom-28 right-3 z-10 flex h-12 items-center gap-2 rounded-full bg-black/70 px-4 text-sm font-bold backdrop-blur">
+              className="absolute bottom-44 right-3 z-10 flex h-12 items-center gap-2 rounded-full bg-black/70 px-4 text-sm font-bold backdrop-blur">
               <LocateFixed className="h-4 w-4" /> Recentrer
             </button>
           )}
 
-          <div className="absolute inset-x-0 bottom-0 z-10 flex items-center justify-between gap-3 bg-[#0f172a]/95 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur">
-            <div className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-full border-2 border-yellow-300 bg-slate-900">
-              <Gauge className="h-3.5 w-3.5 text-yellow-300" />
-              <span className="text-lg font-black leading-none">{speedKmh}</span>
-              <span className="text-[8px] font-bold text-slate-400">km/h</span>
-            </div>
-            <div className="min-w-0 flex-1 text-center">
-              <div className="text-xl font-black leading-tight">{eta}</div>
-              <div className="text-xs font-semibold text-slate-400">
-                {formatDistance(progress.remainingM)} · {formatDuration(progress.remainingS)} <span className="text-slate-500">sans bouchons</span>
+          {/* Bas d'écran : itinéraire bis, « toujours là ? », dangers à venir, tableau de bord */}
+          <div className="absolute inset-x-0 bottom-0 z-10">
+            {altOffer && (
+              <div className="mx-3 mb-2 rounded-2xl bg-cyan-500 p-3 text-slate-900 shadow-2xl">
+                <div className="text-sm font-black">Itinéraire bis : {altOffer.savedMin} min gagnées</div>
+                <div className="line-clamp-1 text-xs font-semibold">Évite : {altOffer.avoids}</div>
+                <div className="mt-2 flex gap-2">
+                  <button type="button" onClick={acceptAlt} className="h-11 flex-1 rounded-xl bg-slate-900 text-sm font-black text-cyan-300">Prendre</button>
+                  <button type="button" onClick={() => setAltOffer(null)} className="h-11 rounded-xl bg-white/40 px-4 text-sm font-bold">Non merci</button>
+                </div>
               </div>
+            )}
+
+            {showPrompt && !altOffer && (
+              <div className="mx-3 mb-2 rounded-2xl bg-slate-800 p-3 shadow-2xl ring-1 ring-white/10">
+                <div className="text-sm font-black">
+                  {HAZARD_STYLE[showPrompt.hazard.kind].icon} {showPrompt.hazard.vote ? `Toujours bouché à ${showPrompt.hazard.vote.nodeName} ?` : `${showPrompt.hazard.title} : toujours là ?`}
+                </div>
+                <div className="mt-2 flex gap-2">
+                  <button type="button" onClick={() => answer(true)} className="h-12 flex-1 rounded-xl bg-red-500 text-sm font-black">Toujours là</button>
+                  <button type="button" onClick={() => answer(false)} className="h-12 flex-1 rounded-xl bg-emerald-500 text-sm font-black text-slate-900">C’est dégagé</button>
+                </div>
+                <div className="mt-1 text-center text-[10px] text-slate-400">
+                  {simulate ? 'Démo : la réponse ne sera pas envoyée' : showPrompt.hazard.vote ? '+XP et FC · un passager peut répondre' : 'Un passager peut répondre'}
+                </div>
+              </div>
+            )}
+
+            {upcoming.length > 0 && !showPrompt && !altOffer && (
+              <div className="mx-3 mb-2 flex gap-2 overflow-x-auto">
+                {upcoming.map(h => (
+                  <div key={h.id} className="flex shrink-0 items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-bold backdrop-blur"
+                    style={{ boxShadow: `inset 0 0 0 2px ${HAZARD_STYLE[h.kind].color}` }}>
+                    <span>{HAZARD_STYLE[h.kind].icon}</span>
+                    <span>{formatDistance(Math.max(0, h.atM - doneM))}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-center justify-between gap-3 bg-[#0f172a]/95 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur">
+              <div className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-full border-2 border-yellow-300 bg-slate-900">
+                <Gauge className="h-3.5 w-3.5 text-yellow-300" />
+                <span className="text-lg font-black leading-none">{speedKmh}</span>
+                <span className="text-[8px] font-bold text-slate-400">km/h</span>
+              </div>
+              <div className="min-w-0 flex-1 text-center">
+                <div className="text-xl font-black leading-tight">{eta}</div>
+                <div className="text-xs font-semibold text-slate-400">
+                  {formatDistance(progress.remainingM)} · {formatDuration(progress.remainingS + delayMin * 60)}{' '}
+                  <span className={delayMin > 0 ? 'text-red-300' : 'text-slate-500'}>
+                    {!intel ? 'sans bouchons' : delayMin > 0 ? `dont ${delayMin} min de bouchons` : 'selon les mesures'}
+                  </span>
+                </div>
+              </div>
+              <button type="button" onClick={stop}
+                className="h-12 shrink-0 rounded-2xl bg-red-500 px-4 text-sm font-black">Arrêter</button>
             </div>
-            <button type="button" onClick={stop}
-              className="h-12 shrink-0 rounded-2xl bg-red-500 px-4 text-sm font-black">Arrêter</button>
           </div>
         </>
       )}
 
       {/* ── Arrivée ── */}
       {phase === 'arrived' && (
-        <div className="absolute inset-x-4 top-1/3 z-10 rounded-3xl bg-[#0f172a]/95 p-6 text-center shadow-2xl ring-2 ring-yellow-300/40 backdrop-blur">
+        <div className="absolute inset-x-4 top-1/4 z-10 rounded-3xl bg-[#0f172a]/95 p-6 text-center shadow-2xl ring-2 ring-yellow-300/40 backdrop-blur">
           <Flag className="mx-auto h-10 w-10 text-yellow-300" />
           <h2 className="mt-2 text-2xl font-black text-white">Vous êtes arrivé !</h2>
-          {summary && <p className="mt-1 text-sm text-slate-300">{summary.km} en {summary.time}</p>}
+          {summary && (
+            <>
+              <p className="mt-1 text-sm text-slate-300">{summary.km} en {summary.time}{simulate ? ' (démo)' : ''}</p>
+              <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-2xl bg-slate-800 p-2"><div className="text-xl font-black">{summary.alerts}</div><div className="text-[10px] font-bold uppercase text-slate-400">alertes</div></div>
+                <div className="rounded-2xl bg-slate-800 p-2"><div className="text-xl font-black">{summary.confirmations}</div><div className="text-[10px] font-bold uppercase text-slate-400">confirmées</div></div>
+                <div className="rounded-2xl bg-slate-800 p-2"><div className="text-xl font-black text-yellow-300">+{summary.xp}</div><div className="text-[10px] font-bold uppercase text-slate-400">XP</div></div>
+              </div>
+              {summary.confirmations > 0 && <p className="mt-3 text-xs text-slate-400">Merci : vos réponses mettent à jour la carte de tout Kinshasa.</p>}
+            </>
+          )}
           <button type="button" onClick={stop} className="mt-4 h-12 w-full rounded-2xl bg-yellow-300 font-black text-slate-900">Nouveau trajet</button>
         </div>
       )}
