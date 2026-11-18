@@ -1,0 +1,54 @@
+# Serveur d'itinéraires OSRM pour le Mode Conduite (Kinshasa uniquement).
+#
+# Construit entièrement dans Google Cloud Build, puis déployé sur Cloud Run :
+#   gcloud builds submit infra/osrm --config infra/osrm/cloudbuild.yaml --project studio-874039458-d0447
+#   gcloud run deploy osrm-kinshasa --image us-central1-docker.pkg.dev/studio-874039458-d0447/osrm/kinshasa:latest ...
+# (commandes complètes dans infra/osrm/README.md). À relancer de temps en temps pour suivre les mises à
+# jour d'OpenStreetMap. Données © contributeurs OpenStreetMap (ODbL), extrait Geofabrik.
+substitutions:
+  _REGION: us-central1
+  _REPO: osrm
+  _IMAGE: kinshasa
+  _OSRM: ghcr.io/project-osrm/osrm-backend:v5.27.1
+
+steps:
+  # 1. Carte de la RDC (Geofabrik) → découpe de Kinshasa et alentours
+  - id: extrait-kinshasa
+    name: debian:bookworm-slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        apt-get update -qq && apt-get install -y -qq osmium-tool curl ca-certificates >/dev/null
+        curl -sSfL -o rdc.osm.pbf https://download.geofabrik.de/africa/congo-democratic-republic-latest.osm.pbf
+        osmium extract --bbox 15.0,-4.75,15.9,-4.0 --strategy complete_ways rdc.osm.pbf -o kinshasa.osm.pbf --overwrite
+        rm rdc.osm.pbf
+        ls -la kinshasa.osm.pbf
+
+  # 2. Préparation OSRM (profil voiture, algorithme MLD)
+  - id: preparation-osrm
+    name: ${_OSRM}
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        osrm-extract -p /opt/car.lua kinshasa.osm.pbf
+        osrm-partition kinshasa.osrm
+        osrm-customize kinshasa.osrm
+        rm kinshasa.osm.pbf
+        ls -la
+
+  # 3. Image du serveur avec les données dedans
+  - id: image
+    name: gcr.io/cloud-builders/docker
+    args: ['build', '--build-arg', 'OSRM=${_OSRM}', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE}:latest', '.']
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE}:latest
+
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+timeout: 1800s

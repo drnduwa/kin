@@ -14,3 +14,9 @@ env:
     availability:
       - BUILD
       - RUNTIME
+  # Serveur d'itinéraires OSRM du Mode Conduite (Cloud Run « osrm-kinshasa », voir infra/osrm/README.md).
+  # Adresse publique, pas un secret. Sans cette variable, l'app retombe sur le serveur de démonstration d'OSRM.
+  - variable: OSRM_URL
+    value: https://osrm-kinshasa-196367644911.us-central1.run.app
+    availability:
+      - RUNTIME
