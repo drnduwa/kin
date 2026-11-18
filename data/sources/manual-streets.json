@@ -1,0 +1,105 @@
+{
+  "_doc": "Rues absentes d'OpenStreetMap (ou sous un autre nom), utilisées par scripts/road-reports quand OSM ne suffit pas. kind: 'point' = position connue (precision 'street' = sur la rue, 'quarter' = quartier seulement) ; 'osm_alias' = la rue existe dans OSM sous un autre nom ; 'osm_near' = prendre la rue OSM de ce nom la plus proche du repère ; 'todo' = position inconnue, à renseigner. Coordonnées [lat, lng]. Chaque entrée cite d'où vient la position : ne rien ajouter sans source.",
+  "streets": [
+    {
+      "name": "Route Jamaïque",
+      "kind": "point",
+      "precision": "street",
+      "point": [-4.3448, 15.2711],
+      "source": "OSM : Pont Makelele (le signalement situe la route sous ce pont)",
+      "note": "Le tracé de la route elle-même n'est pas dans OSM."
+    },
+    {
+      "name": "Rond-point Huileries",
+      "aliases": ["Rond-point des Huileries"],
+      "kind": "point",
+      "precision": "street",
+      "point": [-4.3236, 15.3062],
+      "source": "OSM : croisement des avenues Kabambare, Nyangwe et des Huileries (à 85 m l'un de l'autre)",
+      "note": "Sert aussi de repère pour découper les tronçons « … → Rond-point Huileries »."
+    },
+    {
+      "name": "Rocade Sud-Ouest",
+      "kind": "osm_alias",
+      "osmName": "Rocade Ouest de Kinshasa",
+      "source": "Tracé annoncé Mbudi → Mitendi (infos.cd, ACGT) ; la « Rocade Ouest de Kinshasa » d'OSM suit ce trajet",
+      "sourceUrl": "https://acgt.cd/wp-content/uploads/2025/10/PROJET-DE-CONSTRUCTION-DES-ROCADES-SUD-EST-ET-SUD-OUEST-DANS-LA-VILLE-DE-KINSHASA.pdf",
+      "note": "Tracé OSM incomplet : il s'arrête à ~1,5 km de Mitendi et à ~2 km de la Route de Matadi. L'échangeur avec la RN1 n'y figure pas."
+    },
+    {
+      "name": "Avenue Kika",
+      "kind": "osm_near",
+      "near": [-4.4301, 15.3067],
+      "radiusM": 1500,
+      "source": "OSM : l'avenue Kika passe à 780 m de l'avenue Cogelos (le signalement parle de « Limete/Cogelos »)",
+      "note": "Hors des limites OSM de Limete : sans cette entrée, la rue n'était pas placée."
+    },
+    {
+      "name": "Route Darby",
+      "aliases": ["Route Darbi"],
+      "kind": "point",
+      "precision": "quarter",
+      "point": [-4.5025, 15.209],
+      "area": "Mitendi",
+      "source": "ACP : la route Darby est dans le quartier Mitendi (Mont-Ngafula) ; position = lieu « Mitendi » d'OSM",
+      "sourceUrl": "https://acp.cd/urbain/kinshasa-une-route-menacee-par-la-progression-dune-tete-derosion-a-mont-ngafula/"
+    },
+    {
+      "name": "Route Kimwenza-Gare",
+      "kind": "point",
+      "precision": "quarter",
+      "point": [-4.46, 15.289],
+      "area": "Kimwenza",
+      "source": "ACP : la route mène à la gare de Kimwenza ; position = lieu « Kimwenza » d'OSM (le site Nkondo n'est pas dans OSM)",
+      "sourceUrl": "https://acp.cd/urbain/kinshasa-debut-des-travaux-anti-erosifs-sur-la-route-kimwenza-gare-a-mont-ngafula/"
+    },
+    {
+      "name": "Avenue Baruti",
+      "kind": "point",
+      "precision": "quarter",
+      "point": [-4.4429, 15.2473],
+      "area": "Cité Mama Mobutu",
+      "onlyWhenArea": "mama mobutu",
+      "source": "Le signalement la situe à Mama Mobutu (Mont-Ngafula) ; position = « Cité Mama Mobutu » d'OSM",
+      "note": "L'avenue Baruti d'OSM est à 17 km de là : c'est une autre rue."
+    },
+    {
+      "name": "Boulevard Maître Croquet",
+      "aliases": ["Avenue Maître Croquet", "Boulevard Maitre Croquez"],
+      "kind": "point",
+      "precision": "quarter",
+      "point": [-4.4013, 15.3721],
+      "area": "Quartier 7 (N'djili)",
+      "source": "ACP : 2,7 km du Quartier 7 (N'djili) au rond-point Bakwanga (Kimbanseke) ; position = début, Quartier 7 d'OSM",
+      "sourceUrl": "https://acp.cd/economie/kinshasa-environ-25-kilometres-de-route-construits-sur-lavenue-luemba-et-maitre-croquet/",
+      "note": "Le rond-point Bakwanga n'est pas dans OSM : le tracé ne peut pas être dessiné."
+    },
+    {
+      "name": "Rocade Sud-Est",
+      "kind": "todo",
+      "source": "ACGT : Mitendi – Grand Hôtel – Kimwenza – De la Paix – N'djili Brasserie – Biela – Mokali – Buma – Ndjoku (41,5 km, en construction)",
+      "sourceUrl": "https://acgt.cd/wp-content/uploads/2025/10/PROJET-DE-CONSTRUCTION-DES-ROCADES-SUD-EST-ET-SUD-OUEST-DANS-LA-VILLE-DE-KINSHASA.pdf",
+      "note": "Route en chantier, absente d'OSM. N'djili Brasserie, Grand Hôtel, Biela et Ndjoku n'y sont pas non plus : relever le tracé sur place ou sur l'imagerie."
+    },
+    {
+      "name": "Avenue Shaumba",
+      "kind": "todo",
+      "source": "Aucune source trouvée (ni OSM ni presse en ligne).",
+      "note": "L'ancien nom « Prince-de-Liège » du CSV désigne aujourd'hui l'avenue Sergent Moke dans OSM : ne pas s'en servir."
+    },
+    {
+      "name": "Avenue Putu Mpanzu",
+      "aliases": ["Avenue Putu Panzu"],
+      "kind": "todo",
+      "source": "Aucune source trouvée. Quartier Badiadingi (Selembao) ; seul repère OSM : Hôpital HMG Badiadingi [-4.429, 15.256], pas sur la rue.",
+      "note": "Deux signalements d'érosion (février 2026) en dépendent."
+    },
+    {
+      "name": "Avenue Bokasa",
+      "aliases": ["Avenue Bokassa"],
+      "kind": "todo",
+      "source": "Absente d'OSM ; tracé approximatif dans src/lib/corridors.ts (non vérifié). L'« Avenue Empereur Bokassa » d'OSM est à 2,3 km de l'avenue Kabinda : autre rue.",
+      "note": "Croisement Kabinda × Bokasa (près du Grand marché) à relever."
+    }
+  ]
+}

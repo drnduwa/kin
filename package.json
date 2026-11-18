@@ -13,7 +13,8 @@
     "ios:sync": "npx cap sync ios",
     "ios:open": "npx cap open ios",
     "static:export": "next build && npx cap sync",
-    "assets:generate": "npx @capacitor/assets generate --ios"
+    "assets:generate": "npx @capacitor/assets generate --ios",
+    "data:road-reports": "node scripts/road-reports/build-road-reports.mjs"
   },
   "engines": {
     "node": "20"
