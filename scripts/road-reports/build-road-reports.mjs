@@ -307,7 +307,8 @@ function parseSegmentEnds(seg) {
 }
 
 // ───────────────────────────── Placement d'un signalement ─────────────────────────────
-function makeMatcher(index, A, aliases, landmarks) {
+function makeMatcher(index, A, aliases, landmarks, manual) {
+  const manualFor = name => manual.get(core(name));
   const coreKeys = [...index.keys()];
   function lookup(name) {
     const k = core(name); if (k.length < 3) return { ways: [], how: null };
@@ -327,6 +328,12 @@ function makeMatcher(index, A, aliases, landmarks) {
     const { ways, how, matched } = lookup(name);
     if (!ways.length) return null;
     const cls = clusters(ways).sort((a, b) => b.len - a.len);
+    // table manuelle : « la rue OSM de ce nom la plus proche de tel repère », quelle que soit la commune citée
+    const m = manualFor(name);
+    if (m?.kind === 'osm_near') {
+      const near = cls.filter(c => c.lines.some(l => l.some(p => distM(p, m.near) <= (m.radiusM ?? 1000))));
+      if (near.length) return { clusters: near, how: 'manual', matched, placed: 'manual' };
+    }
     const zones = area.quarters.length ? [area.quarters, area.communes] : [area.communes];
     for (const z of zones) {
       if (!z.length) continue;
@@ -418,7 +425,17 @@ function makeMatcher(index, A, aliases, landmarks) {
       }
       notes.push(`les deux rues ne se croisent pas dans OSM (écart ${Math.round(ca.d)} m)`);
     }
-    if (!found.length) return { geo: areaFallback(), notes };
+    if (!found.length) {
+      // table manuelle : position connue d'une rue absente d'OSM
+      const areaText = norm(r.commune_or_area);
+      for (const x of picks) {
+        const m = manualFor(x.n);
+        if (m?.kind !== 'point' || (m.onlyWhenArea && !areaText.includes(m.onlyWhenArea))) continue;
+        notes.push(`position tirée de la table manuelle : ${m.source}`);
+        return { geo: { quality: m.precision === 'street' ? 'manual_point' : 'manual_area', point: r5(m.point), lines: null, osmWayIds: [], area: m.area ?? m.name }, notes };
+      }
+      return { geo: areaFallback(), notes };
+    }
 
     let lines = found.flatMap(x => x.p.clusters.flatMap(c => c.lines));
     const ids = found.flatMap(x => x.p.clusters.flatMap(c => c.ways.map(w => w.id)));
@@ -472,7 +489,17 @@ for (const r of rows.filter(x => x.record_kind === 'road_inventory')) {
 }
 addAlias('Route Nationale 1', 'Route de Matadi');
 // Pas d'équivalence « Rocade Sud-Ouest » = « Rocade Ouest de Kinshasa » : le tracé OSM s'arrête à ~2 km de la Route de Matadi.
-const place = makeMatcher(index, A, aliases, landmarks);
+// Rues absentes d'OSM : positions sourcées à la main (data/sources/manual-streets.json)
+const MANUAL_PATH = path.join(ROOT, 'data', 'sources', 'manual-streets.json');
+const manual = new Map();
+for (const m of fs.existsSync(MANUAL_PATH) ? JSON.parse(fs.readFileSync(MANUAL_PATH, 'utf8')).streets : []) {
+  if (m.kind === 'todo') continue;
+  for (const n of [m.name, ...(m.aliases ?? [])]) manual.set(core(n), m);
+  if (m.kind === 'osm_alias') addAlias(m.name, m.osmName);
+  // un point connu sert aussi de repère pour découper les tronçons (« … → Rond-point Huileries »)
+  if (m.kind === 'point' && m.precision === 'street') landmarks.push({ name: m.name, k: lmCore(m.name), c: m.point });
+}
+const place = makeMatcher(index, A, aliases, landmarks, manual);
 const urlCount = new Map();
 for (const r of rows) if (r.record_kind === 'condition_report' && r.source_url) urlCount.set(r.source_url, (urlCount.get(r.source_url) ?? 0) + 1);
 

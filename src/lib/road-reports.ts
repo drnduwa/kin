@@ -9,7 +9,9 @@ export type LatLng = [number, number];
 export type PressCategory = 'flood' | 'closure' | 'erosion' | 'pothole' | 'works' | 'congestion' | 'accident' | 'reopened' | 'other';
 export type GeoQuality =
   | 'segment' | 'intersection' | 'near_landmark' | 'road' | 'road_fuzzy' | 'road_ambiguous'
-  | 'intersection_approx' | 'quarter_center' | 'commune_center';
+  | 'intersection_approx' | 'quarter_center' | 'commune_center'
+  // positions de la table manuelle (data/sources/manual-streets.json) pour les rues absentes d'OSM
+  | 'manual_point' | 'manual_area';
 
 export interface PressRoadReport {
   id: string;
@@ -115,6 +117,8 @@ export function positionNote(q: GeoQuality, area?: string): string | null {
     case 'commune_center': return `Position approximative : centre de la commune ${area ?? ''}`.trim();
     case 'quarter_center': return `Position approximative : centre du quartier ${area ?? ''}`.trim();
     case 'intersection_approx': return 'Croisement approximatif';
+    case 'manual_point': return 'Rue absente d’OpenStreetMap : position relevée à partir d’un repère proche';
+    case 'manual_area': return `Rue absente d’OpenStreetMap : position approximative (${area ?? 'quartier'})`;
     case 'road_ambiguous': return 'Plusieurs rues portent ce nom : à vérifier';
     case 'road': return 'Tronçon exact non précisé : toute la rue est indiquée';
     default: return null;
