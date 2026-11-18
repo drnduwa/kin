@@ -50,3 +50,5 @@ next-env.d.ts
 append.js
 flexpaie/
 firebase-debug.log
+# caches OpenStreetMap (re-téléchargés par scripts/road-reports)
+/data/osm/
