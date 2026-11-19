@@ -29,9 +29,17 @@ export function voiceFileInfo(mime: string): { contentType: string; ext: string 
   return { contentType: 'audio/webm', ext: 'webm' };
 }
 
+/** Notre propre application (Capacitor Android / iOS), pas un navigateur. */
+export function isNativeApp(): boolean {
+  if (typeof window === 'undefined') return false;
+  const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+  return !!cap?.isNativePlatform?.();
+}
+
 /** Navigateurs intégrés (WhatsApp, Facebook, Instagram, TikTok…) : souvent sans accès au micro. */
 export function isInAppBrowser(): boolean {
   if (typeof navigator === 'undefined') return false;
+  if (isNativeApp()) return false;
   const ua = navigator.userAgent || '';
   return /FBAN|FBAV|FB_IAB|Instagram|WhatsApp|Line\/|TikTok|Snapchat|; wv\)/i.test(ua);
 }
@@ -56,6 +64,9 @@ export function voiceSupportProblem(): MicProblem | null {
 export function micErrorMessage(err: unknown): MicProblem {
   const name = (err as { name?: string })?.name || '';
   if (name === 'NotAllowedError' || name === 'SecurityError') {
+    if (isNativeApp()) {
+      return { title: 'Micro non autorisé', description: 'Ouvrez Paramètres › Applications › Kinshasa Flow › Autorisations, activez « Micro », puis réessayez. Si l’option n’apparaît pas, mettez l’application à jour.' };
+    }
     return isInAppBrowser()
       ? { title: 'Micro refusé par WhatsApp / Facebook', description: 'Touchez ⋮ puis « Ouvrir dans Chrome » (ou Safari) pour parler.' }
       : { title: 'Micro bloqué', description: 'Touchez le cadenas à côté de l’adresse du site, autorisez « Micro », puis réessayez.' };

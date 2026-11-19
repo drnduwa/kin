@@ -14,7 +14,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link';
 import type { Map as MLMap, Marker as MLMarker } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { ArrowUp, CloudRain, Flag, Gauge, Loader2, LocateFixed, Navigation, Play, RotateCcw, Route, Star, Undo2, Volume2, VolumeX, X } from 'lucide-react';
+import { ArrowUp, CloudRain, Flag, Gauge, Loader2, LocateFixed, MapPin, Navigation, Play, RotateCcw, Route, Search, Star, Undo2, Volume2, VolumeX, X } from 'lucide-react';
 import { doc, increment, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { useFirebase, useUser } from '@/firebase';
 import type { DriveActions } from './drive-mode-loader';
@@ -39,7 +39,12 @@ const SIM_FACTOR = 4;        // la démo avance 4× plus vite que la réalité
 const OFF_ROUTE_M = 50;
 const ll = ([lat, lng]: LatLng): [number, number] => [lng, lat];
 
-type Phase = 'choose' | 'loading' | 'driving' | 'arrived';
+type Phase = 'choose' | 'loading' | 'preview' | 'driving' | 'arrived';
+/** Un départ ou une arrivée : position GPS, carrefour suivi, point touché sur la carte ou lieu recherché. */
+type Place = { label: string; point: LatLng; source: 'gps' | 'node' | 'map' | 'search' };
+type GpsStatus = 'pending' | 'ok' | 'denied' | 'outside' | 'unavailable';
+type SearchHit = { name: string; kind: string; commune: string; lat: number; lng: number };
+const nodePlace = (p: (typeof DRIVE_PLACES)[number]): Place => ({ label: p.name, point: p.point, source: 'node' });
 
 // ───────────────────────────── Style « arcade » ─────────────────────────────
 /** Repeint le style OpenFreeMap : nuit bleue, grands axes dorés, eau turquoise, immeubles en relief. */
@@ -186,9 +191,16 @@ export default function DriveMode({ actions }: { actions: DriveActions }) {
   const [mapError, setMapError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>('choose');
   const [gpsPos, setGpsPos] = useState<LatLng | null>(null);
-  const [startId, setStartId] = useState<string>('gps');
-  const [destId, setDestId] = useState<string>(DRIVE_PLACES[1]?.id ?? '');
-  const [pickedDest, setPickedDest] = useState<LatLng | null>(null);
+  const [gpsStatus, setGpsStatus] = useState<GpsStatus>('pending');
+  const [startPlace, setStartPlace] = useState<Place | null>(null);
+  const [dest, setDest] = useState<Place | null>(() => (DRIVE_PLACES[1] ? nodePlace(DRIVE_PLACES[1]) : null));
+  const [editing, setEditing] = useState<'start' | 'dest'>('dest');
+  const [query, setQuery] = useState('');
+  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [preview, setPreview] = useState<{ route: PreparedRoute; hz: Hazard[]; delayMin: number } | null>(null);
+  const startMarkerRef = useRef<MLMarker | null>(null);
+  const userPickedStartRef = useRef(false);   // départ choisi à la main : le GPS ne le remplace plus
   const [simulate, setSimulate] = useState(false);
   const [route, setRoute] = useState<PreparedRoute | null>(null);
   const [progress, setProgress] = useState<DriveProgress | null>(null);
@@ -204,8 +216,9 @@ export default function DriveMode({ actions }: { actions: DriveActions }) {
   const [voiceOn, setVoiceOn] = useState(true);
   const [now, setNow] = useState(() => Date.now());
 
-  const startPoint: LatLng | null = startId === 'gps' ? gpsPos : DRIVE_PLACES.find(p => p.id === startId)?.point ?? null;
-  const destPoint: LatLng | null = destId === 'picked' ? pickedDest : DRIVE_PLACES.find(p => p.id === destId)?.point ?? null;
+  const gpsStart = startPlace?.source === 'gps';
+  const startPoint: LatLng | null = gpsStart ? gpsPos : startPlace?.point ?? null;
+  const destPoint: LatLng | null = dest?.point ?? null;
 
   const press = useMemo(() => pressReportsAt().filter(r => r.active), []);
   const rain = rainMessage(intel?.weather ?? null);
@@ -264,18 +277,51 @@ export default function DriveMode({ actions }: { actions: DriveActions }) {
     return () => { cancelled = true; mapRef.current?.remove(); mapRef.current = null; };
   }, []);
 
-  // ── Position GPS de départ (si l'utilisateur l'accepte) ──
-  useEffect(() => {
-    if (!navigator.geolocation) { setStartId(DRIVE_PLACES[0].id); return; }
+  // ── Position GPS (si l'utilisateur l'accepte) : départ par défaut, et on dit pourquoi quand elle manque ──
+  const locateMe = useCallback((useAsStart: boolean) => {
+    if (!navigator.geolocation) { setGpsStatus('unavailable'); return; }
+    setGpsStatus('pending');
     navigator.geolocation.getCurrentPosition(
       p => {
         const pos: LatLng = [p.coords.latitude, p.coords.longitude];
-        if (inKinshasa(pos)) setGpsPos(pos); else setStartId(DRIVE_PLACES[0].id);
+        if (!inKinshasa(pos)) { setGpsStatus('outside'); return; }
+        setGpsPos(pos);
+        setGpsStatus('ok');
+        if (useAsStart && !userPickedStartRef.current) setStartPlace({ label: 'Ma position', point: pos, source: 'gps' });
       },
-      () => setStartId(DRIVE_PLACES[0].id),
+      err => setGpsStatus(err.code === err.PERMISSION_DENIED ? 'denied' : 'unavailable'),
       { enableHighAccuracy: true, timeout: 10_000 },
     );
   }, []);
+  useEffect(() => { locateMe(true); }, [locateMe]);
+  // Sans GPS, on propose quand même un départ (le premier carrefour suivi) pour l'aperçu et la démo
+  useEffect(() => {
+    if ((gpsStatus === 'denied' || gpsStatus === 'outside' || gpsStatus === 'unavailable') && !startPlace && DRIVE_PLACES[0]) setStartPlace(nodePlace(DRIVE_PLACES[0]));
+  }, [gpsStatus, startPlace]);
+
+  /** Remplit le champ en cours (départ ou arrivée) ; après le départ, on passe à l'arrivée. */
+  const choose = useCallback((p: Place) => {
+    if (editing === 'start') { userPickedStartRef.current = p.source !== 'gps'; setStartPlace(p); setEditing('dest'); }
+    else setDest(p);
+    setQuery('');
+    setHits([]);
+  }, [editing]);
+
+  // ── Recherche de lieux (index OpenStreetMap côté serveur) ──
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) { setHits([]); setSearching(false); return; }
+    setSearching(true);
+    const ctrl = new AbortController();
+    const id = window.setTimeout(() => {
+      fetch(`/api/places?q=${encodeURIComponent(q)}`, { signal: ctrl.signal })
+        .then(r => r.json() as Promise<{ results: SearchHit[] }>)
+        .then(j => setHits(j.results ?? []))
+        .catch(() => {})
+        .finally(() => setSearching(false));
+    }, 250);
+    return () => { window.clearTimeout(id); ctrl.abort(); };
+  }, [query]);
 
   // ── État du trafic : au départ puis toutes les 60 s pendant la conduite ──
   const refreshIntel = useCallback(async () => {
@@ -287,19 +333,32 @@ export default function DriveMode({ actions }: { actions: DriveActions }) {
     return () => window.clearInterval(id);
   }, [phase, refreshIntel]);
 
-  // ── Choisir l'arrivée en touchant la carte ──
+  // ── Choisir le départ ou l'arrivée en touchant la carte ──
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady || phase !== 'choose') return;
     const onClick = (e: { lngLat: { lat: number; lng: number } }) => {
       const p: LatLng = [e.lngLat.lat, e.lngLat.lng];
       if (!inKinshasa(p)) return;
-      setPickedDest(p);
-      setDestId('picked');
+      choose({ label: 'Point choisi sur la carte', point: p, source: 'map' });
     };
     map.on('click', onClick);
     return () => { map.off('click', onClick); };
-  }, [mapReady, phase]);
+  }, [mapReady, phase, choose]);
+
+  // ── Point de départ sur la carte (sauf GPS : la voiture le montre pendant la conduite) ──
+  useEffect(() => {
+    const ml = mlRef.current, map = mapRef.current;
+    if (!ml || !map || !mapReady) return;
+    const show = startPoint && (phase === 'choose' || phase === 'loading' || phase === 'preview');
+    if (!show) { startMarkerRef.current?.remove(); startMarkerRef.current = null; return; }
+    if (!startMarkerRef.current) {
+      const el = document.createElement('div');
+      el.style.cssText = 'width:22px;height:22px;border-radius:9999px;background:#22c55e;border:4px solid #0b1324;box-shadow:0 0 0 3px #22c55e80';
+      el.title = 'Départ';
+      startMarkerRef.current = new ml.Marker({ element: el }).setLngLat(ll(startPoint)).addTo(map);
+    } else startMarkerRef.current.setLngLat(ll(startPoint));
+  }, [startPoint, phase, mapReady]);
 
   // ── Drapeau d'arrivée ──
   useEffect(() => {
@@ -447,6 +506,42 @@ export default function DriveMode({ actions }: { actions: DriveActions }) {
     }
   }, [startPoint, destPoint, fetchRoutes, refreshIntel, pickBest, applyRoute, update, say]);
 
+  /** Aperçu sans guidage : utile pour préparer un trajet depuis un autre point que sa position. */
+  const showPreview = useCallback(async () => {
+    if (!startPoint || !destPoint) return;
+    setError(null);
+    setPhase('loading');
+    try {
+      const intelSoon = refreshIntel();
+      const [routes, i] = await Promise.all([
+        fetchRoutes(startPoint, destPoint),
+        Promise.race([intelSoon, new Promise<null>(r => window.setTimeout(() => r(null), 6000))]),
+      ]);
+      const { best } = pickBest(routes, i);
+      drawRoute(best.r);
+      setPreview({ route: best.r, hz: best.hz, delayMin: delayAheadMin(best.hz, 0) });
+      setPhase('preview');
+      const map = mapRef.current, ml = mlRef.current;
+      if (map && ml) {
+        const b = new ml.LngLatBounds();
+        best.r.coords.forEach(c => b.extend(ll(c)));
+        const h = map.getContainer().clientHeight;
+        map.fitBounds(b, { padding: { top: 70, left: 30, right: 30, bottom: Math.round(h * 0.45) }, duration: 900 });
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur');
+      setPhase('choose');
+    }
+  }, [startPoint, destPoint, refreshIntel, fetchRoutes, pickBest, drawRoute]);
+
+  const clearRoute = () => {
+    const map = mapRef.current;
+    if (!map) return;
+    for (const id of ['kf-route-line', 'kf-route-glow']) if (map.getLayer(id)) map.removeLayer(id);
+    if (map.getSource('kf-route')) map.removeSource('kf-route');
+  };
+  const closePreview = () => { clearRoute(); setPreview(null); setPhase('choose'); };
+
   // ── Conduite : GPS réel ou démo simulée ──
   useEffect(() => {
     if (phase !== 'driving') return;
@@ -590,12 +685,12 @@ export default function DriveMode({ actions }: { actions: DriveActions }) {
     setPrompt(null);
     setAltOffer(null);
     setBanner(null);
+    setPreview(null);
     routeRef.current = null;
     carRef.current?.remove(); carRef.current = null;
+    clearRoute();
     const map = mapRef.current;
     if (map) {
-      for (const id of ['kf-route-line', 'kf-route-glow']) if (map.getLayer(id)) map.removeLayer(id);
-      if (map.getSource('kf-route')) map.removeSource('kf-route');
       map.easeTo({ pitch: 0, bearing: 0, zoom: 12, center: ll(startPoint ?? KIN_CENTER), padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: 800 });
     }
   };
@@ -644,51 +739,164 @@ export default function DriveMode({ actions }: { actions: DriveActions }) {
         )}
       </div>
 
-      {/* ── Choix du trajet ── */}
+      {/* ── Choix du trajet : départ et arrivée (GPS, carrefour, carte ou recherche) ── */}
       {(phase === 'choose' || phase === 'loading') && (
-        <div className="absolute inset-x-0 bottom-0 z-10 max-h-[80dvh] overflow-y-auto rounded-t-3xl bg-[#0f172a]/95 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl backdrop-blur">
+        <div className="absolute inset-x-0 bottom-0 z-10 max-h-[78dvh] overflow-y-auto rounded-t-3xl bg-[#0f172a]/95 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl backdrop-blur">
           <div className="mb-3 flex items-center gap-2">
             <Navigation className="h-5 w-5 text-yellow-300" />
             <h2 className="text-lg font-black tracking-tight text-white">Mode Conduite</h2>
             <span className="rounded-full bg-yellow-300 px-2 py-0.5 text-[10px] font-black uppercase text-slate-900">Bêta</span>
           </div>
-          <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-400">
-            Départ
-            <select value={startId} onChange={e => setStartId(e.target.value)}
-              className="mt-1 block w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm font-semibold normal-case tracking-normal text-white">
-              {gpsPos && <option value="gps">📍 Ma position</option>}
-              {DRIVE_PLACES.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </label>
-          <label className="mb-3 block text-xs font-bold uppercase tracking-wider text-slate-400">
-            Arrivée <span className="font-medium normal-case tracking-normal text-slate-500">(ou touchez la carte)</span>
-            <select value={destId} onChange={e => setDestId(e.target.value)}
-              className="mt-1 block w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm font-semibold normal-case tracking-normal text-white">
-              {pickedDest && <option value="picked">🚩 Point choisi sur la carte</option>}
-              {DRIVE_PLACES.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </label>
-          {error && <p className="mb-2 text-sm font-semibold text-red-400">{error}</p>}
-          <div className="flex gap-2">
-            <button type="button" disabled={!mapReady || phase === 'loading' || startId !== 'gps' || !destPoint}
-              onClick={() => start(false)}
-              className="flex h-14 flex-1 items-center justify-center gap-2 rounded-2xl bg-yellow-300 text-base font-black text-slate-900 shadow-lg shadow-yellow-300/20 disabled:opacity-40">
-              {phase === 'loading' ? <Loader2 className="h-5 w-5 animate-spin" /> : <Navigation className="h-5 w-5" />}
-              C’est parti
-            </button>
+
+          {/* Les deux champs : celui qui est entouré reçoit la recherche ou le point touché sur la carte */}
+          <div className="space-y-2">
+            {([['start', 'Départ', startPlace, 'bg-green-500'], ['dest', 'Arrivée', dest, 'bg-red-500']] as const).map(([key, label, place, dot]) => (
+              <button key={key} type="button" onClick={() => setEditing(key)} aria-pressed={editing === key}
+                aria-label={`${label} : ${place ? (place.source === 'gps' ? 'ma position' : place.label) : 'à choisir'}${editing === key ? ' (en cours de modification)' : ''}`}
+                className={cn('flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition',
+                  editing === key ? 'border-yellow-300 bg-slate-800 ring-1 ring-yellow-300/60' : 'border-slate-700 bg-slate-900')}>
+                <span className={cn('h-3 w-3 shrink-0 rounded-full', dot)} />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</span>
+                  <span className="block truncate text-sm font-semibold text-white">
+                    {place ? (place.source === 'gps' ? '📍 Ma position' : place.label) : 'À choisir'}
+                  </span>
+                </span>
+                {editing === key && <span className="text-[10px] font-bold text-yellow-300">à modifier</span>}
+              </button>
+            ))}
+          </div>
+
+          {/* Recherche */}
+          <div className="relative mt-3">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+            <input
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder={editing === 'start' ? 'Départ : avenue, marché, rond-point…' : 'Arrivée : avenue, marché, rond-point…'}
+              aria-label={editing === 'start' ? 'Rechercher le départ' : "Rechercher l'arrivée"}
+              className="h-12 w-full rounded-xl border border-slate-700 bg-slate-900 pl-9 pr-9 text-sm font-semibold text-white placeholder:text-slate-500 focus:border-yellow-300 focus:outline-none"
+            />
+            {searching && <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-slate-400" />}
+          </div>
+          {hits.length > 0 && (
+            <ul className="mt-1 overflow-hidden rounded-xl border border-slate-700 bg-slate-900">
+              {hits.map(h => (
+                <li key={`${h.name}-${h.lat}-${h.lng}`}>
+                  <button type="button" onClick={() => choose({ label: h.commune ? `${h.name} (${h.commune})` : h.name, point: [h.lat, h.lng], source: 'search' })}
+                    className="flex w-full items-center gap-2 border-b border-slate-800 px-3 py-2.5 text-left last:border-b-0 hover:bg-slate-800">
+                    <MapPin className="h-4 w-4 shrink-0 text-slate-500" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-semibold text-white">{h.name}</span>
+                      <span className="block truncate text-[11px] text-slate-400">{h.kind}{h.commune ? ` · ${h.commune}` : ''}</span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {query.trim().length >= 2 && !searching && hits.length === 0 && (
+            <p className="mt-1 text-xs text-slate-400">Aucun lieu trouvé. Essayez un autre nom, ou touchez la carte.</p>
+          )}
+
+          {/* Raccourcis : ma position, carrefours suivis */}
+          <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+            {editing === 'start' && gpsPos && (
+              <button type="button" onClick={() => choose({ label: 'Ma position', point: gpsPos, source: 'gps' })}
+                className="shrink-0 rounded-full bg-green-600 px-3 py-1.5 text-xs font-bold text-white">📍 Ma position</button>
+            )}
+            {DRIVE_PLACES.map(p => (
+              <button key={p.id} type="button" onClick={() => choose(nodePlace(p))}
+                className="shrink-0 rounded-full border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-200">{p.name}</button>
+            ))}
+          </div>
+          <p className="mt-1 text-[11px] text-slate-500">…ou touchez la carte pour placer {editing === 'start' ? 'le départ' : "l'arrivée"}.</p>
+
+          {/* État de la localisation : on dit pourquoi « Ma position » manque */}
+          {gpsStatus !== 'ok' && (
+            <div className="mt-3 flex items-start gap-2 rounded-xl bg-slate-800 p-3 text-xs text-slate-300">
+              <LocateFixed className="mt-0.5 h-4 w-4 shrink-0 text-yellow-300" />
+              <div className="flex-1">
+                {gpsStatus === 'pending' && 'Recherche de votre position…'}
+                {gpsStatus === 'denied' && 'Localisation refusée : autorisez-la pour ce site dans les réglages du navigateur, puis réessayez, pour partir de votre position.'}
+                {gpsStatus === 'outside' && 'Votre position est hors de Kinshasa : choisissez un départ ci-dessus pour voir un itinéraire ou lancer la démo.'}
+                {gpsStatus === 'unavailable' && 'Position introuvable pour l’instant : activez la localisation du téléphone, puis réessayez.'}
+              </div>
+              {gpsStatus !== 'pending' && (
+                <button type="button" onClick={() => { userPickedStartRef.current = false; locateMe(true); }} className="shrink-0 rounded-lg bg-yellow-300 px-2.5 py-1 text-[11px] font-black text-slate-900">Réessayer</button>
+              )}
+            </div>
+          )}
+
+          {error && <p className="mt-2 text-sm font-semibold text-red-400">{error}</p>}
+          <div className="mt-3 flex gap-2">
+            {gpsStart ? (
+              <button type="button" disabled={!mapReady || phase === 'loading' || !startPoint || !destPoint}
+                onClick={() => start(false)}
+                className="flex h-14 flex-1 items-center justify-center gap-2 rounded-2xl bg-yellow-300 text-base font-black text-slate-900 shadow-lg shadow-yellow-300/20 disabled:opacity-40">
+                {phase === 'loading' ? <Loader2 className="h-5 w-5 animate-spin" /> : <Navigation className="h-5 w-5" />}
+                C’est parti
+              </button>
+            ) : (
+              <button type="button" disabled={!mapReady || phase === 'loading' || !startPoint || !destPoint}
+                onClick={showPreview}
+                className="flex h-14 flex-1 items-center justify-center gap-2 rounded-2xl bg-yellow-300 text-base font-black text-slate-900 shadow-lg shadow-yellow-300/20 disabled:opacity-40">
+                {phase === 'loading' ? <Loader2 className="h-5 w-5 animate-spin" /> : <Route className="h-5 w-5" />}
+                Voir l’itinéraire
+              </button>
+            )}
             <button type="button" disabled={!mapReady || phase === 'loading' || !startPoint || !destPoint}
               onClick={() => start(true)}
               className="flex h-14 items-center justify-center gap-2 rounded-2xl border border-slate-600 px-4 text-sm font-bold text-slate-200 disabled:opacity-40">
               <Play className="h-4 w-4" /> Démo
             </button>
           </div>
-          {startId !== 'gps' && (
-            <p className="mt-2 text-[11px] text-slate-400">Pour rouler avec le GPS, choisissez « Ma position » comme départ. « Démo » simule le trajet.</p>
+          {!gpsStart && (
+            <p className="mt-2 text-[11px] text-slate-400">Le guidage en direct part toujours de votre position GPS : choisissez « Ma position » comme départ pour rouler.</p>
           )}
           <p className="mt-3 text-[11px] leading-snug text-slate-400">
             Alertes : bouchons mesurés, signalements des Kinois, presse et ministère, pluie. Ne touchez pas l’écran en roulant : la voix vous prévient.
           </p>
           <div className="mt-3"><SpeedSharingToggle /></div>
+        </div>
+      )}
+
+      {/* ── Aperçu d'un itinéraire (sans guidage) ── */}
+      {phase === 'preview' && preview && (
+        <div className="absolute inset-x-0 bottom-0 z-10 max-h-[45dvh] overflow-y-auto rounded-t-3xl bg-[#0f172a]/95 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl backdrop-blur">
+          <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Itinéraire</div>
+          <div className="mt-0.5 truncate text-sm font-semibold text-slate-200">{startPlace?.label} → {dest?.label}</div>
+          <div className="mt-2 flex items-baseline gap-3">
+            <span className="text-3xl font-black text-white">{formatDuration(preview.route.duration + preview.delayMin * 60)}</span>
+            <span className="text-sm font-bold text-slate-300">{formatDistance(preview.route.distance)}</span>
+            <span className={cn('text-xs font-semibold', preview.delayMin > 0 ? 'text-red-300' : 'text-slate-500')}>
+              {!intel ? 'sans bouchons' : preview.delayMin > 0 ? `dont ${preview.delayMin} min de bouchons` : 'selon les mesures'}
+            </span>
+          </div>
+          {preview.hz.length > 0 ? (
+            <ul className="mt-3 space-y-1.5">
+              {preview.hz.slice(0, 4).map(h => (
+                <li key={h.id} className="flex items-center gap-2 text-xs text-slate-200">
+                  <span>{HAZARD_STYLE[h.kind].icon}</span>
+                  <span className="shrink-0 font-bold text-slate-400">{formatDistance(h.atM)}</span>
+                  <span className="truncate">{h.title}</span>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="mt-2 text-xs text-slate-400">Aucun problème signalé sur cet itinéraire pour l’instant.</p>}
+          <div className="mt-4 flex gap-2">
+            <button type="button" onClick={() => { setPreview(null); start(true); }}
+              className="flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl bg-yellow-300 text-sm font-black text-slate-900">
+              <Play className="h-4 w-4" /> Démo de ce trajet
+            </button>
+            <button type="button" onClick={closePreview} className="h-12 rounded-2xl border border-slate-600 px-4 text-sm font-bold text-slate-200">Modifier</button>
+          </div>
+          {gpsPos && (
+            <button type="button" onClick={() => { closePreview(); setStartPlace({ label: 'Ma position', point: gpsPos, source: 'gps' }); }}
+              className="mt-2 h-11 w-full rounded-2xl bg-green-600 text-sm font-black text-white">
+              📍 Partir de ma position (guidage en direct)
+            </button>
+          )}
         </div>
       )}
 
